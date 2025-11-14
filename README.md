@@ -32,6 +32,23 @@ supabase functions serve embed-article
 supabase functions serve campaign-dispatch
 ```
 
+### Configure OpenAI credentials for local Edge Functions
+1. Create `supabase/functions/.env.local` and add your OpenAI key:
+   ```bash
+   OPENAI_API_KEY=sk-your-openai-key
+   ```
+2. When serving functions locally, load the env file:
+   ```bash
+   supabase functions serve ai-test --env-file supabase/functions/.env.local
+   ```
+3. Use the local anon key from `supabase/.env` when calling the function:
+   ```bash
+   curl -X POST http://127.0.0.1:54321/functions/v1/ai-test \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+     -d '{"ping": true}'
+   ```
+
 ## Supabase 2Do Checklist
 - [ ] Configure env vars (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`).
 - [ ] Deploy migrations to your Supabase project.

@@ -1,8 +1,17 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.2.0";
 
+const apiKey = Deno.env.get("OPENAI_API_KEY");
+
+if (!apiKey) {
+  console.error(
+    "OPENAI_API_KEY is not set. Provide it via `supabase/functions/.env.local` or your deployment environment.",
+  );
+  throw new Error("OPENAI_API_KEY is missing");
+}
+
 const openai = new OpenAI({
-  apiKey: Deno.env.get("OPENAI_API_KEY")!,
+  apiKey,
 });
 
 console.log("ai-test function loaded.");
