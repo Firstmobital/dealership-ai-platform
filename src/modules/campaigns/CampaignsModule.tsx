@@ -148,15 +148,15 @@ export function CampaignsModule() {
             </div>
             <div className="space-y-3 px-6 py-4 text-sm text-slate-200">
               <div className="flex items-center justify-between">
-                <span>{{'{{name}}'}}</span>
+                <span>{"{{name}}"}</span>
                 <span>Contact Name</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>{{'{{model}}'}}</span>
+                <span>{"{{model}}"}</span>
                 <span>Preferred Model</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>{{'{{appointment}}'}}</span>
+                <span>{"{{appointment}}"}</span>
                 <span>Appointment Date</span>
               </div>
             </div>
@@ -186,11 +186,12 @@ export function CampaignsModule() {
             <FileText size={14} className="text-accent" /> Template Preview
           </div>
           <div className="space-y-3 px-5 py-4 text-sm text-slate-200">
-            <p>Hello {{'{{name}}'}},</p>
+            <p>Hello {"{{name}}"},</p>
             <p>
-              Thanks for checking out the latest arrivals at Joyz Motors. The {{'{{model}}'}} you liked is available for a test drive this week!
+              Thanks for checking out the latest arrivals at Joyz Motors. The {"{{model}}"} you liked is available for a
+              test drive this week!
             </p>
-            <p>Reply YES to confirm your {{'{{appointment}}'}} slot.</p>
+            <p>Reply YES to confirm your {"{{appointment}}"} slot.</p>
           </div>
         </div>
 
