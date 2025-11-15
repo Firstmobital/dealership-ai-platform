@@ -1,4 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
 // --- IMPORTS ---
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
@@ -11,44 +10,14 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 // --- CLIENTS ---
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+const supabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false }
 });
 
-// Helper: build compact context
-function buildContext(matches: any[], maxChars = 7000) {
-  if (!matches?.length) return "No matching dealership knowledge found.";
-
-  const sorted = [...matches].sort(
-    (a, b) => (b.similarity ?? 0) - (a.similarity ?? 0)
-  );
-
-  const lines: string[] = [];
-  let used = 0;
-
-  for (const m of sorted) {
-    const line = `• ${m.chunk}`;
-    if (used + line.length > maxChars) break;
-    lines.push(line);
-    used += line.length + 1;
-  }
-
-  return lines.join("\n");
-}
-
-// Detect follow-up pricing questions
-function isPricingIntent(text: string) {
-  const lower = text.toLowerCase();
-  return ["discount", "offer", "scheme", "price", "cashback"].some((k) =>
-    lower.includes(k)
-  );
-}
-
-// --- MAIN ---
+// --- MAIN HANDLER ---
 Deno.serve(async (req) => {
   try {
     const { conversation_id, user_message } = await req.json();
-
     if (!conversation_id || !user_message) {
       return new Response(
         JSON.stringify({ error: "Missing required fields" }),
@@ -56,104 +25,122 @@ Deno.serve(async (req) => {
       );
     }
 
-    // --- 1) FETCH LAST 10 MESSAGES (Conversation Memory) ---
-    const { data: history } = await supabase
-      .from("messages")
-      .select("sender,text")
-      .eq("conversation_id", conversation_id)
-      .order("created_at", { ascending: true })
-      .limit(10);
-
-    // Convert DB messages → OpenAI format
-    const memoryMessages = (history ?? []).map((m) => ({
-      role: m.sender === "bot" ? "assistant" : "user",
-      content: m.text
-    }));
-
-    // --- 2) EMBED USER QUERY ---
+    // --- 1) Embed user query ---
     const embedRes = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: user_message
+      input: user_message,
     });
-
     const queryEmbedding = embedRes.data[0].embedding;
 
-    // --- 3) VECTOR SEARCH ---
-    const { data: matches } = await supabase.rpc("match_knowledge_chunks", {
-      query_embedding: queryEmbedding,
-      match_count: 50,
-      match_threshold: 0.15
-    });
-
-    let effectiveMatches = matches ?? [];
-
-    // Booster for pricing questions
-    if (isPricingIntent(user_message) && effectiveMatches.length < 2) {
-      const { data: priceChunks } = await supabase
-        .from("knowledge_chunks")
-        .select("chunk")
-        .ilike("chunk", "%discount%")
-        .limit(20);
-
-      if (priceChunks?.length) {
-        effectiveMatches.push(
-          ...priceChunks.map((c) => ({
-            chunk: c.chunk,
-            similarity: 0.5
-          }))
-        );
+    // --- 2) Query Supabase similarity search ---
+    const { data: matches, error: matchError } = await supabaseClient.rpc(
+      "match_knowledge_chunks",
+      {
+        query_embedding: queryEmbedding,
+        match_count: 20,
+        match_threshold: 0.3
       }
+    );
+
+    if (matchError) {
+      console.error("RAG Match Error:", matchError);
     }
 
-    // --- 4) BUILD CONTEXT ---
-    const contextText = buildContext(effectiveMatches);
+    // Build context block
+    let contextText = "";
+    if (matches && matches.length > 0) {
+      contextText = matches.map((m) => `- ${m.chunk}`).join("\n");
+    } else {
+      contextText = "No matching dealership knowledge found.";
+    }
 
-    // --- 5) SYSTEM PROMPT (smart) ---
+    // --- 3) Structured, RAG-aware system prompt ---
     const systemPrompt = `
-You are the official AI Sales Assistant for Techwheels Tata Motors.
+You are Techwheels Motors AI Showroom Assistant.
 
-Your goals:
-- Help customers with variants, discounts, features, specs, and queries.
-- Always answer using ONLY the dealership knowledge in CONTEXT.
-- You *can* use chat history to know what the conversation is about.
-
-RULES:
-- If user asks a follow-up like “what about variants?”, infer subject from memory.
-- Never invent any pricing or discount not present in the context.
-- If context is missing exact info, answer safely: 
-  "I'm sorry, I do not have enough dealership information to answer that."
+You must answer ONLY using the information in the CONTEXT below.
+If the answer is not clearly present in the context, you MUST reply exactly with:
+"I'm sorry, I do not have enough dealership information to answer that."
 
 CONTEXT:
 ${contextText}
+
+RESPONSE RULES (VERY IMPORTANT):
+- Always respond in clear, customer-friendly language.
+- Keep answers concise but complete.
+- Use the structured format below whenever possible.
+
+### DEFAULT ANSWER FORMAT
+
+1) A short heading line:
+- Example: "Punch EV Smart – On-Road Price Summary"
+
+2) If the question is about price / on-road price / breakup, use:
+
+- **Ex-showroom Price**: ₹X,XX,XXX
+- **RTO**: ₹X,XX,XXX
+- **Insurance**: ₹X,XX,XXX
+- **On-Road Price**: ₹X,XX,XXX
+
+Only include fields that appear in CONTEXT.  
+If a component is missing from context, either:
+- skip that line, OR
+- write: "Not specified in the available information."
+
+3) If discounts / schemes / offers are mentioned in CONTEXT, add a section:
+
+**Available Offers / Discounts**
+- Cash discount: …
+- Exchange bonus: …
+- Corporate discount: …
+- Other scheme details: …
+
+Do NOT invent any amounts or schemes; only use what is present in CONTEXT.
+
+4) If there are important notes (e.g., prices may vary, limited-period offer), add:
+
+**Notes**
+- Mention that prices are approximate and can change.
+- Mention if offers are limited-time, city-specific, or dealer-specific (only if present in CONTEXT).
+
+5) If the user asks a general feature/spec question (not price), give:
+- A short heading
+- 3–6 crisp bullet points from CONTEXT
+- Optional closing line like:
+  "If you tell me your usage or budget, I can suggest the most suitable variant."
+
+NEVER:
+- Mix in information that is not present in CONTEXT.
+- Guess discounts, insurance amounts, RTO, or exact on-road prices.
+- Refer to "context" or "chunks" in the answer. Talk like a normal showroom advisor.
 `.trim();
 
-    // --- 6) FINAL MESSAGES SENT TO OPENAI ---
-    const messages = [
-      { role: "system", content: systemPrompt },
-      ...memoryMessages,
-      { role: "user", content: user_message }
-    ];
-
-    // --- 7) OPENAI CALL ---
+    // --- 4) OpenAI Chat Completion ---
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages,
-      temperature: 0.3
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: user_message }
+      ],
+      temperature: 0.2, // more deterministic + consistent structure
     });
 
-    const ai_response =
-      completion.choices?.[0]?.message?.content ??
-      "I'm sorry, I couldn't generate a response.";
+    const aiResponse =
+      completion.choices?.[0]?.message?.content ||
+      "I'm sorry, I do not have enough dealership information to answer that.";
 
-    // --- 8) RETURN ---
+    // --- 5) Return result for frontend to save ---
     return new Response(
       JSON.stringify({
         conversation_id,
         user_message,
-        ai_response
+        ai_response: aiResponse
       }),
-      { headers: { "Content-Type": "application/json" } }
+      {
+        headers: { "Content-Type": "application/json" }
+      }
     );
+
   } catch (err) {
     console.error("AI Handler Error:", err);
     return new Response(JSON.stringify({ error: err.message }), {

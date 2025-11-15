@@ -1,16 +1,27 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabaseClient';
-import type { KnowledgeArticle, KnowledgeChunk, UnansweredQuestion } from '../types/database';
+import type {
+  KnowledgeArticle,
+  KnowledgeChunk,
+  UnansweredQuestion
+} from '../types/database';
 
 type KnowledgeBaseState = {
   articles: KnowledgeArticle[];
   chunks: Record<string, KnowledgeChunk[]>;
   unanswered: UnansweredQuestion[];
   loading: boolean;
+
   fetchArticles: (organizationId: string) => Promise<void>;
   fetchChunks: (articleId: string) => Promise<void>;
   fetchUnanswered: (organizationId: string) => Promise<void>;
-  saveArticle: (payload: Partial<KnowledgeArticle>) => Promise<void>;
+
+  /**
+   * Create or update an article.
+   * Returns the saved article so the caller knows the final id.
+   */
+  saveArticle: (payload: Partial<KnowledgeArticle>) => Promise<KnowledgeArticle>;
+
   markUnansweredIrrelevant: (id: string) => Promise<void>;
 };
 
@@ -19,50 +30,101 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   chunks: {},
   unanswered: [],
   loading: false,
-  fetchArticles: async (organizationId) => {
+
+  // Load all articles for the current organization
+  fetchArticles: async (organizationId: string) => {
     set({ loading: true });
     const { data, error } = await supabase
       .from('knowledge_articles')
       .select('*')
       .eq('organization_id', organizationId)
-      .order('updated_at', { ascending: false });
+      .order('created_at', { ascending: false });
+
     if (error) throw error;
-    set({ articles: data ?? [], loading: false });
+
+    set({
+      articles: data ?? [],
+      loading: false
+    });
   },
-  fetchChunks: async (articleId) => {
+
+  // Load chunks for a specific article
+  fetchChunks: async (articleId: string) => {
     const { data, error } = await supabase
       .from('knowledge_chunks')
       .select('*')
-      .eq('article_id', articleId)
-      .order('id', { ascending: true });
+      .eq('article_id', articleId);
+
     if (error) throw error;
-    set((state) => ({ chunks: { ...state.chunks, [articleId]: data ?? [] } }));
+
+    set((state) => ({
+      chunks: {
+        ...state.chunks,
+        [articleId]: data ?? []
+      }
+    }));
   },
-  fetchUnanswered: async (organizationId) => {
+
+  // Load unanswered questions (for training the KB)
+  fetchUnanswered: async (organizationId: string) => {
     const { data, error } = await supabase
       .from('unanswered_questions')
       .select('*')
       .eq('organization_id', organizationId)
       .order('occurrences', { ascending: false });
+
     if (error) throw error;
-    set({ unanswered: data ?? [] });
+
+    set({
+      unanswered: data ?? []
+    });
   },
+
+  // Create or update a KB article
   saveArticle: async (payload) => {
     const { id, ...rest } = payload;
+
+    let saved: KnowledgeArticle | null = null;
+
     if (id) {
-      const { error } = await supabase.from('knowledge_articles').update(rest).eq('id', id);
+      const { data, error } = await supabase
+        .from('knowledge_articles')
+        .update(rest)
+        .eq('id', id)
+        .select('*')
+        .single();
+
       if (error) throw error;
+      saved = data;
     } else {
-      const { error } = await supabase.from('knowledge_articles').insert(rest);
+      const { data, error } = await supabase
+        .from('knowledge_articles')
+        .insert(rest)
+        .select('*')
+        .single();
+
       if (error) throw error;
+      saved = data;
     }
-    if (payload.organization_id) {
-      await get().fetchArticles(payload.organization_id);
+
+    if (saved?.organization_id) {
+      await get().fetchArticles(saved.organization_id);
     }
+
+    return saved!;
   },
+
+  // Remove an unanswered question once handled / ignored
   markUnansweredIrrelevant: async (id) => {
-    const { error } = await supabase.from('unanswered_questions').delete().eq('id', id);
+    const { error } = await supabase
+      .from('unanswered_questions')
+      .delete()
+      .eq('id', id);
+
     if (error) throw error;
-    set((state) => ({ unanswered: state.unanswered.filter((item) => item.id !== id) }));
+
+    set((state) => ({
+      unanswered: state.unanswered.filter((item) => item.id !== id)
+    }));
   }
 }));
