@@ -26,47 +26,173 @@ export const useChatStore = create<ChatState>((set, get) => ({
   filter: 'all',
   loading: false,
   aiToggle: {},
+
+  /* ------------------------------------------------------------------ */
+  /*  FETCH CONVERSATIONS                                               */
+  /* ------------------------------------------------------------------ */
   fetchConversations: async (organizationId: string) => {
     set({ loading: true });
+
     const { data, error } = await supabase
       .from('conversations')
       .select('*')
       .eq('organization_id', organizationId)
       .order('last_message_at', { ascending: false });
+
     if (error) throw error;
-    const aiToggle = Object.fromEntries((data ?? []).map((conversation) => [conversation.id, conversation.ai_enabled]));
-    set({ conversations: data ?? [], loading: false, aiToggle });
+
+    const aiToggle = Object.fromEntries(
+      (data ?? []).map((c) => [c.id, c.ai_enabled])
+    );
+
+    set({
+      conversations: data ?? [],
+      aiToggle,
+      loading: false
+    });
   },
+
+  /* ------------------------------------------------------------------ */
+  /*  FETCH MESSAGES FOR A CONVERSATION                                 */
+  /* ------------------------------------------------------------------ */
   fetchMessages: async (conversationId: string) => {
     const { data, error } = await supabase
       .from('messages')
       .select('*')
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true });
+
     if (error) throw error;
-    set((state) => ({ messages: { ...state.messages, [conversationId]: data ?? [] } }));
+
+    set((state) => ({
+      messages: { ...state.messages, [conversationId]: data ?? [] }
+    }));
   },
-  setActiveConversation: (conversationId) => set({ activeConversationId: conversationId }),
+
+  /* ------------------------------------------------------------------ */
+  /*  SET ACTIVE CONVERSATION                                           */
+  /* ------------------------------------------------------------------ */
+  setActiveConversation: (conversationId) =>
+    set({ activeConversationId: conversationId }),
+
+  /* ------------------------------------------------------------------ */
+  /*  SET FILTER                                                         */
+  /* ------------------------------------------------------------------ */
   setFilter: (filter) => set({ filter }),
+
+  /* ------------------------------------------------------------------ */
+  /*  TOGGLE AI ON/OFF FOR CONVERSATION                                 */
+  /* ------------------------------------------------------------------ */
   toggleAI: async (conversationId, enabled) => {
-    const { error } = await supabase.from('conversations').update({ ai_enabled: enabled }).eq('id', conversationId);
+    const { error } = await supabase
+      .from('conversations')
+      .update({ ai_enabled: enabled })
+      .eq('id', conversationId);
+
     if (error) throw error;
+
     set((state) => ({
       aiToggle: { ...state.aiToggle, [conversationId]: enabled },
-      conversations: state.conversations.map((conversation) =>
-        conversation.id === conversationId ? { ...conversation, ai_enabled: enabled } : conversation
+      conversations: state.conversations.map((c) =>
+        c.id === conversationId ? { ...c, ai_enabled: enabled } : c
       )
     }));
   },
+
+  /* ------------------------------------------------------------------ */
+  /*  SEND MESSAGE (USER → BOT)                                         */
+  /* ------------------------------------------------------------------ */
   sendMessage: async (conversationId, payload) => {
-    const { error } = await supabase.from('messages').insert({
+    const state = get();
+
+    const text = payload.text?.trim() ?? '';
+    const sender = payload.sender ?? 'user';
+    const message_type = payload.message_type ?? 'text';
+
+    if (!text || !conversationId) return;
+
+    /* --------------------------- 1. Insert USER Message --------------------------- */
+    const { error: userError } = await supabase.from('messages').insert({
       conversation_id: conversationId,
-      sender: payload.sender ?? 'user',
-      message_type: payload.message_type ?? 'text',
-      text: payload.text ?? '',
+      sender,
+      message_type,
+      text,
       media_url: payload.media_url ?? null
     });
-    if (error) throw error;
+
+    if (userError) {
+      console.error('❌ Error inserting user message:', userError);
+      throw userError;
+    }
+
+    // Refresh UI so user message shows instantly
     await get().fetchMessages(conversationId);
+
+    /* --------------------------- 2. AI Disabled? Stop. --------------------------- */
+    const aiEnabled = state.aiToggle[conversationId];
+    if (sender !== 'user' || !aiEnabled) return;
+
+    /* --------------------------- 3. Fire-and-forget AI Call ------------------------- */
+    (async () => {
+      try {
+        const { data: aiData, error: aiError } = await supabase.functions.invoke(
+          'ai-handler',
+          {
+            body: {
+              conversation_id: conversationId,
+              user_message: text
+            }
+          }
+        );
+
+        if (aiError) {
+          console.error('❌ AI handler failed:', aiError);
+          return;
+        }
+
+        const aiText =
+          (aiData as any)?.ai_response ??
+          (aiData as any)?.response ??
+          null;
+
+        if (!aiText) {
+          console.warn('⚠️ ai-handler returned no ai_response');
+          return;
+        }
+
+        /* --------------------------- 4. Insert BOT reply --------------------------- */
+        const { error: botError } = await supabase.from('messages').insert({
+          conversation_id: conversationId,
+          sender: 'bot',
+          message_type: 'text',
+          text: aiText,
+          media_url: null
+        });
+
+        if (botError) {
+          console.error('❌ Error inserting bot message:', botError);
+          return;
+        }
+
+        // Refresh UI after bot message
+        await get().fetchMessages(conversationId);
+
+        /* --------------------------- 5. Update Conversation Ordering ---------------------------- */
+        const { conversations } = get();
+        const orgId = conversations.find((c) => c.id === conversationId)
+          ?.organization_id;
+
+        await supabase
+          .from('conversations')
+          .update({ last_message_at: new Date().toISOString() })
+          .eq('id', conversationId);
+
+        if (orgId) {
+          await get().fetchConversations(orgId);
+        }
+      } catch (err) {
+        console.error('❌ Auto-reply AI error:', err);
+      }
+    })();
   }
 }));
