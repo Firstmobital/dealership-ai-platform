@@ -168,3 +168,10 @@ verify_jwt = false
 
 [functions.ai-test]
 verify_jwt = false
+
+# Disable JWT verification for WhatsApp inbound webhook (IMPORTANT)
+[functions.whatsapp-inbound]
+verify_jwt = false
+
+[functions.whatsapp-send]
+verify_jwt = false
