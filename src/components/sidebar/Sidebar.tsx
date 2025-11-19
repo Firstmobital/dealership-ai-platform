@@ -1,4 +1,13 @@
-import { Building2, MessageCircle, BookOpen, Bot, Workflow, Megaphone, Settings } from 'lucide-react';
+import {
+  Building2,
+  MessageCircle,
+  BookOpen,
+  Bot,
+  Workflow,
+  Megaphone,
+  Settings,
+  PhoneCall
+} from 'lucide-react';
 import { SidebarLink } from './SidebarLink';
 
 export function Sidebar() {
@@ -15,6 +24,11 @@ export function Sidebar() {
         <SidebarLink to="/workflows" icon={Workflow} label="Workflows" />
         <SidebarLink to="/campaigns" icon={Megaphone} label="Campaigns" />
         <SidebarLink to="/settings" icon={Settings} label="Settings" />
+        <SidebarLink
+          to="/settings/whatsapp"
+          icon={PhoneCall}
+          label="WhatsApp Settings"
+        />
       </nav>
     </aside>
   );

@@ -1,61 +1,161 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabaseClient';
-import type { Campaign, CampaignContact, CampaignLog } from '../types/database';
+import type { Campaign, CampaignMessage } from '../types/database';
+
+type CsvRow = {
+  phone: string;
+  variables: Record<string, unknown>;
+};
 
 type CampaignState = {
   campaigns: Campaign[];
-  contacts: Record<string, CampaignContact[]>;
-  logs: Record<string, CampaignLog[]>;
+  messages: Record<string, CampaignMessage[]>;
   loading: boolean;
+
   fetchCampaigns: (organizationId: string) => Promise<void>;
-  fetchCampaignContacts: (campaignId: string) => Promise<void>;
-  fetchCampaignLogs: (campaignId: string) => Promise<void>;
-  saveCampaign: (payload: Partial<Campaign>) => Promise<void>;
+  fetchCampaignMessages: (campaignId: string) => Promise<void>;
+
+  createCampaignWithMessages: (args: {
+    organizationId: string;
+    name: string;
+    description?: string;
+    templateBody: string;
+    templateVariables: string[];
+    scheduledAt: string | null;
+    rows: CsvRow[];
+  }) => Promise<string>;
+
+  launchCampaign: (campaignId: string, scheduledAt?: string | null) => Promise<void>;
 };
 
-export const useCampaignStore = create<CampaignState>((set) => ({
+export const useCampaignStore = create<CampaignState>((set, get) => ({
   campaigns: [],
-  contacts: {},
-  logs: {},
+  messages: {},
   loading: false,
-  fetchCampaigns: async (organizationId) => {
+
+  fetchCampaigns: async (organizationId: string) => {
     set({ loading: true });
     const { data, error } = await supabase
       .from('campaigns')
       .select('*')
       .eq('organization_id', organizationId)
       .order('created_at', { ascending: false });
-    if (error) throw error;
+
+    if (error) {
+      console.error('[useCampaignStore] fetchCampaigns error', error);
+      set({ loading: false });
+      throw error;
+    }
+
     set({ campaigns: data ?? [], loading: false });
   },
-  fetchCampaignContacts: async (campaignId) => {
+
+  fetchCampaignMessages: async (campaignId: string) => {
     const { data, error } = await supabase
-      .from('campaign_contacts')
-      .select('*')
-      .eq('campaign_id', campaignId);
-    if (error) throw error;
-    set((state) => ({ contacts: { ...state.contacts, [campaignId]: data ?? [] } }));
-  },
-  fetchCampaignLogs: async (campaignId) => {
-    const { data, error } = await supabase
-      .from('campaign_logs')
+      .from('campaign_messages')
       .select('*')
       .eq('campaign_id', campaignId)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    set((state) => ({ logs: { ...state.logs, [campaignId]: data ?? [] } }));
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('[useCampaignStore] fetchCampaignMessages error', error);
+      throw error;
+    }
+
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [campaignId]: (data ?? []) as CampaignMessage[],
+      },
+    }));
   },
-  saveCampaign: async (payload) => {
-    const { id, ...rest } = payload;
-    if (id) {
-      const { error } = await supabase.from('campaigns').update(rest).eq('id', id);
-      if (error) throw error;
-    } else {
-      const { error } = await supabase.from('campaigns').insert(rest);
-      if (error) throw error;
+
+  createCampaignWithMessages: async ({
+    organizationId,
+    name,
+    description,
+    templateBody,
+    templateVariables,
+    scheduledAt,
+    rows,
+  }) => {
+    const status = scheduledAt ? 'scheduled' : 'draft';
+    const totalRecipients = rows.length;
+
+    // 1) Create campaign
+    const { data: campaignData, error: campaignError } = await supabase
+      .from('campaigns')
+      .insert({
+        organization_id: organizationId,
+        name,
+        description: description ?? null,
+        channel: 'whatsapp',
+        status,
+        scheduled_at: scheduledAt,
+        template_body: templateBody,
+        template_variables: templateVariables,
+        total_recipients: totalRecipients,
+      })
+      .select('id')
+      .single();
+
+    if (campaignError || !campaignData) {
+      console.error('[useCampaignStore] createCampaign error', campaignError);
+      throw campaignError ?? new Error('Failed to create campaign');
     }
-    if (payload.organization_id) {
-      await useCampaignStore.getState().fetchCampaigns(payload.organization_id);
+
+    const campaignId = campaignData.id as string;
+
+    // 2) Insert campaign_messages
+    if (rows.length > 0) {
+      const messagesPayload = rows.map((row) => ({
+        organization_id: organizationId,
+        campaign_id: campaignId,
+        phone: row.phone,
+        variables: row.variables,
+        status: 'pending',
+      }));
+
+      const { error: messagesError } = await supabase
+        .from('campaign_messages')
+        .insert(messagesPayload);
+
+      if (messagesError) {
+        console.error('[useCampaignStore] insert campaign_messages error', messagesError);
+        throw messagesError;
+      }
     }
-  }
+
+    // 3) Refresh campaigns + messages in store
+    await get().fetchCampaigns(organizationId);
+    await get().fetchCampaignMessages(campaignId);
+
+    return campaignId;
+  },
+
+  launchCampaign: async (campaignId, scheduledAt) => {
+    const effectiveScheduledAt = scheduledAt ?? new Date().toISOString();
+
+    const { error } = await supabase
+      .from('campaigns')
+      .update({
+        status: 'scheduled',
+        scheduled_at: effectiveScheduledAt,
+      })
+      .eq('id', campaignId);
+
+    if (error) {
+      console.error('[useCampaignStore] launchCampaign error', error);
+      throw error;
+    }
+
+    // Optimistic update in store
+    set((state) => ({
+      campaigns: state.campaigns.map((c) =>
+        c.id === campaignId
+          ? { ...c, status: 'scheduled', scheduled_at: effectiveScheduledAt }
+          : c
+      ),
+    }));
+  },
 }));

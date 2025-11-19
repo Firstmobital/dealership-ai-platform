@@ -1,5 +1,11 @@
+// -------------------------------------------------------------
+// GLOBAL TYPES
+// -------------------------------------------------------------
 export type UUID = string;
 
+// -------------------------------------------------------------
+// ORGANIZATIONS
+// -------------------------------------------------------------
 export type Organization = {
   id: UUID;
   name: string;
@@ -14,6 +20,9 @@ export type OrganizationUser = {
   role: 'owner' | 'admin' | 'agent';
 };
 
+// -------------------------------------------------------------
+// CONTACTS
+// -------------------------------------------------------------
 export type Contact = {
   id: UUID;
   organization_id: UUID;
@@ -22,6 +31,11 @@ export type Contact = {
   labels: Record<string, unknown> | null;
 };
 
+// -------------------------------------------------------------
+// CONVERSATIONS + MESSAGES
+// -------------------------------------------------------------
+export type ConversationChannel = 'web' | 'whatsapp' | 'internal';
+
 export type Conversation = {
   id: UUID;
   organization_id: UUID;
@@ -29,6 +43,7 @@ export type Conversation = {
   assigned_to: UUID | null;
   ai_enabled: boolean;
   last_message_at: string | null;
+  channel: ConversationChannel;
 };
 
 export type MessageSender = 'user' | 'bot' | 'customer';
@@ -41,8 +56,12 @@ export type Message = {
   text: string | null;
   media_url: string | null;
   created_at: string;
+  channel: ConversationChannel;
 };
 
+// -------------------------------------------------------------
+// KNOWLEDGE BASE + RAG
+// -------------------------------------------------------------
 export type KnowledgeArticle = {
   id: UUID;
   organization_id: UUID;
@@ -67,6 +86,9 @@ export type UnansweredQuestion = {
   occurrences: number;
 };
 
+// -------------------------------------------------------------
+// BOT PERSONALITY + INSTRUCTIONS
+// -------------------------------------------------------------
 export type BotPersonality = {
   organization_id: UUID;
   tone: string;
@@ -83,6 +105,9 @@ export type BotInstruction = {
   rules: Record<string, unknown>;
 };
 
+// -------------------------------------------------------------
+// WORKFLOWS
+// -------------------------------------------------------------
 export type Workflow = {
   id: UUID;
   organization_id: UUID;
@@ -107,30 +132,84 @@ export type WorkflowLog = {
   created_at?: string;
 };
 
-export type CampaignStatus = 'draft' | 'scheduled' | 'sending' | 'completed' | 'failed';
+// -------------------------------------------------------------
+// CAMPAIGNS (NEW BULK MESSAGING SYSTEM)
+// -------------------------------------------------------------
+export type CampaignStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'sending'
+  | 'completed'
+  | 'cancelled'
+  | 'failed';
 
 export type Campaign = {
   id: UUID;
   organization_id: UUID;
   name: string;
-  template_id: string | null;
-  total_contacts: number;
-  sent_count: number;
+  description: string | null;
+
+  channel: 'whatsapp';
+
   status: CampaignStatus;
-};
+  scheduled_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
 
-export type CampaignContact = {
-  id: UUID;
-  campaign_id: UUID;
-  contact_id: UUID;
-  variables: Record<string, unknown> | null;
-};
+  template_body: string;
+  template_variables: string[] | null;
 
-export type CampaignLog = {
-  id: UUID;
-  campaign_id: UUID;
-  contact_id: UUID;
-  status: string;
-  response: Record<string, unknown> | null;
+  total_recipients: number;
+  sent_count: number;
+  failed_count: number;
+
   created_at?: string;
+};
+
+// -------------------------------------------------------------
+// CAMPAIGN MESSAGES
+// -------------------------------------------------------------
+export type CampaignMessageStatus =
+  | 'pending'
+  | 'queued'
+  | 'sent'
+  | 'delivered'
+  | 'failed'
+  | 'cancelled';
+
+export type CampaignMessage = {
+  id: UUID;
+  organization_id: UUID;
+  campaign_id: UUID;
+  contact_id: UUID | null;
+
+  phone: string;
+  variables: Record<string, unknown> | null;
+
+  status: CampaignMessageStatus;
+  error: string | null;
+  whatsapp_message_id: string | null;
+
+  dispatched_at: string | null;
+  delivered_at: string | null;
+  created_at?: string;
+};
+
+// -------------------------------------------------------------
+// WHATSAPP SETTINGS (FINAL SCHEMA)
+// -------------------------------------------------------------
+export type WhatsappSettings = {
+  id: UUID;
+  organization_id: UUID;
+
+  waba_phone_number_id: string;
+  waba_business_account_id: string;
+
+  access_token: string; // permanent system token
+  phone_number: string;
+
+  is_active: boolean;
+
+  created_at?: string;
+  updated_at?: string;
 };

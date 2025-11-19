@@ -1,67 +1,51 @@
-import { create } from "zustand";
-import { supabase } from "../lib/supabaseClient";
+import { create } from 'zustand';
+import type { WhatsappSettings } from '../types/database';
+import { fetchWhatsappSettings, upsertWhatsappSettings } from '../lib/api/whatsapp';
 
-export type WhatsappSettings = {
-  id: string;
-  organization_id: string;
-  phone_number: string | null;
-  api_token: string | null;
-  verify_token: string | null;
-  whatsapp_phone_id: string | null;
-  whatsapp_business_id: string | null;
-  created_at?: string;
-};
-
-type State = {
+type WhatsappSettingsState = {
   settings: WhatsappSettings | null;
   loading: boolean;
-
-  loadSettings: (organization_id: string) => Promise<void>;
+  error: string | null;
+  loadSettings: (organizationId: string) => Promise<void>;
   saveSettings: (
-    organization_id: string,
+    organizationId: string,
     values: Partial<WhatsappSettings>
   ) => Promise<void>;
 };
 
-export const useWhatsappSettingsStore = create<State>((set, get) => ({
+export const useWhatsappSettingsStore = create<WhatsappSettingsState>((set) => ({
   settings: null,
   loading: false,
+  error: null,
 
-  loadSettings: async (organization_id: string) => {
-    set({ loading: true });
+  loadSettings: async (organizationId: string) => {
+    set({ loading: true, error: null });
 
-    const { data, error } = await supabase
-      .from("whatsapp_settings")
-      .select("*")
-      .eq("organization_id", organization_id)
-      .maybeSingle();
-
-    if (error) {
-      console.error("[WA-SETTINGS] Load error:", error);
+    try {
+      const data = await fetchWhatsappSettings(organizationId);
+      set({ settings: data, loading: false });
+    } catch (error: any) {
+      set({
+        loading: false,
+        error: error?.message ?? 'Failed to load WhatsApp settings'
+      });
+      throw error;
     }
-
-    set({ settings: data, loading: false });
   },
 
-  saveSettings: async (organization_id: string, values) => {
-    set({ loading: true });
+  saveSettings: async (organizationId: string, values) => {
+    set({ loading: true, error: null });
 
-    const { data, error } = await supabase
-      .from("whatsapp_settings")
-      .upsert(
-        {
-          organization_id,
-          ...values,
-        },
-        { onConflict: "organization_id" }
-      )
-      .select()
-      .maybeSingle();
-
-    if (error) {
-      console.error("[WA-SETTINGS] Save error:", error);
+    try {
+      const data = await upsertWhatsappSettings(organizationId, values);
+      set({ settings: data, loading: false });
+    } catch (error: any) {
+      console.error('[WA-SETTINGS] Save error:', error);
+      set({
+        loading: false,
+        error: error?.message ?? 'Failed to save WhatsApp settings'
+      });
+      throw error;
     }
-
-    set({ settings: data, loading: false });
-  },
+  }
 }));

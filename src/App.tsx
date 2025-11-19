@@ -6,6 +6,7 @@ import { BotPersonalityModule } from './modules/bot-personality/BotPersonalityMo
 import { WorkflowModule } from './modules/workflows/WorkflowModule';
 import { CampaignsModule } from './modules/campaigns/CampaignsModule';
 import { SettingsModule } from './modules/dashboard/SettingsModule';
+import { WhatsappSettingsModule } from './modules/settings/WhatsappSettingsModule';
 
 function App() {
   return (
@@ -17,7 +18,10 @@ function App() {
         <Route path="bot" element={<BotPersonalityModule />} />
         <Route path="workflows" element={<WorkflowModule />} />
         <Route path="campaigns" element={<CampaignsModule />} />
+
+        {/* Settings */}
         <Route path="settings" element={<SettingsModule />} />
+        <Route path="settings/whatsapp" element={<WhatsappSettingsModule />} />
       </Route>
     </Routes>
   );
