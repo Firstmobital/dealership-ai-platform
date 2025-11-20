@@ -3,69 +3,71 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
-// --- ENV VARS ---
+// ------------------------------------------------------------------
+// ENV VARIABLES (YOUR CHOSEN STANDARD)
+// ------------------------------------------------------------------
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
-const SUPABASE_URL = Deno.env.get("PROJECT_URL")!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 
-// --- CLIENTS ---
+// ------------------------------------------------------------------
+// CLIENTS
+// ------------------------------------------------------------------
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+// ------------------------------------------------------------------
+// REQUEST BODY TYPE
+// ------------------------------------------------------------------
 type AiHandlerBody = {
   conversation_id?: string;
   user_message?: string;
 };
 
+// ==================================================================
+// MAIN HANDLER
+// ==================================================================
 serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
 
   try {
+    // --------------------------------------------------------------
+    // 0) Parse body
+    // --------------------------------------------------------------
     const body = (await req.json()) as AiHandlerBody;
-    const conversation_id = body.conversation_id;
-    const user_message_raw = body.user_message;
 
-    if (!conversation_id || !user_message_raw) {
+    const conversation_id = body.conversation_id;
+    const raw_message = body.user_message;
+
+    if (!conversation_id || !raw_message) {
       return new Response(
-        JSON.stringify({
-          error: "Missing conversation_id or user_message",
-        }),
+        JSON.stringify({ error: "Missing conversation_id or user_message" }),
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    const user_message = user_message_raw.trim();
+    const user_message = raw_message.trim();
     if (!user_message) {
       return new Response(
-        JSON.stringify({
-          error: "Empty user_message",
-        }),
+        JSON.stringify({ error: "Empty user_message" }),
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    // ------------------------------------------------------------------
-    // 1) Load conversation (org + channel + contact)
-    // ------------------------------------------------------------------
-    const {
-      data: conversation,
-      error: convError,
-    } = await supabase
+    // --------------------------------------------------------------
+    // 1) Load conversation
+    // --------------------------------------------------------------
+    const { data: conversation, error: convError } = await supabase
       .from("conversations")
       .select("id, organization_id, channel, contact_id")
       .eq("id", conversation_id)
       .maybeSingle();
 
-    if (convError) {
-      console.error("[ai-handler] Error loading conversation:", convError);
-      throw convError;
-    }
-
+    if (convError) throw convError;
     if (!conversation) {
       return new Response(
         JSON.stringify({ error: "Conversation not found" }),
@@ -73,30 +75,30 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    const organizationId: string = conversation.organization_id;
-    const channel: string = (conversation as any).channel || "web";
-    const contactId: string | null = (conversation as any).contact_id ?? null;
+    const organizationId = conversation.organization_id;
+    const channel = conversation.channel || "web";
+    const contactId = conversation.contact_id ?? null;
 
-    // For WhatsApp replies we need the contact's phone
+    // --------------------------------------------------------------
+    // 2) If WhatsApp → fetch customer phone
+    // --------------------------------------------------------------
     let contactPhone: string | null = null;
 
     if (channel === "whatsapp" && contactId) {
-      const { data: contact, error: contactError } = await supabase
+      const { data: contact } = await supabase
         .from("contacts")
         .select("phone")
         .eq("id", contactId)
         .maybeSingle();
 
-      if (contactError) {
-        console.error("[ai-handler] Error loading contact:", contactError);
-      } else if (contact?.phone) {
+      if (contact?.phone) {
         contactPhone = contact.phone;
       }
     }
 
-    // ------------------------------------------------------------------
-    // 2) Load bot personality & instructions
-    // ------------------------------------------------------------------
+    // --------------------------------------------------------------
+    // 3) Load bot personality & additional rules
+    // --------------------------------------------------------------
     const { data: personality } = await supabase
       .from("bot_personality")
       .select("*")
@@ -110,72 +112,65 @@ serve(async (req: Request): Promise<Response> => {
       .maybeSingle();
 
     const fallbackMessage =
-      personality?.fallback_message ||
+      personality?.fallback_message ??
       "I'm sorry, I do not have enough dealership information to answer that.";
 
     const personaBlock = [
-      personality?.tone ? `- Tone: ${personality.tone}` : null,
-      personality?.language ? `- Language: ${personality.language}` : null,
+      personality?.tone && `- Tone: ${personality.tone}`,
+      personality?.language && `- Language: ${personality.language}`,
       personality?.short_responses
-        ? "- Keep responses concise and focused (short_responses = true)."
-        : "- You may use normal length responses when needed.",
+        ? "- Responses should be concise (short_responses = true)."
+        : "- Normal-length responses allowed.",
       personality?.emoji_usage
-        ? "- You may occasionally use relevant emojis."
-        : "- Avoid using emojis.",
-      personality?.gender_voice
-        ? `- Voice: ${personality.gender_voice}`
-        : null,
+        ? "- You may add relevant emojis."
+        : "- Avoid emojis.",
+      personality?.gender_voice && `- Voice style: ${personality.gender_voice}`,
     ]
       .filter(Boolean)
       .join("\n");
 
     const extraRules = extraInstructions?.rules
       ? JSON.stringify(extraInstructions.rules)
-      : "";
+      : "{}";
 
-    // ------------------------------------------------------------------
-    // 3) Load conversation history (last ~20 messages)
-    // ------------------------------------------------------------------
-    const { data: recentMessages, error: historyError } = await supabase
+    // --------------------------------------------------------------
+    // 4) Load last 20 messages
+    // --------------------------------------------------------------
+    const { data: recentMessages } = await supabase
       .from("messages")
       .select("sender, message_type, text, created_at")
       .eq("conversation_id", conversation_id)
       .order("created_at", { ascending: true })
       .limit(20);
 
-    if (historyError) {
-      console.error("[ai-handler] Error loading message history:", historyError);
-    }
-
-    let historyText = "";
-    if (recentMessages && recentMessages.length > 0) {
-      historyText = recentMessages
-        .map((m) => {
+    const historyText =
+      recentMessages
+        ?.map((m) => {
           const role =
             m.sender === "bot"
               ? "Bot"
               : m.sender === "customer"
               ? "Customer"
               : "User";
-          const ts = (m as any).created_at
-            ? new Date((m as any).created_at as string).toISOString()
-            : "";
-          const content = m.text || "";
-          return `${ts} - ${role}: ${content}`;
-        })
-        .join("\n");
-    }
 
-    // ------------------------------------------------------------------
-    // 4) Send typing indicator for WhatsApp BEFORE heavy work
-    // ------------------------------------------------------------------
+          const ts = m.created_at
+            ? new Date(m.created_at).toISOString()
+            : "";
+
+          return `${ts} - ${role}: ${m.text ?? ""}`;
+        })
+        .join("\n") || "No previous messages.";
+
+    // --------------------------------------------------------------
+    // 5) Send typing indicator (WhatsApp only)
+    // --------------------------------------------------------------
     if (channel === "whatsapp" && contactPhone) {
       try {
-        await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-send`, {
+        await fetch(`${PROJECT_URL}/functions/v1/whatsapp-send`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
           },
           body: JSON.stringify({
             organization_id: organizationId,
@@ -183,14 +178,14 @@ serve(async (req: Request): Promise<Response> => {
             type: "typing_on",
           }),
         });
-      } catch (typingError) {
-        console.error("[ai-handler] typing_on error:", typingError);
+      } catch (err) {
+        console.error("[ai-handler] typing_on error:", err);
       }
     }
 
-    // ------------------------------------------------------------------
-    // 5) RAG: embedding + knowledge_chunks match
-    // ------------------------------------------------------------------
+    // --------------------------------------------------------------
+    // 6) RAG: Embedding + chunk similarity match
+    // --------------------------------------------------------------
     let contextText = "No matching dealership knowledge found.";
 
     try {
@@ -200,8 +195,9 @@ serve(async (req: Request): Promise<Response> => {
       });
 
       const embedding = embeddingResponse.data?.[0]?.embedding;
-      if (embedding && Array.isArray(embedding)) {
-        const { data: matches, error: matchError } = await supabase.rpc(
+
+      if (embedding) {
+        const { data: matches } = await supabase.rpc(
           "match_knowledge_chunks",
           {
             query_embedding: embedding,
@@ -210,108 +206,91 @@ serve(async (req: Request): Promise<Response> => {
           },
         );
 
-        if (matchError) {
-          console.error("[ai-handler] RAG match error:", matchError);
-        } else if (matches && matches.length > 0) {
+        if (matches?.length) {
           const articleIds = [
-            ...new Set((matches as any[]).map((m) => m.article_id).filter(Boolean)),
+            ...new Set(matches.map((m: any) => m.article_id)),
           ];
 
-          if (articleIds.length > 0) {
-            const { data: articles, error: articlesError } = await supabase
-              .from("knowledge_articles")
-              .select("id, organization_id")
-              .in("id", articleIds);
+          const { data: articles } = await supabase
+            .from("knowledge_articles")
+            .select("id, organization_id")
+            .in("id", articleIds);
 
-            if (articlesError) {
-              console.error(
-                "[ai-handler] Error loading knowledge_articles:",
-                articlesError,
-              );
-            } else {
-              const allowedIds = new Set(
-                (articles || [])
-                  .filter((a) => a.organization_id === organizationId)
-                  .map((a) => a.id),
-              );
+          const allowed = new Set(
+            (articles || [])
+              .filter((a) => a.organization_id === organizationId)
+              .map((a) => a.id),
+          );
 
-              const filtered = (matches as any[]).filter((m) =>
-                allowedIds.has(m.article_id)
-              );
+          const filtered = matches.filter((m: any) =>
+            allowed.has(m.article_id)
+          );
 
-              if (filtered.length > 0) {
-                contextText = filtered
-                  .map(
-                    (m) =>
-                      `- ${m.chunk} (relevance: ${Number(m.similarity).toFixed(
-                        2,
-                      )})`,
-                  )
-                  .join("\n");
-              }
-            }
+          if (filtered.length > 0) {
+            contextText = filtered
+              .map(
+                (m: any) =>
+                  `- ${m.chunk} (relevance: ${Number(m.similarity).toFixed(
+                    2,
+                  )})`,
+              )
+              .join("\n");
           }
         }
       }
-    } catch (ragError) {
-      console.error("[ai-handler] Error during embedding/RAG:", ragError);
+    } catch (err) {
+      console.error("[ai-handler] RAG error:", err);
     }
 
-    // ------------------------------------------------------------------
-    // 6) Build system prompt (persona + channel style + context)
-    // ------------------------------------------------------------------
+    // --------------------------------------------------------------
+    // 7) Build system prompt
+    // --------------------------------------------------------------
     const channelRules =
       channel === "whatsapp"
         ? `
-WHATSAPP STYLE RULES:
-- Keep answers short, friendly, and easy to read on mobile.
-- Use short paragraphs and bullet points.
+WHATSAPP RULES:
+- Keep answers short and readable.
+- Use bullet points and small paragraphs.
 - Avoid long walls of text.
-- If you mention prices, clearly say they are approximate and can change.
-        `.trim()
+- Mention that prices are approximate and may vary.
+      `.trim()
         : `
-WEB/DEFAULT STYLE RULES:
-- You may use normal paragraph lengths but stay concise.
-- Structure answers with headings and bullet points when useful.
-        `.trim();
+WEB RULES:
+- Use normal paragraphs and structured formatting.
+      `.trim();
 
     const systemPrompt = `
-You are a helpful AI showroom assistant for an automotive dealership.
+You are an AI showroom assistant for an automotive dealership.
 
 ORGANIZATION:
 - Organization ID: ${organizationId}
 - Channel: ${channel}
 
-BOT PERSONALITY:
-${personaBlock || "- Use a neutral, polite tone."}
+PERSONALITY:
+${personaBlock}
 
-ADDITIONAL RULES (JSON from bot_instructions, may be empty):
-${extraRules || "{}"}
+ADDITIONAL RULES (from bot_instructions):
+${extraRules}
 
-DEALERSHIP KNOWLEDGE CONTEXT:
+KNOWLEDGE CONTEXT:
 ${contextText}
 
-RECENT CONVERSATION HISTORY:
-${historyText || "No previous messages."}
+RECENT HISTORY:
+${historyText}
 
-RESPONSE GUIDELINES:
-- Answer the user's latest question or message clearly.
-- Use only trustworthy information. Prefer the DEALERSHIP KNOWLEDGE CONTEXT when available.
-- If specific prices/discounts are not present in the context, speak only in approximate ranges and clearly state they can vary.
-- Do NOT invent exact on-road prices, insurance, RTO, or discounts if not in context.
-- If you genuinely cannot answer from the context and reasonable domain knowledge, reply EXACTLY with:
-"${fallbackMessage}"
-
+RESPONSE RULES:
+- Answer the user's latest message.
+- Prefer dealership knowledge context.
+- If unsure → reply EXACTLY: "${fallbackMessage}"
 ${channelRules}
 `.trim();
 
-    // ------------------------------------------------------------------
-    // 7) Call OpenAI
-    // ------------------------------------------------------------------
+    // --------------------------------------------------------------
+    // 8) Call OpenAI
+    // --------------------------------------------------------------
     let aiResponseText = fallbackMessage;
-
     try {
-      const completion = await openai.chat.completions.create({
+      const resp = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt },
@@ -320,39 +299,31 @@ ${channelRules}
         temperature: 0.2,
       });
 
-      const content = completion.choices?.[0]?.message?.content?.trim();
-      if (content) {
-        aiResponseText = content;
-      }
-    } catch (llmError) {
-      console.error("[ai-handler] OpenAI error:", llmError);
-      // aiResponseText remains fallbackMessage
+      const content = resp.choices?.[0]?.message?.content?.trim();
+      if (content) aiResponseText = content;
+    } catch (err) {
+      console.error("[ai-handler] OpenAI error:", err);
     }
 
-    // ------------------------------------------------------------------
-    // 8) Channel-specific behavior
-    // ------------------------------------------------------------------
-
-    // ⭐ Web / internal channel:
-    // - Just return ai_response (frontend will insert DB message)
+    // --------------------------------------------------------------
+    // 9) Web response (no outbound)
+    // --------------------------------------------------------------
     if (channel !== "whatsapp") {
-      const payload = {
-        conversation_id,
-        user_message,
-        ai_response: aiResponseText,
-      };
-
-      return new Response(JSON.stringify(payload), {
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          user_message,
+          ai_response: aiResponseText,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
 
-    // ⭐ WhatsApp channel:
-    // - Insert bot message in DB
-    // - Update last_message_at
-    // - Send WA reply via whatsapp-send
+    // --------------------------------------------------------------
+    // 10) WhatsApp channel: insert DB + send outbound
+    // --------------------------------------------------------------
     try {
-      const { error: botMsgError } = await supabase.from("messages").insert({
+      await supabase.from("messages").insert({
         conversation_id,
         sender: "bot",
         message_type: "text",
@@ -361,25 +332,21 @@ ${channelRules}
         channel: "whatsapp",
       });
 
-      if (botMsgError) {
-        console.error("[ai-handler] Error inserting bot message:", botMsgError);
-      }
-
       await supabase
         .from("conversations")
         .update({ last_message_at: new Date().toISOString() })
         .eq("id", conversation_id);
-    } catch (dbError) {
-      console.error("[ai-handler] Error inserting/updating DB:", dbError);
+    } catch (err) {
+      console.error("[ai-handler] DB insert error:", err);
     }
 
     if (contactPhone) {
       try {
-        await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-send`, {
+        await fetch(`${PROJECT_URL}/functions/v1/whatsapp-send`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
           },
           body: JSON.stringify({
             organization_id: organizationId,
@@ -388,29 +355,23 @@ ${channelRules}
             text: aiResponseText,
           }),
         });
-      } catch (waError) {
-        console.error("[ai-handler] Error calling whatsapp-send:", waError);
+      } catch (err) {
+        console.error("[ai-handler] Outbound WA error:", err);
       }
-    } else {
-      console.warn(
-        "[ai-handler] No contact phone found for WhatsApp reply, skipping outbound",
-      );
     }
 
-    // Still return ai_response for logging/debug
-    const payload = {
-      conversation_id,
-      user_message,
-      ai_response: aiResponseText,
-    };
-
-    return new Response(JSON.stringify(payload), {
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch (err: any) {
-    console.error("[ai-handler] Unhandled error:", err);
     return new Response(
-      JSON.stringify({ error: err?.message ?? "Internal Server Error" }),
+      JSON.stringify({
+        conversation_id,
+        user_message,
+        ai_response: aiResponseText,
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  } catch (err: any) {
+    console.error("[ai-handler] Fatal error:", err);
+    return new Response(
+      JSON.stringify({ error: err?.message || "Internal Server Error" }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }

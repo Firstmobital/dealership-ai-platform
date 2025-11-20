@@ -17,7 +17,7 @@ export type OrganizationUser = {
   id: UUID;
   organization_id: UUID;
   user_id: UUID;
-  role: 'owner' | 'admin' | 'agent';
+  role: "owner" | "admin" | "agent";
 };
 
 // -------------------------------------------------------------
@@ -34,7 +34,7 @@ export type Contact = {
 // -------------------------------------------------------------
 // CONVERSATIONS + MESSAGES
 // -------------------------------------------------------------
-export type ConversationChannel = 'web' | 'whatsapp' | 'internal';
+export type ConversationChannel = "web" | "whatsapp" | "internal";
 
 export type Conversation = {
   id: UUID;
@@ -46,7 +46,7 @@ export type Conversation = {
   channel: ConversationChannel;
 };
 
-export type MessageSender = 'user' | 'bot' | 'customer';
+export type MessageSender = "user" | "bot" | "customer";
 
 export type Message = {
   id: UUID;
@@ -136,12 +136,12 @@ export type WorkflowLog = {
 // CAMPAIGNS (NEW BULK MESSAGING SYSTEM)
 // -------------------------------------------------------------
 export type CampaignStatus =
-  | 'draft'
-  | 'scheduled'
-  | 'sending'
-  | 'completed'
-  | 'cancelled'
-  | 'failed';
+  | "draft"
+  | "scheduled"
+  | "sending"
+  | "completed"
+  | "cancelled"
+  | "failed";
 
 export type Campaign = {
   id: UUID;
@@ -149,7 +149,7 @@ export type Campaign = {
   name: string;
   description: string | null;
 
-  channel: 'whatsapp';
+  channel: "whatsapp";
 
   status: CampaignStatus;
   scheduled_at: string | null;
@@ -164,18 +164,19 @@ export type Campaign = {
   failed_count: number;
 
   created_at?: string;
+  updated_at?: string;
 };
 
 // -------------------------------------------------------------
 // CAMPAIGN MESSAGES
 // -------------------------------------------------------------
 export type CampaignMessageStatus =
-  | 'pending'
-  | 'queued'
-  | 'sent'
-  | 'delivered'
-  | 'failed'
-  | 'cancelled';
+  | "pending"
+  | "queued"
+  | "sent"
+  | "delivered"
+  | "failed"
+  | "cancelled";
 
 export type CampaignMessage = {
   id: UUID;
@@ -202,11 +203,11 @@ export type WhatsappSettings = {
   id: UUID;
   organization_id: UUID;
 
-  waba_phone_number_id: string;
-  waba_business_account_id: string;
-
-  access_token: string; // permanent system token
-  phone_number: string;
+  phone_number: string | null;
+  api_token: string | null;
+  verify_token: string | null;
+  whatsapp_phone_id: string | null;
+  whatsapp_business_id: string | null;
 
   is_active: boolean;
 

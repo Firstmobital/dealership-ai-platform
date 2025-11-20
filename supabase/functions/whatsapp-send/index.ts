@@ -2,22 +2,26 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
-// Environment variables
-const SUPABASE_URL = Deno.env.get("PROJECT_URL")!;
+// ------------------------------------------------------------
+// ENV VARIABLES (YOUR STANDARD NAMING)
+// ------------------------------------------------------------
+const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 
-// Supabase (service role)
-const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+// ------------------------------------------------------------
+// SUPABASE CLIENT (SERVICE ROLE)
+// ------------------------------------------------------------
+const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// --------------------------------------
-// Types
-// --------------------------------------
+// ------------------------------------------------------------
+// TYPES
+// ------------------------------------------------------------
 interface WhatsAppSendPayload {
   organization_id: string;
 
-  to: string; // WhatsApp phone number
+  to: string;
   type: "text" | "image" | "document" | "typing_on";
 
   text?: string;
@@ -37,9 +41,9 @@ function fail(msg: string, status = 400) {
   });
 }
 
-// --------------------------------------
+// ------------------------------------------------------------
 // MAIN HANDLER
-// --------------------------------------
+// ------------------------------------------------------------
 serve(async (req) => {
   try {
     if (req.method !== "POST") {
@@ -47,27 +51,24 @@ serve(async (req) => {
     }
 
     const body: WhatsAppSendPayload = await req.json();
-
     const { organization_id, to, type } = body;
 
     if (!organization_id) return fail("Missing organization_id");
     if (!to) return fail("Missing destination phone number");
     if (!type) return fail("Missing message type");
 
-    // --------------------------------------
-    // 1. Load WhatsApp Settings
-    // --------------------------------------
+    // ------------------------------------------------------------
+    // 1. LOAD WHATSAPP SETTINGS (CORRECT NEW SCHEMA)
+    // ------------------------------------------------------------
     const { data: settings, error: settingsErr } = await supabase
       .from("whatsapp_settings")
-      .select(
-        `
-        access_token,
-        waba_phone_number_id,
-        waba_business_account_id,
+      .select(`
+        api_token,
+        whatsapp_phone_id,
+        whatsapp_business_id,
         phone_number,
         is_active
-        `
-      )
+      `)
       .eq("organization_id", organization_id)
       .maybeSingle();
 
@@ -76,20 +77,21 @@ serve(async (req) => {
       return fail("WhatsApp settings not configured");
     }
 
-    // Validate fields
-    const apiToken = settings.access_token;
-    const phoneId = settings.waba_phone_number_id;
+    const apiToken = settings.api_token;
+    const phoneId = settings.whatsapp_phone_id;
 
     if (!apiToken) return fail("WhatsApp API token missing");
     if (!phoneId) return fail("Phone number ID missing");
     if (settings.is_active === false) return fail("WhatsApp integration disabled");
 
-    // WhatsApp Cloud API URL
+    // ------------------------------------------------------------
+    // 2. WHATSAPP CLOUD API URL
+    // ------------------------------------------------------------
     const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
 
-    // --------------------------------------
-    // 2. Build WhatsApp Payload
-    // --------------------------------------
+    // ------------------------------------------------------------
+    // 3. BUILD WHATSAPP PAYLOAD
+    // ------------------------------------------------------------
     let payload: any = {
       messaging_product: "whatsapp",
       to,
@@ -106,7 +108,6 @@ serve(async (req) => {
     // Text message
     else if (type === "text") {
       if (!body.text) return fail("Missing text field");
-
       payload = {
         ...payload,
         type: "text",
@@ -120,7 +121,6 @@ serve(async (req) => {
     // Image message
     else if (type === "image") {
       if (!body.image_url) return fail("Missing image_url");
-
       payload = {
         ...payload,
         type: "image",
@@ -134,7 +134,6 @@ serve(async (req) => {
     // Document message
     else if (type === "document") {
       if (!body.document_url) return fail("Missing document_url");
-
       payload = {
         ...payload,
         type: "document",
@@ -151,9 +150,9 @@ serve(async (req) => {
       return fail("Unsupported message type");
     }
 
-    // --------------------------------------
-    // 3. Send WhatsApp Message
-    // --------------------------------------
+    // ------------------------------------------------------------
+    // 4. SEND WHATSAPP MESSAGE
+    // ------------------------------------------------------------
     const wResp = await fetch(url, {
       method: "POST",
       headers: {
@@ -167,9 +166,9 @@ serve(async (req) => {
 
     console.log("[whatsapp-send] WhatsApp API response:", wResp.status, wText);
 
-    // --------------------------------------
-    // 4. Return response
-    // --------------------------------------
+    // ------------------------------------------------------------
+    // 5. RETURN RESPONSE
+    // ------------------------------------------------------------
     return new Response(
       JSON.stringify({
         success: true,

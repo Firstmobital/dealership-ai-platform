@@ -1,7 +1,7 @@
 -- Enable pgvector
 create extension if not exists vector;
 
--- Organizations & Users
+-- Clean up existing tables (idempotent for local dev)
 drop table if exists organization_users cascade;
 drop table if exists organizations cascade;
 drop table if exists contacts cascade;
@@ -18,7 +18,12 @@ drop table if exists workflow_logs cascade;
 drop table if exists campaigns cascade;
 drop table if exists campaign_contacts cascade;
 drop table if exists campaign_logs cascade;
+drop table if exists whatsapp_settings cascade;
+drop table if exists campaign_messages cascade;
 
+-- -------------------------------------------------------------
+-- ORGANIZATIONS & USERS
+-- -------------------------------------------------------------
 create table organizations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -35,7 +40,9 @@ create table organization_users (
   created_at timestamptz default now()
 );
 
--- Contacts & Conversations
+-- -------------------------------------------------------------
+-- CONTACTS & CONVERSATIONS
+-- -------------------------------------------------------------
 create table contacts (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references organizations(id) on delete cascade,
@@ -45,12 +52,14 @@ create table contacts (
   created_at timestamptz default now()
 );
 
+-- we support web, whatsapp, internal channels
 create table conversations (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references organizations(id) on delete cascade,
   contact_id uuid references contacts(id) on delete cascade,
   assigned_to uuid,
   ai_enabled boolean default true,
+  channel text not null default 'web' check (channel in ('web','whatsapp','internal')),
   last_message_at timestamptz,
   created_at timestamptz default now()
 );
@@ -64,10 +73,13 @@ create table messages (
   message_type text not null default 'text',
   text text,
   media_url text,
+  channel text not null default 'web' check (channel in ('web','whatsapp','internal')),
   created_at timestamptz default now()
 );
 
--- Knowledge Base
+-- -------------------------------------------------------------
+-- KNOWLEDGE BASE + RAG
+-- -------------------------------------------------------------
 create table knowledge_articles (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references organizations(id) on delete cascade,
@@ -94,7 +106,9 @@ create table unanswered_questions (
   created_at timestamptz default now()
 );
 
--- Bot Personality
+-- -------------------------------------------------------------
+-- BOT PERSONALITY & INSTRUCTIONS
+-- -------------------------------------------------------------
 create table bot_personality (
   organization_id uuid primary key references organizations(id) on delete cascade,
   tone text not null default 'Professional',
@@ -112,7 +126,9 @@ create table bot_instructions (
   created_at timestamptz default now()
 );
 
--- Workflows
+-- -------------------------------------------------------------
+-- WORKFLOWS
+-- -------------------------------------------------------------
 create table workflows (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references organizations(id) on delete cascade,
@@ -139,38 +155,43 @@ create table workflow_logs (
   created_at timestamptz default now()
 );
 
--- Bulk Campaigns
-create table campaigns (
+-- -------------------------------------------------------------
+-- BULK CAMPAIGNS (base cleanup only)
+-- -------------------------------------------------------------
+-- NOTE: We intentionally do NOT create the old campaigns / campaign_contacts /
+-- campaign_logs schema here. The NEW campaigns + campaign_messages schema
+-- is created in the later migration 20251119071202_add_campaigns_and_campaign_messages.sql.
+
+-- -------------------------------------------------------------
+-- WHATSAPP SETTINGS (FINAL SCHEMA)
+-- -------------------------------------------------------------
+create table whatsapp_settings (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid references organizations(id) on delete cascade,
-  name text not null,
-  template_id text,
-  total_contacts int default 0,
-  sent_count int default 0,
-  status text not null default 'draft',
-  created_at timestamptz default now()
+  phone_number text,
+  api_token text,
+  verify_token text,
+  whatsapp_phone_id text,
+  whatsapp_business_id text,
+  is_active boolean not null default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 
-create table campaign_contacts (
-  id uuid primary key default gen_random_uuid(),
-  campaign_id uuid references campaigns(id) on delete cascade,
-  contact_id uuid references contacts(id) on delete cascade,
-  variables jsonb default '{}'::jsonb,
-  created_at timestamptz default now()
-);
-
-create table campaign_logs (
-  id uuid primary key default gen_random_uuid(),
-  campaign_id uuid references campaigns(id) on delete cascade,
-  contact_id uuid references contacts(id) on delete cascade,
-  status text not null,
-  response jsonb,
-  created_at timestamptz default now()
-);
-
--- Similarity Search Helper
-create or replace function match_knowledge_chunks(query_embedding vector(1536), match_count int, match_threshold float)
-returns table(id uuid, article_id uuid, chunk text, similarity float)
+-- -------------------------------------------------------------
+-- SIMILARITY SEARCH FUNCTION
+-- -------------------------------------------------------------
+create or replace function match_knowledge_chunks(
+  query_embedding vector(1536),
+  match_count int,
+  match_threshold float
+)
+returns table(
+  id uuid,
+  article_id uuid,
+  chunk text,
+  similarity float
+)
 language sql stable as $$
   select
     kc.id,

@@ -3,7 +3,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
 // ENV
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_URL = Deno.env.get("_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 
@@ -11,7 +11,9 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false },
 });
 
-// VERIFICATION HANDLER
+/* -------------------------------------------------------------------------- */
+/*  VERIFY WEBHOOK (GET)                                                     */
+/* -------------------------------------------------------------------------- */
 async function verifyWebhook(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
@@ -39,11 +41,139 @@ async function verifyWebhook(req: Request): Promise<Response> {
   return new Response("Forbidden", { status: 403 });
 }
 
-// MAIN
+/* -------------------------------------------------------------------------- */
+/*  HELPER: Update campaign counters                                         */
+/* -------------------------------------------------------------------------- */
+async function recomputeCampaignCounters(campaignId: string) {
+  try {
+    // Count sent/delivered
+    const { count: sentCount, error: sentErr } = await supabase
+      .from("campaign_messages")
+      .select("*", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .in("status", ["sent", "delivered"]);
+
+    if (sentErr) {
+      console.error("[whatsapp-status] sentCount error:", sentErr);
+    }
+
+    // Count failed
+    const { count: failedCount, error: failErr } = await supabase
+      .from("campaign_messages")
+      .select("*", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .eq("status", "failed");
+
+    if (failErr) {
+      console.error("[whatsapp-status] failedCount error:", failErr);
+    }
+
+    const safeSent = sentCount ?? 0;
+    const safeFailed = failedCount ?? 0;
+
+    const { error: updateErr } = await supabase
+      .from("campaigns")
+      .update({
+        sent_count: safeSent,
+        failed_count: safeFailed,
+      })
+      .eq("id", campaignId);
+
+    if (updateErr) {
+      console.error("[whatsapp-status] campaign counter update error:", updateErr);
+    }
+  } catch (e) {
+    console.error("[whatsapp-status] recompute counters fatal:", e);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  HELPER: Handle STATUS webhooks (delivery reports)                         */
+/* -------------------------------------------------------------------------- */
+async function handleStatuses(statuses: any[]) {
+  for (const st of statuses) {
+    try {
+      const waMessageId: string | undefined = st.id;
+      const waStatus: string | undefined = st.status; // "sent", "delivered", "read", "failed", etc.
+      const timestamp: string | undefined = st.timestamp; // unix seconds
+      const errorText: string | undefined = st.errors?.[0]?.message;
+
+      if (!waMessageId || !waStatus) continue;
+
+      // Find matching campaign_message by whatsapp_message_id
+      const { data: cm, error: cmError } = await supabase
+        .from("campaign_messages")
+        .select("id, campaign_id, status")
+        .eq("whatsapp_message_id", waMessageId)
+        .maybeSingle();
+
+      if (cmError) {
+        console.error("[whatsapp-status] lookup error:", cmError);
+        continue;
+      }
+
+      if (!cm) {
+        // Status might belong to a non-campaign WhatsApp message; ignore
+        continue;
+      }
+
+      // Map WABA status → our enum
+      let newStatus: "sent" | "delivered" | "failed" | null = null;
+
+      if (waStatus === "sent") {
+        newStatus = "sent";
+      } else if (waStatus === "delivered" || waStatus === "read") {
+        // treat "read" as delivered for now
+        newStatus = "delivered";
+      } else if (waStatus === "failed") {
+        newStatus = "failed";
+      }
+
+      if (!newStatus) {
+        // ignore other statuses like "deleted"
+        continue;
+      }
+
+      const updates: Record<string, any> = { status: newStatus };
+
+      if (newStatus === "delivered" && timestamp) {
+        const tsMs = Number(timestamp) * 1000;
+        if (!Number.isNaN(tsMs)) {
+          updates.delivered_at = new Date(tsMs).toISOString();
+        }
+      }
+
+      if (newStatus === "failed" && errorText) {
+        updates.error = errorText.slice(0, 1000);
+      }
+
+      const { error: updateError } = await supabase
+        .from("campaign_messages")
+        .update(updates)
+        .eq("id", cm.id);
+
+      if (updateError) {
+        console.error("[whatsapp-status] update message error:", updateError);
+        continue;
+      }
+
+      // Recompute campaign counters
+      await recomputeCampaignCounters(cm.campaign_id);
+    } catch (err) {
+      console.error("[whatsapp-status] unhandled status error:", err);
+    }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  MAIN HANDLER                                                              */
+/* -------------------------------------------------------------------------- */
 serve(async (req) => {
   try {
     if (req.method === "GET") return verifyWebhook(req);
-    if (req.method !== "POST") return new Response("Not allowed", { status: 405 });
+    if (req.method !== "POST") {
+      return new Response("Not allowed", { status: 405 });
+    }
 
     const body = await req.json();
     console.log("[whatsapp-inbound] BODY:", JSON.stringify(body));
@@ -52,13 +182,34 @@ serve(async (req) => {
     const change = entry?.changes?.[0];
     const value = change?.value;
 
-    if (!value?.messages) {
+    const messages = value?.messages ?? [];
+    const statuses = value?.statuses ?? [];
+
+    const hasMessages = Array.isArray(messages) && messages.length > 0;
+    const hasStatuses = Array.isArray(statuses) && statuses.length > 0;
+
+    // -----------------------------------------
+    // 1) Handle STATUS updates (delivery, etc.)
+    // -----------------------------------------
+    if (hasStatuses) {
+      console.log(
+        "[whatsapp-inbound] Received statuses:",
+        JSON.stringify(statuses)
+      );
+      await handleStatuses(statuses);
+    }
+
+    // If there are no messages (only statuses), we're done.
+    if (!hasMessages) {
       return new Response(JSON.stringify({ success: true }), {
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    const waMessage = value.messages[0];
+    // -----------------------------------------
+    // 2) Normal INBOUND MESSAGE flow (existing)
+    // -----------------------------------------
+    const waMessage = messages[0];
     const contact = value.contacts?.[0];
 
     const phoneNumberId = value.metadata?.phone_number_id;
@@ -100,7 +251,6 @@ serve(async (req) => {
       text = waMessage.document?.caption ?? waMessage.document?.filename ?? null;
     }
 
-    // Ensure text or media exists
     const isMedia = messageType === "image" || messageType === "document";
     if (!text && !isMedia) {
       text = null;
@@ -133,7 +283,6 @@ serve(async (req) => {
     } else {
       contactId = existingContact.id;
 
-      // Update name if changed
       if (customerName && existingContact.name !== customerName) {
         await supabase
           .from("contacts")
@@ -206,7 +355,8 @@ serve(async (req) => {
             headers: { Authorization: `Bearer ${apiToken}` },
           });
 
-          const contentType = fileRes.headers.get("content-type") || "application/octet-stream";
+          const contentType =
+            fileRes.headers.get("content-type") || "application/octet-stream";
           const fileBytes = new Uint8Array(await fileRes.arrayBuffer());
 
           // 3) Upload to Supabase Storage
@@ -251,7 +401,6 @@ serve(async (req) => {
 
     // ---------------------------
     // CALL AI HANDLER
-    // Channel = WhatsApp → ai-handler will send reply via whatsapp-send
     // ---------------------------
     await fetch(`${SUPABASE_URL}/functions/v1/ai-handler`, {
       method: "POST",

@@ -3,20 +3,25 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = Deno.env.get("PROJECT_URL")!;
+// ------------------------------------------------------------
+// ENV VARIABLES (YOUR STANDARD NAMING)
+// ------------------------------------------------------------
+const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-  console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
+  console.error("Missing PROJECT_URL or SERVICE_ROLE_KEY");
 }
 
-const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+const supabaseAdmin = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// --------- CONFIG (tweak as needed) ----------
+// ------------------------------------------------------------
+// CAMPAIGN DISPATCH CONFIG
+// ------------------------------------------------------------
 
-// Max messages we process PER RUN for ALL orgs combined
+// Global max messages for ALL orgs combined
 const GLOBAL_MAX_MESSAGES_PER_RUN = 100;
 
 // Max messages per campaign per run
@@ -25,15 +30,22 @@ const MAX_MESSAGES_PER_CAMPAIGN_PER_RUN = 50;
 // Max messages per org per run (throttling)
 const ORG_RATE_LIMIT_PER_RUN = 30;
 
-// Max campaigns we look at per run
+// Max campaigns simultaneously processed
 const MAX_CAMPAIGNS_PER_RUN = 20;
 
-// --------------------------------------------
-
+// ------------------------------------------------------------
+// TYPES
+// ------------------------------------------------------------
 type Campaign = {
   id: string;
   organization_id: string;
-  status: "draft" | "scheduled" | "sending" | "completed" | "cancelled" | "failed";
+  status:
+    | "draft"
+    | "scheduled"
+    | "sending"
+    | "completed"
+    | "cancelled"
+    | "failed";
   scheduled_at: string | null;
   started_at: string | null;
   template_body: string;
@@ -45,11 +57,22 @@ type CampaignMessage = {
   campaign_id: string;
   phone: string;
   variables: Record<string, unknown> | null;
-  status: "pending" | "queued" | "sent" | "delivered" | "failed" | "cancelled";
+  status:
+    | "pending"
+    | "queued"
+    | "sent"
+    | "delivered"
+    | "failed"
+    | "cancelled";
 };
 
-// Simple template renderer: replaces {{key}} with value from variables
-function renderTemplate(template: string, variables: Record<string, unknown> | null): string {
+// ------------------------------------------------------------
+// TEMPLATE RENDERER
+// ------------------------------------------------------------
+function renderTemplate(
+  template: string,
+  variables: Record<string, unknown> | null,
+): string {
   if (!variables) return template;
 
   let output = template;
@@ -60,26 +83,27 @@ function renderTemplate(template: string, variables: Record<string, unknown> | n
   return output;
 }
 
-// Call the existing whatsapp-send Edge Function
+// ------------------------------------------------------------
+// CALL whatsapp-send EDGE FUNCTION
+// ------------------------------------------------------------
 async function sendWhatsappMessage(
   organizationId: string,
   phone: string,
   text: string,
 ): Promise<{ ok: boolean; messageId?: string; raw?: unknown; errorText?: string }> {
-  const url = `${SUPABASE_URL}/functions/v1/whatsapp-send`;
+  const url = `${PROJECT_URL}/functions/v1/whatsapp-send`;
 
   const payload = {
     organization_id: organizationId,
     to: phone,
-    text,
     type: "text",
+    text,
   };
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // Use service role so whatsapp-send can also bypass RLS if it needs to
       Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
     },
     body: JSON.stringify(payload),
@@ -91,22 +115,26 @@ async function sendWhatsappMessage(
     console.error("whatsapp-send error", { status: res.status, body });
     return {
       ok: false,
-      errorText: typeof body === "string" ? body : JSON.stringify(body),
+      errorText: JSON.stringify(body),
     };
   }
 
-  // Adjust this depending on your whatsapp-send response shape
   const messageId =
-    (body && (body.message_id || body.id || body.messages?.[0]?.id)) ?? undefined;
+    (body && (body.message_id || body.id || body.messages?.[0]?.id)) ??
+    undefined;
 
   return { ok: true, messageId, raw: body };
 }
 
-// Fetch campaigns that are ready to send
+// ------------------------------------------------------------
+// FETCH ELIGIBLE CAMPAIGNS
+// ------------------------------------------------------------
 async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
-    .select("id, organization_id, status, scheduled_at, started_at, template_body")
+    .select(
+      "id, organization_id, status, scheduled_at, started_at, template_body",
+    )
     .in("status", ["scheduled", "sending"])
     .lte("scheduled_at", nowIso)
     .order("scheduled_at", { ascending: true })
@@ -120,7 +148,9 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
   return (data ?? []) as Campaign[];
 }
 
-// Fetch pending / queued messages for a specific campaign
+// ------------------------------------------------------------
+// FETCH PENDING/QUEUED MESSAGES
+// ------------------------------------------------------------
 async function fetchMessagesForCampaign(
   campaignId: string,
 ): Promise<CampaignMessage[]> {
@@ -140,6 +170,9 @@ async function fetchMessagesForCampaign(
   return (data ?? []) as CampaignMessage[];
 }
 
+// ------------------------------------------------------------
+// UPDATE MESSAGE STATUS → SENT
+// ------------------------------------------------------------
 async function updateMessageStatusSent(
   messageId: string,
   whatsappMessageId?: string,
@@ -159,13 +192,16 @@ async function updateMessageStatusSent(
   }
 }
 
+// ------------------------------------------------------------
+// UPDATE MESSAGE STATUS → FAILED
+// ------------------------------------------------------------
 async function updateMessageStatusFailed(messageId: string, errorText: string) {
   const { error } = await supabaseAdmin
     .from("campaign_messages")
     .update({
       status: "failed",
       dispatched_at: new Date().toISOString(),
-      error: errorText.slice(0, 1000), // avoid huge errors
+      error: errorText.slice(0, 1000),
     })
     .eq("id", messageId);
 
@@ -174,7 +210,9 @@ async function updateMessageStatusFailed(messageId: string, errorText: string) {
   }
 }
 
-// Ensure campaign status (set to sending, completed, etc.)
+// ------------------------------------------------------------
+// CAMPAIGN STATUS PROGRESS → SENDING
+// ------------------------------------------------------------
 async function updateCampaignStatusOnProgress(campaign: Campaign) {
   if (!campaign.started_at || campaign.status === "scheduled") {
     const { error } = await supabaseAdmin
@@ -194,26 +232,25 @@ async function updateCampaignStatusOnProgress(campaign: Campaign) {
   }
 }
 
+// ------------------------------------------------------------
+// CAMPAIGN COMPLETE CHECK
+// ------------------------------------------------------------
 async function updateCampaignStatusIfCompleted(campaign: Campaign) {
-  // If no more pending/queued messages, mark as completed
-  const { data, error } = await supabaseAdmin
+  const { count, error } = await supabaseAdmin
     .from("campaign_messages")
-    .select("id", { count: "exact", head: true })
+    .select("*", { count: "exact", head: true })
     .eq("campaign_id", campaign.id)
     .in("status", ["pending", "queued"]);
 
   if (error) {
-    console.error("Error counting remaining messages", {
-      campaignId: campaign.id,
-      error,
-    });
+    console.error("Error checking remaining messages", error);
     return;
   }
 
-  const remaining = data?.length === 0 ? 0 : (data as unknown as number) ?? 0;
+  const remaining = count ?? 0;
 
   if (remaining === 0) {
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateErr } = await supabaseAdmin
       .from("campaigns")
       .update({
         status: "completed",
@@ -221,15 +258,15 @@ async function updateCampaignStatusIfCompleted(campaign: Campaign) {
       })
       .eq("id", campaign.id);
 
-    if (updateError) {
-      console.error("Error marking campaign as completed", {
-        campaignId: campaign.id,
-        updateError,
-      });
+    if (updateErr) {
+      console.error("Error setting campaign completed", updateErr);
     }
   }
 }
 
+// ------------------------------------------------------------
+// MAIN HANDLER
+// ------------------------------------------------------------
 serve(async (req) => {
   if (req.method !== "POST" && req.method !== "GET") {
     return new Response("Method not allowed", { status: 405 });
@@ -237,20 +274,18 @@ serve(async (req) => {
 
   try {
     const nowIso = new Date().toISOString();
-
     const campaigns = await fetchEligibleCampaigns(nowIso);
 
     if (campaigns.length === 0) {
       return new Response(
-        JSON.stringify({
-          message: "No eligible campaigns",
-        }),
+        JSON.stringify({ message: "No eligible campaigns" }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
 
     const sentPerOrg: Record<string, number> = {};
     let globalSentCount = 0;
+
     const results: Array<{
       campaign_id: string;
       organization_id: string;
@@ -268,26 +303,23 @@ serve(async (req) => {
       let attempted = 0;
       let sent = 0;
       let failed = 0;
-      let skippedDueToRateLimit = 0;
+      let skipped = 0;
 
       for (const msg of messages) {
-        // Global limit safety
         if (globalSentCount >= GLOBAL_MAX_MESSAGES_PER_RUN) {
-          skippedDueToRateLimit += 1;
+          skipped += 1;
           continue;
         }
 
         const orgId = msg.organization_id;
         const orgCount = sentPerOrg[orgId] ?? 0;
 
-        // Org-level throttling
         if (orgCount >= ORG_RATE_LIMIT_PER_RUN) {
-          skippedDueToRateLimit += 1;
+          skipped += 1;
           continue;
         }
 
         attempted += 1;
-
         const text = renderTemplate(campaign.template_body, msg.variables);
 
         try {
@@ -299,17 +331,11 @@ serve(async (req) => {
             globalSentCount += 1;
             sentPerOrg[orgId] = orgCount + 1;
           } else {
-            await updateMessageStatusFailed(
-              msg.id,
-              res.errorText ?? "Unknown whatsapp-send error",
-            );
+            await updateMessageStatusFailed(msg.id, res.errorText ?? "Unknown WA error");
             failed += 1;
           }
         } catch (e) {
-          console.error("Unexpected error sending WhatsApp message", {
-            messageId: msg.id,
-            error: e,
-          });
+          console.error("Unexpected WhatsApp error", e);
           await updateMessageStatusFailed(
             msg.id,
             e instanceof Error ? e.message : String(e),
@@ -326,13 +352,13 @@ serve(async (req) => {
         attempted,
         sent,
         failed,
-        skipped_due_to_rate_limit: skippedDueToRateLimit,
+        skipped_due_to_rate_limit: skipped,
       });
     }
 
     return new Response(
       JSON.stringify({
-        message: "campaign-dispatch run completed",
+        message: "campaign-dispatch completed",
         globalSentCount,
         sentPerOrg,
         results,

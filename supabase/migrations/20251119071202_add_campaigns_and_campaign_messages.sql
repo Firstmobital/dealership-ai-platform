@@ -1,4 +1,6 @@
--- 1) Enums for campaign + message statuses
+-- =============================================================
+-- 1) ENUMS FOR CAMPAIGN + MESSAGE STATUS
+-- =============================================================
 
 DO $$
 BEGIN
@@ -32,29 +34,35 @@ BEGIN
   END IF;
 END$$;
 
--- 2) campaigns table
-
+-- =============================================================
+-- 2) CAMPAIGNS TABLE (FINAL SCHEMA)
+-- =============================================================
 CREATE TABLE IF NOT EXISTS public.campaigns (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL REFERENCES public.organizations (id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+
   name text NOT NULL,
   description text,
+
   channel text NOT NULL DEFAULT 'whatsapp',
+
   status public.campaign_status NOT NULL DEFAULT 'draft',
   scheduled_at timestamptz,
   started_at timestamptz,
   completed_at timestamptz,
+
   template_body text NOT NULL,
   template_variables text[],
+
   total_recipients integer NOT NULL DEFAULT 0,
   sent_count integer NOT NULL DEFAULT 0,
   failed_count integer NOT NULL DEFAULT 0,
+
   created_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- helpful indexes
 CREATE INDEX IF NOT EXISTS idx_campaigns_org
   ON public.campaigns (organization_id);
 
@@ -63,10 +71,8 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_org_status
 
 DO $$
 BEGIN
-  -- only create index if the column exists
   IF EXISTS (
-    SELECT 1
-    FROM information_schema.columns
+    SELECT 1 FROM information_schema.columns
     WHERE table_name = 'campaigns'
       AND column_name = 'scheduled_at'
   ) THEN
@@ -75,25 +81,27 @@ BEGIN
   END IF;
 END$$;
 
-
--- 3) campaign_messages table
-
+-- =============================================================
+-- 3) CAMPAIGN_MESSAGES TABLE
+-- =============================================================
 CREATE TABLE IF NOT EXISTS public.campaign_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL REFERENCES public.organizations (id) ON DELETE CASCADE,
-  campaign_id uuid NOT NULL REFERENCES public.campaigns (id) ON DELETE CASCADE,
-  contact_id uuid REFERENCES public.contacts (id) ON DELETE SET NULL,
+  organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  campaign_id uuid NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
+  contact_id uuid REFERENCES public.contacts(id) ON DELETE SET NULL,
+
   phone text NOT NULL,
   variables jsonb,
+
   status public.campaign_message_status NOT NULL DEFAULT 'pending',
   error text,
   whatsapp_message_id text,
+
   dispatched_at timestamptz,
   delivered_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- helpful indexes
 CREATE INDEX IF NOT EXISTS idx_campaign_messages_campaign
   ON public.campaign_messages (campaign_id);
 
@@ -103,14 +111,13 @@ CREATE INDEX IF NOT EXISTS idx_campaign_messages_org_status
 CREATE INDEX IF NOT EXISTS idx_campaign_messages_send_queue
   ON public.campaign_messages (status, campaign_id, created_at);
 
--- 4) RLS
-
+-- =============================================================
+-- 4) RLS POLICIES
+-- =============================================================
 ALTER TABLE public.campaigns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.campaign_messages ENABLE ROW LEVEL SECURITY;
 
--- Assuming existing multi-tenant pattern via public.organization_users (organization_id, user_id)
--- Adjust to match your actual join table if the name differs.
-
+-- Only org members can read/write campaign data
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -127,7 +134,7 @@ BEGIN
         SELECT 1
         FROM public.organization_users ou
         WHERE ou.organization_id = campaigns.organization_id
-          AND ou.user_id = auth.uid()
+        AND ou.user_id = auth.uid()
       )
     )
     WITH CHECK (
@@ -135,12 +142,13 @@ BEGIN
         SELECT 1
         FROM public.organization_users ou
         WHERE ou.organization_id = campaigns.organization_id
-          AND ou.user_id = auth.uid()
+        AND ou.user_id = auth.uid()
       )
     );
   END IF;
 END$$;
 
+-- Only org members can manage campaign_messages
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -157,7 +165,7 @@ BEGIN
         SELECT 1
         FROM public.organization_users ou
         WHERE ou.organization_id = campaign_messages.organization_id
-          AND ou.user_id = auth.uid()
+        AND ou.user_id = auth.uid()
       )
     )
     WITH CHECK (
@@ -165,7 +173,7 @@ BEGIN
         SELECT 1
         FROM public.organization_users ou
         WHERE ou.organization_id = campaign_messages.organization_id
-          AND ou.user_id = auth.uid()
+        AND ou.user_id = auth.uid()
       )
     );
   END IF;
