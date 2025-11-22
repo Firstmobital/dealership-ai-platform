@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { useOrganizationStore } from "../../state/useOrganizationStore";
+import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import { useWhatsappSettingsStore } from "../../state/useWhatsappSettingsStore";
 
 type FormState = {
@@ -29,6 +30,8 @@ type Status =
 
 export function WhatsappSettingsModule() {
   const { currentOrganization } = useOrganizationStore();
+  const { activeSubOrg } = useSubOrganizationStore();
+
   const {
     settings,
     loading,
@@ -52,23 +55,23 @@ export function WhatsappSettingsModule() {
 
   const webhookUrl = `${window.location.origin}/functions/v1/whatsapp-inbound`;
 
-  // -------------------------------------------------------------
-  // Load settings when organization changes
-  // -------------------------------------------------------------
+  /* -------------------------------------------------------------
+     LOAD SETTINGS FOR ORG + SUB ORG
+  ------------------------------------------------------------- */
   useEffect(() => {
-    if (!currentOrganization?.id) return;
+    if (!currentOrganization) return;
 
-    loadSettings(currentOrganization.id).catch(() =>
+    loadSettings(currentOrganization.id, activeSubOrg?.id ?? null).catch(() =>
       setStatus({
         type: "error",
         message: "Failed to load WhatsApp settings. Check console.",
       })
     );
-  }, [currentOrganization?.id, loadSettings]);
+  }, [currentOrganization?.id, activeSubOrg?.id, loadSettings]);
 
-  // -------------------------------------------------------------
-  // Sync form when settings change
-  // -------------------------------------------------------------
+  /* -------------------------------------------------------------
+     SYNC FORM WHEN SETTINGS CHANGE
+  ------------------------------------------------------------- */
   useEffect(() => {
     if (!settings) return;
 
@@ -81,9 +84,9 @@ export function WhatsappSettingsModule() {
     });
   }, [settings]);
 
-  // -------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------
+  /* -------------------------------------------------------------
+     HELPERS
+  ------------------------------------------------------------- */
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
     setCopied(field);
@@ -102,9 +105,9 @@ export function WhatsappSettingsModule() {
       setForm((prev) => ({ ...prev, [field]: event.target.value }));
     };
 
-  // -------------------------------------------------------------
-  // SAVE SETTINGS
-  // -------------------------------------------------------------
+  /* -------------------------------------------------------------
+     SAVE SETTINGS (ORG + SUB ORG)
+  ------------------------------------------------------------- */
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
 
@@ -114,9 +117,9 @@ export function WhatsappSettingsModule() {
     }
 
     try {
-      await saveSettings(currentOrganization.id, form);
-      setStatus({ type: "success", message: "Settings saved." });
+      await saveSettings(currentOrganization.id, activeSubOrg?.id ?? null, form);
 
+      setStatus({ type: "success", message: "Settings saved." });
       setSaveComplete(true);
       setTimeout(() => setSaveComplete(false), 2000);
     } catch {
@@ -124,11 +127,12 @@ export function WhatsappSettingsModule() {
     }
   };
 
-  // -------------------------------------------------------------
-  // SEND TEST MESSAGE
-  // -------------------------------------------------------------
+  /* -------------------------------------------------------------
+     SEND TEST MESSAGE (ORG + SUB ORG)
+  ------------------------------------------------------------- */
   const sendTestMessage = async () => {
     if (!currentOrganization?.id) return;
+
     if (!form.phone_number) {
       setStatus({
         type: "error",
@@ -151,6 +155,7 @@ export function WhatsappSettingsModule() {
           },
           body: JSON.stringify({
             organization_id: currentOrganization.id,
+            sub_organization_id: activeSubOrg?.id ?? null,
             to: form.phone_number,
             type: "text",
             text: "Hello! This is a test message from Techwheels AI. 🚗",
@@ -178,9 +183,9 @@ export function WhatsappSettingsModule() {
     setTestSending(false);
   };
 
-  // -------------------------------------------------------------
-  // UI
-  // -------------------------------------------------------------
+  /* -------------------------------------------------------------
+     UI
+  ------------------------------------------------------------- */
   if (!currentOrganization) {
     return (
       <div className="flex h-full items-center justify-center rounded-2xl border border-white/5 bg-slate-950/60 p-6 text-sm text-slate-400">
@@ -200,11 +205,13 @@ export function WhatsappSettingsModule() {
           </h1>
           <p className="mt-1 text-sm text-slate-400">
             Configure WhatsApp Cloud API for{" "}
-            <span className="text-slate-200">{currentOrganization.name}</span>
+            <span className="text-slate-200">
+              {currentOrganization.name} —{" "}
+              {activeSubOrg?.name ?? "General"}
+            </span>
           </p>
         </div>
 
-        {/* Status Indicator */}
         <div
           className={`rounded-full px-4 py-1 text-xs font-semibold ${
             isConnected
@@ -221,7 +228,6 @@ export function WhatsappSettingsModule() {
         onSubmit={handleSubmit}
         className="flex flex-col gap-6 rounded-2xl border border-white/5 bg-slate-950/80 p-6"
       >
-        {/* Status Banner */}
         {status && (
           <div
             className={`rounded-lg px-4 py-2 text-sm ${
@@ -234,9 +240,7 @@ export function WhatsappSettingsModule() {
           </div>
         )}
 
-        {/* 2 Column Inputs */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {/* PHONE NUMBER */}
           <InputField
             label="WhatsApp Phone Number"
             value={form.phone_number}
@@ -244,7 +248,7 @@ export function WhatsappSettingsModule() {
             placeholder="e.g. 9174xxxxxxx"
           />
 
-          {/* API TOKEN with eye toggle */}
+          {/* TOKEN FIELD */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium uppercase tracking-wide text-slate-400">
               Permanent Access Token
@@ -267,7 +271,6 @@ export function WhatsappSettingsModule() {
             </div>
           </div>
 
-          {/* VERIFY TOKEN */}
           <InputField
             label="Verify Token"
             value={form.verify_token}
@@ -275,7 +278,6 @@ export function WhatsappSettingsModule() {
             placeholder="Custom token for webhook verification"
           />
 
-          {/* PHONE ID */}
           <InputField
             label="WhatsApp Phone Number ID"
             value={form.whatsapp_phone_id}
@@ -283,7 +285,6 @@ export function WhatsappSettingsModule() {
             placeholder="123456789012345"
           />
 
-          {/* BUSINESS ID */}
           <InputField
             label="WhatsApp Business Account ID"
             value={form.whatsapp_business_id}
@@ -292,7 +293,6 @@ export function WhatsappSettingsModule() {
           />
         </div>
 
-        {/* FOOTER ACTIONS */}
         <div className="mt-2 flex items-center justify-between">
           <p className="flex items-center gap-2 text-xs text-slate-500">
             <Info size={14} />
@@ -326,11 +326,10 @@ export function WhatsappSettingsModule() {
         </div>
       </form>
 
-      {/* WEBHOOK + TEST MESSAGE SECTION */}
+      {/* WEBHOOK + TEST */}
       <div className="rounded-2xl border border-white/5 bg-slate-950/80 p-6 flex flex-col gap-6">
         <h2 className="text-lg font-semibold text-white">Testing & Webhook</h2>
 
-        {/* Test Message */}
         <button
           onClick={sendTestMessage}
           disabled={testSending}
@@ -344,7 +343,6 @@ export function WhatsappSettingsModule() {
           {testSending ? "Sending..." : "Send Test Message"}
         </button>
 
-        {/* Webhook URL */}
         <WebhookField
           label="Webhook URL"
           value={webhookUrl}
@@ -352,7 +350,6 @@ export function WhatsappSettingsModule() {
           onCopy={() => copyToClipboard(webhookUrl, "webhook")}
         />
 
-        {/* Verify Token */}
         <WebhookField
           label="Verify Token"
           value={form.verify_token}
@@ -361,8 +358,8 @@ export function WhatsappSettingsModule() {
         />
 
         <p className="text-xs text-slate-400">
-          Add these values in Meta Business Dashboard →
-          <span className="text-slate-200">API Setup → Webhooks</span>
+          Add these values in Meta Dashboard →{" "}
+          <span className="text-slate-200">Webhooks</span>
         </p>
       </div>
     </div>
@@ -370,7 +367,7 @@ export function WhatsappSettingsModule() {
 }
 
 /* --------------------------------------------------------------
-   SMALL REUSABLE COMPONENTS
+   SMALL COMPONENTS
 -------------------------------------------------------------- */
 
 function InputField({

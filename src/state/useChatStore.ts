@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
+
 import type { Conversation, Message } from "../types/database";
+import { useSubOrganizationStore } from "./useSubOrganizationStore";
+
+/* ========================================================================== */
+/*  FILTER TYPES                                                              */
+/* ========================================================================== */
 
 export type ConversationFilter =
   | "all"
@@ -10,6 +16,10 @@ export type ConversationFilter =
   | "whatsapp"
   | "web"
   | "internal";
+
+/* ========================================================================== */
+/*  CHAT STORE TYPE                                                           */
+/* ========================================================================== */
 
 type ChatState = {
   conversations: Conversation[];
@@ -36,6 +46,10 @@ type ChatState = {
   ) => Promise<void>;
 };
 
+/* ========================================================================== */
+/*  STORE IMPLEMENTATION                                                      */
+/* ========================================================================== */
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   messages: {},
@@ -47,19 +61,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
   aiToggle: {},
   unread: {},
 
-  /* ------------------------------------------------------------- */
-  /* FETCH CONVERSATIONS                                           */
-  /* ------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* FETCH CONVERSATIONS (ORG + SUB ORG AWARE)                                 */
+  /* -------------------------------------------------------------------------- */
   fetchConversations: async (organizationId: string) => {
+    const { activeSubOrg } = useSubOrganizationStore.getState();
+
     set({ loading: true });
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("conversations")
-      .select("*")
+      .select("*, contacts(*)")
       .eq("organization_id", organizationId)
       .order("last_message_at", { ascending: false });
 
-    if (error) throw error;
+    // Filter by department / division
+    if (activeSubOrg) {
+      query = query.eq("sub_organization_id", activeSubOrg.id);
+    } else {
+      query = query.is("sub_organization_id", null);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("[useChatStore] fetchConversations error", error);
+      set({ loading: false });
+      return;
+    }
 
     const aiToggle = Object.fromEntries(
       (data ?? []).map((c) => [c.id, c.ai_enabled])
@@ -72,17 +101,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  /* ------------------------------------------------------------- */
-  /* FETCH MESSAGES                                                */
-  /* ------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* FETCH MESSAGES (RLS SAFE—FILTERS BY CONVERSATION ID)                      */
+  /* -------------------------------------------------------------------------- */
   fetchMessages: async (conversationId: string) => {
-    const { data, error } = await supabase
+    const { activeSubOrg } = useSubOrganizationStore.getState();
+
+    let query = supabase
       .from("messages")
       .select("*")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
 
-    if (error) throw error;
+    // Filter by sub-org (should already be enforced at conversation level)
+    if (activeSubOrg) {
+      query = query.eq("sub_organization_id", activeSubOrg.id);
+    } else {
+      query = query.is("sub_organization_id", null);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("[useChatStore] fetchMessages error", error);
+      return;
+    }
 
     set((state) => ({
       messages: {
@@ -92,9 +135,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  /* ------------------------------------------------------------- */
-  /* REALTIME SUBSCRIPTION                                         */
-  /* ------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* REALTIME SUBSCRIPTION                                                      */
+  /* -------------------------------------------------------------------------- */
   subscribeToMessages: (conversationId: string) => {
     supabase
       .channel(`conv-${conversationId}`)
@@ -131,9 +174,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .subscribe();
   },
 
-  /* ------------------------------------------------------------- */
-  /* SET ACTIVE CONVERSATION                                       */
-  /* ------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* SET ACTIVE CONVERSATION                                                    */
+  /* -------------------------------------------------------------------------- */
   setActiveConversation: (conversationId) => {
     set({ activeConversationId: conversationId });
 
@@ -144,14 +187,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  /* ------------------------------------------------------------- */
-  /* SET FILTER                                                    */
-  /* ------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* SET FILTER                                                                  */
+  /* -------------------------------------------------------------------------- */
   setFilter: (filter) => set({ filter }),
 
-  /* ------------------------------------------------------------- */
-  /* TOGGLE AI                                                     */
-  /* ------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* TOGGLE AI                                                                   */
+  /* -------------------------------------------------------------------------- */
   toggleAI: async (conversationId, enabled) => {
     const { error } = await supabase
       .from("conversations")
@@ -168,11 +211,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  /* ------------------------------------------------------------- */
-  /* SEND MESSAGE (User → Bot/Web only)                            */
-  /* ------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------- */
+  /* SEND MESSAGE (WEB ONLY — NO WHATSAPP)                                      */
+  /* -------------------------------------------------------------------------- */
   sendMessage: async (conversationId, payload) => {
     const state = get();
+    const { activeSubOrg } = useSubOrganizationStore.getState();
 
     const text = payload.text?.trim() ?? "";
     if (!text) return;
@@ -181,18 +225,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const message_type = payload.message_type ?? "text";
     const channel = payload.channel ?? "web";
 
-    /* 🚫 WhatsApp outbound messages are NOT sent from frontend
-       WhatsApp replies are handled ONLY by: ai-handler → whatsapp-send
-       Prevents double-sending.
-    */
+    // ❌ Prevent frontend sending WhatsApp messages
     if (channel === "whatsapp") {
-      console.warn(
-        "[useChatStore] Frontend cannot send WhatsApp messages. Ignored."
-      );
+      console.warn("[useChatStore] Cannot send WhatsApp messages from frontend");
       return;
     }
 
-    /* --------------------------- 1. Insert user message --------------------------- */
+    /* ---------------------------------------------------------------------- */
+    /* 1. INSERT USER MESSAGE                                                 */
+    /* ---------------------------------------------------------------------- */
     const { error: userError } = await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender,
@@ -200,6 +241,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       text,
       media_url: payload.media_url ?? null,
       channel, // web or internal
+      sub_organization_id: activeSubOrg?.id ?? null,
     });
 
     if (userError) {
@@ -209,11 +251,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     await get().fetchMessages(conversationId);
 
-    /* --------------------------- 2. If AI disabled → exit ------------------------- */
+    /* ---------------------------------------------------------------------- */
+    /* 2. AI DISABLED? THEN EXIT                                              */
+    /* ---------------------------------------------------------------------- */
     const aiEnabled = state.aiToggle[conversationId];
     if (!aiEnabled || sender !== "user") return;
 
-    /* --------------------------- 3. Invoke ai-handler ----------------------------- */
+    /* ---------------------------------------------------------------------- */
+    /* 3. CALL AI-HANDLER                                                     */
+    /* ---------------------------------------------------------------------- */
     (async () => {
       try {
         const { data: aiResp, error: invokeError } =
@@ -236,7 +282,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         if (!aiText) return;
 
-        /* --------------------------- 4. Insert bot reply (internal only) ----------- */
+        /* ------------------------------------------------------------------ */
+        /* 4. INSERT BOT REPLY (WEB INTERNAL ONLY)                            */
+        /* ------------------------------------------------------------------ */
         const { error: botError } = await supabase.from("messages").insert({
           conversation_id: conversationId,
           sender: "bot",
@@ -244,16 +292,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
           text: aiText,
           media_url: null,
           channel: "internal",
+          sub_organization_id: activeSubOrg?.id ?? null,
         });
 
         if (botError) {
-          console.error("❌ Error inserting bot message:", botError);
+          console.error("❌ Error inserting bot reply:", botError);
           return;
         }
 
         await get().fetchMessages(conversationId);
 
-        /* --------------------------- 5. Update ordering ---------------------------- */
+        /* ------------------------------------------------------------------ */
+        /* 5. BUMP conversation timestamp + REFRESH list                      */
+        /* ------------------------------------------------------------------ */
         await supabase
           .from("conversations")
           .update({ last_message_at: new Date().toISOString() })

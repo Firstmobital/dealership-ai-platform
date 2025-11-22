@@ -1,5 +1,5 @@
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
-import { SubOrgSwitcher } from "../topbar/SubOrgSwitcher"; // ✅ NEW
+import { SubOrgSwitcher } from "../topbar/SubOrgSwitcher";
 import { useAuthStore } from "../../state/useAuthStore";
 
 export function Topbar() {
@@ -12,7 +12,7 @@ export function Topbar() {
       {/* LEFT SIDE */}
       <div className="flex items-center gap-4">
         <OrganizationSwitcher />
-        <SubOrgSwitcher /> {/* ✅ NEW: Division (Sales/Service/etc) */}
+        <SubOrgSwitcher /> {/* Division (Sales / Service / General) */}
       </div>
 
       {/* RIGHT SIDE */}

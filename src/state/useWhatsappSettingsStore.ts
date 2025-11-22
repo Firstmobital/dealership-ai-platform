@@ -10,9 +10,14 @@ type WhatsappSettingsState = {
   loading: boolean;
   error: string | null;
 
-  loadSettings: (organizationId: string) => Promise<void>;
+  loadSettings: (
+    organizationId: string,
+    subOrganizationId: string | null
+  ) => Promise<void>;
+
   saveSettings: (
     organizationId: string,
+    subOrganizationId: string | null,
     values: Partial<WhatsappSettings>
   ) => Promise<void>;
 };
@@ -24,17 +29,32 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
     error: null,
 
     // -------------------------------------------------------------
-    // LOAD SETTINGS FOR SELECTED ORGANIZATION
+    // LOAD SETTINGS FOR ORG + SUB-ORG
     // -------------------------------------------------------------
-    loadSettings: async (organizationId: string) => {
+    loadSettings: async (
+      organizationId: string,
+      subOrganizationId: string | null
+    ) => {
       set({ loading: true, error: null });
 
       try {
-        const data = await fetchWhatsappSettings(organizationId);
+        const data = await fetchWhatsappSettings(
+          organizationId,
+          subOrganizationId
+        );
 
-        // Normalize shape if needed
+        if (!data) {
+          // No row yet for this org + sub-org → keep settings null,
+          // the UI will show an empty form.
+          set({ settings: null, loading: false });
+          return;
+        }
+
         const normalized: WhatsappSettings = {
           ...data,
+          organization_id: data.organization_id ?? organizationId,
+          sub_organization_id:
+            data.sub_organization_id ?? subOrganizationId ?? null,
           phone_number: data.phone_number ?? "",
           api_token: data.api_token ?? "",
           verify_token: data.verify_token ?? "",
@@ -54,16 +74,27 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
     },
 
     // -------------------------------------------------------------
-    // SAVE SETTINGS (UPSERT)
+    // SAVE SETTINGS (UPSERT ORG + SUB-ORG)
     // -------------------------------------------------------------
-    saveSettings: async (organizationId: string, values) => {
+    saveSettings: async (
+      organizationId: string,
+      subOrganizationId: string | null,
+      values
+    ) => {
       set({ loading: true, error: null });
 
       try {
-        const data = await upsertWhatsappSettings(organizationId, values);
+        const data = await upsertWhatsappSettings(
+          organizationId,
+          subOrganizationId,
+          values
+        );
 
         const normalized: WhatsappSettings = {
           ...data,
+          organization_id: data.organization_id ?? organizationId,
+          sub_organization_id:
+            data.sub_organization_id ?? subOrganizationId ?? null,
           phone_number: data.phone_number ?? "",
           api_token: data.api_token ?? "",
           verify_token: data.verify_token ?? "",

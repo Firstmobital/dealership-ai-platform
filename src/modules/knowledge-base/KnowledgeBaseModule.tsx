@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { FilePlus2, FileText, Loader2, Upload } from 'lucide-react';
 import { useKnowledgeBaseStore } from '../../state/useKnowledgeBaseStore';
 import { useOrganizationStore } from '../../state/useOrganizationStore';
+import { useSubOrganizationStore } from '../../state/useSubOrganizationStore';
 import { supabase } from '../../lib/supabaseClient';
 
 type EditorState = {
@@ -24,6 +25,7 @@ export function KnowledgeBaseModule() {
   } = useKnowledgeBaseStore();
 
   const { currentOrganization } = useOrganizationStore();
+  const { activeSubOrg } = useSubOrganizationStore();
 
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState>({
@@ -36,12 +38,12 @@ export function KnowledgeBaseModule() {
   const [isEmbedding, setIsEmbedding] = useState(false);
   const [embedStatus, setEmbedStatus] = useState<string | null>(null);
 
-  // Load org-specific data
+  // Load org + sub-org specific data
   useEffect(() => {
     if (!currentOrganization) return;
     void fetchArticles(currentOrganization.id);
     void fetchUnanswered(currentOrganization.id);
-  }, [currentOrganization, fetchArticles, fetchUnanswered]);
+  }, [currentOrganization, activeSubOrg?.id, fetchArticles, fetchUnanswered]);
 
   // Whenever we change article selection, hydrate the editor + chunks
   useEffect(() => {
@@ -93,6 +95,7 @@ export function KnowledgeBaseModule() {
       const saved = await saveArticle({
         id: selectedArticleId ?? undefined,
         organization_id: currentOrganization.id,
+        sub_organization_id: activeSubOrg?.id ?? null, // 👈 key change
         title: editor.title.trim(),
         description: editor.description.trim() || null,
         content: editor.content.trim()

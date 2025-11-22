@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sparkles, Languages, MessageSquare, Smile, Save } from 'lucide-react';
 import { useOrganizationStore } from '../../state/useOrganizationStore';
+import { useSubOrganizationStore } from '../../state/useSubOrganizationStore';
 import { supabase } from '../../lib/supabaseClient';
 
 const tones = ['Professional', 'Friendly', 'Enthusiastic', 'Conversational'];
@@ -21,6 +22,8 @@ type PersonalityForm = {
 
 export function BotPersonalityModule() {
   const { currentOrganization } = useOrganizationStore();
+  const { activeSubOrg } = useSubOrganizationStore();
+
   const [form, setForm] = useState<PersonalityForm>({
     tone: 'Professional',
     language: 'English',
@@ -29,23 +32,39 @@ export function BotPersonalityModule() {
     emoji_usage: true,
     gender_voice: 'Neutral',
     fallback_message: 'I will connect you with a human agent shortly.',
-    instructions: JSON.stringify({ guidelines: ['Always greet with dealership name', 'Ask for preferred model'] }, null, 2)
+    instructions: JSON.stringify(
+      { guidelines: ['Always greet with dealership name', 'Ask for preferred model'] },
+      null,
+      2
+    )
   });
+
   const [loading, setLoading] = useState(false);
 
+  /* ------------------------------------------------------------------ */
+  /* LOAD PERSONALITY + INSTRUCTIONS FOR ORG + SUB-ORG                  */
+  /* ------------------------------------------------------------------ */
   useEffect(() => {
     const fetchPersonality = async () => {
       if (!currentOrganization) return;
+
+      const organizationId = currentOrganization.id;
+      const subOrgId = activeSubOrg?.id ?? null;
+
       const { data: personality } = await supabase
         .from('bot_personality')
         .select('*')
-        .eq('organization_id', currentOrganization.id)
+        .eq('organization_id', organizationId)
+        .eq('sub_organization_id', subOrgId)
         .maybeSingle();
+
       const { data: instructions } = await supabase
         .from('bot_instructions')
         .select('*')
-        .eq('organization_id', currentOrganization.id)
+        .eq('organization_id', organizationId)
+        .eq('sub_organization_id', subOrgId)
         .maybeSingle();
+
       if (personality) {
         setForm((prev) => ({
           ...prev,
@@ -58,20 +77,35 @@ export function BotPersonalityModule() {
           response_length: personality.short_responses ? 'Short' : prev.response_length
         }));
       }
+
       if (instructions) {
-        setForm((prev) => ({ ...prev, instructions: JSON.stringify(instructions.rules, null, 2) }));
+        setForm((prev) => ({
+          ...prev,
+          instructions: JSON.stringify(instructions.rules, null, 2)
+        }));
       }
     };
-    fetchPersonality().catch(console.error);
-  }, [currentOrganization]);
 
+    fetchPersonality().catch(console.error);
+  }, [currentOrganization, activeSubOrg?.id]);
+
+  /* ------------------------------------------------------------------ */
+  /* SAVE PERSONALITY + INSTRUCTIONS                                    */
+  /* ------------------------------------------------------------------ */
   const savePersonality = async () => {
     if (!currentOrganization) return;
+
     setLoading(true);
+
+    const organizationId = currentOrganization.id;
+    const subOrgId = activeSubOrg?.id ?? null;
+
     try {
+      /* SAVE PERSONALITY */
       const { error: personalityError } = await supabase.from('bot_personality').upsert(
         {
-          organization_id: currentOrganization.id,
+          organization_id: organizationId,
+          sub_organization_id: subOrgId,
           tone: form.tone,
           language: form.language,
           short_responses: form.response_length === 'Short',
@@ -79,31 +113,48 @@ export function BotPersonalityModule() {
           gender_voice: form.gender_voice,
           fallback_message: form.fallback_message
         },
-        { onConflict: 'organization_id' }
+        {
+          onConflict: 'organization_id,sub_organization_id'
+        }
       );
+
       if (personalityError) throw personalityError;
 
+      /* SAVE CUSTOM INSTRUCTIONS */
       const parsed = JSON.parse(form.instructions || '{}');
+
       const { error: instructionsError } = await supabase.from('bot_instructions').upsert(
         {
-          organization_id: currentOrganization.id,
+          organization_id: organizationId,
+          sub_organization_id: subOrgId,
           rules: parsed
         },
-        { onConflict: 'organization_id' }
+        {
+          onConflict: 'organization_id,sub_organization_id'
+        }
       );
+
       if (instructionsError) throw instructionsError;
     } finally {
       setLoading(false);
     }
   };
 
+  /* ------------------------------------------------------------------ */
+  /* UI                                                                 */
+  /* ------------------------------------------------------------------ */
+
   return (
     <div className="grid grid-cols-2 gap-6">
+      {/* LEFT SIDE – PERSONALITY SETTINGS */}
       <div className="rounded-2xl border border-white/5 bg-slate-900/60 p-6">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
           <Sparkles size={18} className="text-accent" /> Personality Settings
         </h2>
-        <p className="mt-1 text-sm text-slate-400">Configure AI tone, language, and behavior for each dealership.</p>
+        <p className="mt-1 text-sm text-slate-400">
+          Configure AI tone, language, and behavior for each dealership division.
+        </p>
+
         <div className="mt-6 space-y-5">
           <div>
             <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
@@ -111,7 +162,9 @@ export function BotPersonalityModule() {
             </label>
             <select
               value={form.tone}
-              onChange={(event) => setForm((prev) => ({ ...prev, tone: event.target.value }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, tone: event.target.value }))
+              }
               className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
             >
               {tones.map((tone) => (
@@ -126,7 +179,9 @@ export function BotPersonalityModule() {
             </label>
             <select
               value={form.language}
-              onChange={(event) => setForm((prev) => ({ ...prev, language: event.target.value }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, language: event.target.value }))
+              }
               className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
             >
               {languages.map((language) => (
@@ -141,7 +196,9 @@ export function BotPersonalityModule() {
             </label>
             <select
               value={form.response_length}
-              onChange={(event) => setForm((prev) => ({ ...prev, response_length: event.target.value }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, response_length: event.target.value }))
+              }
               className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
             >
               {responseLengths.map((length) => (
@@ -157,23 +214,32 @@ export function BotPersonalityModule() {
             <input
               type="checkbox"
               checked={form.short_responses}
-              onChange={(event) => setForm((prev) => ({ ...prev, short_responses: event.target.checked }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, short_responses: event.target.checked }))
+              }
             />
+
             <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
               Emoji Usage
             </label>
             <input
               type="checkbox"
               checked={form.emoji_usage}
-              onChange={(event) => setForm((prev) => ({ ...prev, emoji_usage: event.target.checked }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, emoji_usage: event.target.checked }))
+              }
             />
           </div>
 
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Bot Voice</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">
+              Bot Voice
+            </label>
             <select
               value={form.gender_voice}
-              onChange={(event) => setForm((prev) => ({ ...prev, gender_voice: event.target.value }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, gender_voice: event.target.value }))
+              }
               className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
             >
               {genderVoices.map((voice) => (
@@ -183,26 +249,37 @@ export function BotPersonalityModule() {
           </div>
 
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">Fallback Message</label>
+            <label className="text-xs uppercase tracking-wide text-slate-400">
+              Fallback Message
+            </label>
             <textarea
               value={form.fallback_message}
-              onChange={(event) => setForm((prev) => ({ ...prev, fallback_message: event.target.value }))}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, fallback_message: event.target.value }))
+              }
               className="mt-2 h-24 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
             />
           </div>
         </div>
       </div>
 
+      {/* RIGHT SIDE: JSON INSTRUCTIONS */}
       <div className="rounded-2xl border border-white/5 bg-slate-900/60 p-6">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
           <Sparkles size={18} className="text-accent" /> Custom Instructions
         </h2>
-        <p className="mt-1 text-sm text-slate-400">Provide JSON instructions consumed by the AI engine.</p>
+        <p className="mt-1 text-sm text-slate-400">
+          Provide JSON instructions consumed by the AI engine.
+        </p>
+
         <textarea
           value={form.instructions}
-          onChange={(event) => setForm((prev) => ({ ...prev, instructions: event.target.value }))}
+          onChange={(event) =>
+            setForm((prev) => ({ ...prev, instructions: event.target.value }))
+          }
           className="mt-4 h-96 w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 font-mono text-xs text-slate-200 focus:border-accent focus:outline-none"
         />
+
         <button
           onClick={() => savePersonality().catch(console.error)}
           disabled={loading}
