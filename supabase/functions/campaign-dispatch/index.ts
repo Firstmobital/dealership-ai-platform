@@ -265,6 +265,49 @@ async function updateCampaignStatusIfCompleted(campaign: Campaign) {
 }
 
 // ------------------------------------------------------------
+// RECOMPUTE CAMPAIGN COUNTERS (sent_count / failed_count)
+// ------------------------------------------------------------
+async function recomputeCampaignCountersForCampaign(campaignId: string) {
+  try {
+    const { count: sentCount, error: sentErr } = await supabaseAdmin
+      .from("campaign_messages")
+      .select("*", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .in("status", ["sent", "delivered"]);
+
+    const { count: failedCount, error: failErr } = await supabaseAdmin
+      .from("campaign_messages")
+      .select("*", { count: "exact", head: true })
+      .eq("campaign_id", campaignId)
+      .eq("status", "failed");
+
+    const safeSent = sentCount ?? 0;
+    const safeFailed = failedCount ?? 0;
+
+    const { error: updateErr } = await supabaseAdmin
+      .from("campaigns")
+      .update({
+        sent_count: safeSent,
+        failed_count: safeFailed,
+      })
+      .eq("id", campaignId);
+
+    if (sentErr) {
+      console.error("Error counting sent messages", sentErr);
+    }
+    if (failErr) {
+      console.error("Error counting failed messages", failErr);
+    }
+    if (updateErr) {
+      console.error("Error updating campaign counters", updateErr);
+    }
+  } catch (e) {
+    console.error("Fatal error recomputing campaign counters", e);
+  }
+}
+
+
+// ------------------------------------------------------------
 // MAIN HANDLER
 // ------------------------------------------------------------
 serve(async (req) => {
@@ -345,7 +388,8 @@ serve(async (req) => {
       }
 
       await updateCampaignStatusIfCompleted(campaign);
-
+      await recomputeCampaignCountersForCampaign(campaign.id);
+      
       results.push({
         campaign_id: campaign.id,
         organization_id: campaign.organization_id,

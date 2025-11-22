@@ -59,11 +59,11 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     // --------------------------------------------------------------
-    // 1) Load conversation
+    // 1) Load conversation (including sub_organization_id)
     // --------------------------------------------------------------
     const { data: conversation, error: convError } = await supabase
       .from("conversations")
-      .select("id, organization_id, channel, contact_id")
+      .select("id, organization_id, channel, contact_id, sub_organization_id")
       .eq("id", conversation_id)
       .maybeSingle();
 
@@ -78,6 +78,7 @@ serve(async (req: Request): Promise<Response> => {
     const organizationId = conversation.organization_id;
     const channel = conversation.channel || "web";
     const contactId = conversation.contact_id ?? null;
+    const subOrganizationId: string | null = conversation.sub_organization_id ?? null;
 
     // --------------------------------------------------------------
     // 2) If WhatsApp → fetch customer phone
@@ -97,25 +98,63 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     // --------------------------------------------------------------
-    // 3) Load bot personality & additional rules
+    // 3) Load bot personality & additional rules (org + sub-org aware)
     // --------------------------------------------------------------
-    const { data: personality } = await supabase
-      .from("bot_personality")
-      .select("*")
-      .eq("organization_id", organizationId)
-      .maybeSingle();
+    let personality: any = null;
 
-    const { data: extraInstructions } = await supabase
-      .from("bot_instructions")
-      .select("rules")
-      .eq("organization_id", organizationId)
-      .maybeSingle();
+    if (subOrganizationId) {
+      // prefer sub-org specific personality, fallback to org-level
+      const { data } = await supabase
+        .from("bot_personality")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .or(
+          `sub_organization_id.eq.${subOrganizationId},sub_organization_id.is.null`,
+        )
+        .order("sub_organization_id", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      personality = data;
+    } else {
+      const { data } = await supabase
+        .from("bot_personality")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .is("sub_organization_id", null)
+        .maybeSingle();
+      personality = data;
+    }
+
+    let extraInstructions: any = null;
+
+    if (subOrganizationId) {
+      const { data } = await supabase
+        .from("bot_instructions")
+        .select("rules")
+        .eq("organization_id", organizationId)
+        .or(
+          `sub_organization_id.eq.${subOrganizationId},sub_organization_id.is.null`,
+        )
+        .order("sub_organization_id", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      extraInstructions = data;
+    } else {
+      const { data } = await supabase
+        .from("bot_instructions")
+        .select("rules")
+        .eq("organization_id", organizationId)
+        .is("sub_organization_id", null)
+        .maybeSingle();
+      extraInstructions = data;
+    }
 
     const fallbackMessage =
       personality?.fallback_message ??
       "I'm sorry, I do not have enough dealership information to answer that.";
 
     const personaBlock = [
+      subOrganizationId && `- Division / Department ID: ${subOrganizationId}`,
       personality?.tone && `- Tone: ${personality.tone}`,
       personality?.language && `- Language: ${personality.language}`,
       personality?.short_responses
@@ -176,6 +215,8 @@ serve(async (req: Request): Promise<Response> => {
             organization_id: organizationId,
             to: contactPhone,
             type: "typing_on",
+            // sub_organization_id can be passed through if whatsapp-send supports it later
+            sub_organization_id: subOrganizationId,
           }),
         });
       } catch (err) {
@@ -184,7 +225,7 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     // --------------------------------------------------------------
-    // 6) RAG: Embedding + chunk similarity match
+    // 6) RAG: Embedding + chunk similarity match (sub-org aware)
     // --------------------------------------------------------------
     let contextText = "No matching dealership knowledge found.";
 
@@ -213,17 +254,27 @@ serve(async (req: Request): Promise<Response> => {
 
           const { data: articles } = await supabase
             .from("knowledge_articles")
-            .select("id, organization_id")
+            .select("id, organization_id, sub_organization_id")
             .in("id", articleIds);
 
-          const allowed = new Set(
+          const allowedIds = new Set(
             (articles || [])
-              .filter((a) => a.organization_id === organizationId)
+              .filter((a) => {
+                if (a.organization_id !== organizationId) return false;
+                // same sub-org or global (null)
+                if (!subOrganizationId) {
+                  return a.sub_organization_id === null;
+                }
+                return (
+                  a.sub_organization_id === null ||
+                  a.sub_organization_id === subOrganizationId
+                );
+              })
               .map((a) => a.id),
           );
 
           const filtered = matches.filter((m: any) =>
-            allowed.has(m.article_id)
+            allowedIds.has(m.article_id)
           );
 
           if (filtered.length > 0) {
@@ -259,12 +310,17 @@ WEB RULES:
 - Use normal paragraphs and structured formatting.
       `.trim();
 
+    const subOrgLine = subOrganizationId
+      ? `- This conversation belongs to a specific division (sub-organization ID: ${subOrganizationId}). Match the intent and offers to that division.`
+      : `- This conversation belongs to the general division for this organization.`;
+
     const systemPrompt = `
 You are an AI showroom assistant for an automotive dealership.
 
 ORGANIZATION:
 - Organization ID: ${organizationId}
 - Channel: ${channel}
+${subOrgLine}
 
 PERSONALITY:
 ${personaBlock}
@@ -309,6 +365,26 @@ ${channelRules}
     // 9) Web response (no outbound)
     // --------------------------------------------------------------
     if (channel !== "whatsapp") {
+      // Insert bot message for web as well
+      try {
+        await supabase.from("messages").insert({
+          conversation_id,
+          sender: "bot",
+          message_type: "text",
+          text: aiResponseText,
+          media_url: null,
+          channel: "web",
+          sub_organization_id: subOrganizationId,
+        });
+
+        await supabase
+          .from("conversations")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", conversation_id);
+      } catch (err) {
+        console.error("[ai-handler] DB insert (web) error:", err);
+      }
+
       return new Response(
         JSON.stringify({
           conversation_id,
@@ -330,6 +406,7 @@ ${channelRules}
         text: aiResponseText,
         media_url: null,
         channel: "whatsapp",
+        sub_organization_id: subOrganizationId,
       });
 
       await supabase
@@ -353,6 +430,7 @@ ${channelRules}
             to: contactPhone,
             type: "text",
             text: aiResponseText,
+            sub_organization_id: subOrganizationId,
           }),
         });
       } catch (err) {

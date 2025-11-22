@@ -29,6 +29,9 @@ type CampaignState = {
     campaignId: string,
     scheduledAt?: string | null
   ) => Promise<void>;
+
+  retryFailedMessages: (campaignId: string) => Promise<void>;
+
 };
 
 export const useCampaignStore = create<CampaignState>((set, get) => ({
@@ -179,4 +182,35 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       ),
     }));
   },
+
+  retryFailedMessages: async (campaignId) => {
+    const { campaigns } = get();
+    const campaign = campaigns.find((c) => c.id === campaignId);
+    const organizationId = campaign?.organization_id;
+
+    // 1) Reset failed messages back to pending
+    const { error } = await supabase
+      .from("campaign_messages")
+      .update({
+        status: "pending",
+        dispatched_at: null,
+        delivered_at: null,
+        error: null,
+        whatsapp_message_id: null,
+      })
+      .eq("campaign_id", campaignId)
+      .eq("status", "failed");
+
+    if (error) {
+      console.error("[useCampaignStore] retryFailedMessages error", error);
+      throw error;
+    }
+
+    // 2) Refresh store (campaign + messages)
+    if (organizationId) {
+      await get().fetchCampaigns(organizationId);
+    }
+    await get().fetchCampaignMessages(campaignId);
+  },
+
 }));

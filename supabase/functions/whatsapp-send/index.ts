@@ -2,183 +2,291 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
-// ------------------------------------------------------------
-// ENV VARIABLES (YOUR STANDARD NAMING)
-// ------------------------------------------------------------
+/* =====================================================================================
+   ENV
+===================================================================================== */
+
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 
-// ------------------------------------------------------------
-// SUPABASE CLIENT (SERVICE ROLE)
-// ------------------------------------------------------------
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// ------------------------------------------------------------
-// TYPES
-// ------------------------------------------------------------
-interface WhatsAppSendPayload {
-  organization_id: string;
+/* =====================================================================================
+   LOGGING
+===================================================================================== */
 
-  to: string;
-  type: "text" | "image" | "document" | "typing_on";
+function log(stage: string, data: any) {
+  console.log(`[whatsapp-send] ${stage}`, JSON.stringify(data, null, 2));
+}
 
+/* =====================================================================================
+   TYPES
+===================================================================================== */
+
+type SendBody = {
+  organization_id?: string;
+  sub_organization_id?: string | null;
+  to?: string;
+  type?: "text" | "typing_on" | "template";
   text?: string;
 
-  image_url?: string;
-  image_caption?: string;
+  // (optional) future-proof template fields
+  template_name?: string;
+  template_language?: string;
+  template_variables?: string[];
+};
 
-  document_url?: string;
-  document_caption?: string;
-  filename?: string;
-}
+/* =====================================================================================
+   HELPERS
+===================================================================================== */
 
-function fail(msg: string, status = 400) {
-  return new Response(JSON.stringify({ error: msg }), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-// ------------------------------------------------------------
-// MAIN HANDLER
-// ------------------------------------------------------------
-serve(async (req) => {
-  try {
-    if (req.method !== "POST") {
-      return fail("Only POST allowed", 405);
-    }
-
-    const body: WhatsAppSendPayload = await req.json();
-    const { organization_id, to, type } = body;
-
-    if (!organization_id) return fail("Missing organization_id");
-    if (!to) return fail("Missing destination phone number");
-    if (!type) return fail("Missing message type");
-
-    // ------------------------------------------------------------
-    // 1. LOAD WHATSAPP SETTINGS (CORRECT NEW SCHEMA)
-    // ------------------------------------------------------------
-    const { data: settings, error: settingsErr } = await supabase
+/**
+ * Resolve the best whatsapp_settings row using Option D:
+ *  1) If sub_organization_id provided → try that first.
+ *  2) Then fallback to org-level (sub_organization_id IS NULL).
+ *  3) Then fallback to any active row for the org.
+ */
+async function resolveWhatsappSettings(
+  organizationId: string,
+  subOrganizationId?: string | null,
+) {
+  // 1) Try exact (org + sub_org)
+  if (subOrganizationId) {
+    const { data, error } = await supabase
       .from("whatsapp_settings")
-      .select(`
-        api_token,
-        whatsapp_phone_id,
-        whatsapp_business_id,
-        phone_number,
-        is_active
-      `)
-      .eq("organization_id", organization_id)
+      .select("id, api_token, whatsapp_phone_id, sub_organization_id")
+      .eq("organization_id", organizationId)
+      .eq("sub_organization_id", subOrganizationId)
+      .eq("is_active", true)
       .maybeSingle();
 
-    if (settingsErr || !settings) {
-      console.error("[whatsapp-send] Error loading WhatsApp settings:", settingsErr);
-      return fail("WhatsApp settings not configured");
+    if (error) {
+      log("RESOLVE_SETTINGS_SUBORG_ERR", error);
     }
+    if (data) {
+      return data;
+    }
+  }
 
-    const apiToken = settings.api_token;
-    const phoneId = settings.whatsapp_phone_id;
+  // 2) Fallback: org-level (no sub_org)
+  {
+    const { data, error } = await supabase
+      .from("whatsapp_settings")
+      .select("id, api_token, whatsapp_phone_id, sub_organization_id")
+      .eq("organization_id", organizationId)
+      .is("sub_organization_id", null)
+      .eq("is_active", true)
+      .maybeSingle();
 
-    if (!apiToken) return fail("WhatsApp API token missing");
-    if (!phoneId) return fail("Phone number ID missing");
-    if (settings.is_active === false) return fail("WhatsApp integration disabled");
+    if (error) {
+      log("RESOLVE_SETTINGS_ORGLEVEL_ERR", error);
+    }
+    if (data) {
+      return data;
+    }
+  }
 
-    // ------------------------------------------------------------
-    // 2. WHATSAPP CLOUD API URL
-    // ------------------------------------------------------------
-    const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
+  // 3) Final fallback: any active row for org
+  {
+    const { data, error } = await supabase
+      .from("whatsapp_settings")
+      .select("id, api_token, whatsapp_phone_id, sub_organization_id")
+      .eq("organization_id", organizationId)
+      .eq("is_active", true)
+      .limit(1);
 
-    // ------------------------------------------------------------
-    // 3. BUILD WHATSAPP PAYLOAD
-    // ------------------------------------------------------------
-    let payload: any = {
+    if (error) {
+      log("RESOLVE_SETTINGS_ANY_ERR", error);
+    }
+    if (data && data.length > 0) {
+      return data[0];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Build the WhatsApp Cloud API request body based on type.
+ * Currently supports:
+ *  - "text" → normal text message
+ *  - "typing_on" → send a "typing" state style payload (best-effort)
+ *  - you can extend with "template" later
+ */
+function buildWhatsappPayload(args: {
+  to: string;
+  type: "text" | "typing_on" | "template";
+  text?: string;
+  template_name?: string;
+  template_language?: string;
+  template_variables?: string[];
+}) {
+  const { to, type, text, template_name, template_language, template_variables } =
+    args;
+
+  if (type === "typing_on") {
+    // WhatsApp Cloud API doesn't have a perfect "typing" only state like Messenger.
+    // Common hack: send a message with a short delay or ephemeral indicator.
+    // Here we send a 'mark as read' style stub or very short message can be changed later.
+    return {
       messaging_product: "whatsapp",
       to,
+      type: "text",
+      text: {
+        body: "…", // you can change this to something else or remove typing_on support if not desired
+      },
     };
+  }
 
-    // Typing indicator
-    if (type === "typing_on") {
-      payload = {
-        ...payload,
-        status: "typing",
-      };
-    }
-
-    // Text message
-    else if (type === "text") {
-      if (!body.text) return fail("Missing text field");
-      payload = {
-        ...payload,
-        type: "text",
-        text: {
-          preview_url: false,
-          body: body.text,
+  if (type === "template" && template_name && template_language) {
+    return {
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: template_name,
+        language: {
+          code: template_language,
         },
-      };
+        components: template_variables?.length
+          ? [
+              {
+                type: "body",
+                parameters: template_variables.map((v) => ({
+                  type: "text",
+                  text: v,
+                })),
+              },
+            ]
+          : [],
+      },
+    };
+  }
+
+  // default: plain text
+  return {
+    messaging_product: "whatsapp",
+    to,
+    type: "text",
+    text: {
+      body: text || "",
+    },
+  };
+}
+
+/* =====================================================================================
+   MAIN HANDLER
+===================================================================================== */
+
+serve(async (req: Request): Promise<Response> => {
+  try {
+    if (req.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
     }
 
-    // Image message
-    else if (type === "image") {
-      if (!body.image_url) return fail("Missing image_url");
-      payload = {
-        ...payload,
-        type: "image",
-        image: {
-          link: body.image_url,
-          caption: body.image_caption || "",
-        },
-      };
+    const body = (await req.json().catch(() => null)) as SendBody | null;
+    log("INBOUND_REQUEST", body);
+
+    if (!body) {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
     }
 
-    // Document message
-    else if (type === "document") {
-      if (!body.document_url) return fail("Missing document_url");
-      payload = {
-        ...payload,
-        type: "document",
-        document: {
-          link: body.document_url,
-          caption: body.document_caption || "",
-          filename: body.filename || "document.pdf",
-        },
-      };
+    const {
+      organization_id,
+      sub_organization_id,
+      to,
+      type = "text",
+      text,
+      template_name,
+      template_language,
+      template_variables,
+    } = body;
+
+    if (!organization_id || !to) {
+      return new Response(
+        JSON.stringify({ error: "Missing organization_id or to" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
     }
 
-    // Unsupported type
-    else {
-      return fail("Unsupported message type");
+    // ------------------------------------------------------------------
+    // Resolve WhatsApp settings (Option D)
+    // ------------------------------------------------------------------
+    const settings = await resolveWhatsappSettings(
+      organization_id,
+      sub_organization_id ?? null,
+    );
+
+    if (!settings) {
+      log("NO_SETTINGS_FOUND", { organization_id, sub_organization_id });
+      return new Response(
+        JSON.stringify({
+          error:
+            "No active WhatsApp settings found for this organization/sub-organization",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
     }
 
-    // ------------------------------------------------------------
-    // 4. SEND WHATSAPP MESSAGE
-    // ------------------------------------------------------------
-    const wResp = await fetch(url, {
+    const apiToken: string = settings.api_token;
+    const whatsappPhoneId: string = settings.whatsapp_phone_id;
+
+    // ------------------------------------------------------------------
+    // Build outbound payload
+    // ------------------------------------------------------------------
+    const waPayload = buildWhatsappPayload({
+      to,
+      type,
+      text,
+      template_name,
+      template_language,
+      template_variables,
+    });
+
+    log("WA_OUTBOUND_PAYLOAD", { whatsappPhoneId, waPayload });
+
+    const url = `https://graph.facebook.com/v20.0/${whatsappPhoneId}/messages`;
+
+    const waRes = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(waPayload),
     });
 
-    const wText = await wResp.text();
+    const waJson = await waRes.json().catch(() => null);
+    log("WA_RESPONSE", { status: waRes.status, body: waJson });
 
-    console.log("[whatsapp-send] WhatsApp API response:", wResp.status, wText);
+    if (!waRes.ok) {
+      return new Response(
+        JSON.stringify({
+          error: "WhatsApp API error",
+          status: waRes.status,
+          details: waJson,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
 
-    // ------------------------------------------------------------
-    // 5. RETURN RESPONSE
-    // ------------------------------------------------------------
     return new Response(
       JSON.stringify({
         success: true,
-        status: wResp.status,
-        body: wText,
+        whatsapp_response: waJson,
       }),
-      { headers: { "Content-Type": "application/json" } }
+      { headers: { "Content-Type": "application/json" } },
     );
   } catch (err: any) {
-    console.error("[whatsapp-send] Fatal Error:", err);
-    return fail(err?.message || "Internal Server Error", 500);
+    log("FATAL_ERROR", { message: err?.message, stack: err?.stack });
+    return new Response(
+      JSON.stringify({ error: "Internal Server Error" }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
   }
 });

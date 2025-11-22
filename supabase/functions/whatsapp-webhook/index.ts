@@ -3,11 +3,11 @@ import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4';
 
 serve(async (req) => {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: { persistSession: false }
-  });
+  const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
+  const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+  const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false }
+});
 
   const payload = await req.json();
   const message = payload?.messages?.[0];
@@ -33,13 +33,13 @@ serve(async (req) => {
     media_url: message.media_url ?? null
   });
 
-  await fetch(`${supabaseUrl}/functions/v1/ai-engine`, {
-    method: 'POST',
+  await fetch(`${PROJECT_URL}/functions/v1/ai-engine`, {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${supabaseKey}`
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
     },
-    body: JSON.stringify({ conversation_id: conversation.id })
+    body: JSON.stringify({ conversation_id: conversation.id }),
   });
 
   return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });

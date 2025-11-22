@@ -59,20 +59,21 @@ function chunkText(text: string, chunkSize = 500): string[] {
 
 serve(async (req) => {
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-
-    if (!supabaseUrl || !supabaseKey) {
-      console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+    const projectUrl = Deno.env.get('PROJECT_URL');
+    const serviceRoleKey = Deno.env.get('SERVICE_ROLE_KEY');
+    
+    if (!projectUrl || !serviceRoleKey) {
+      console.error('Missing PROJECT_URL or SERVICE_ROLE_KEY');
       return new Response(
         JSON.stringify({ error: 'Supabase environment not configured' }),
         { status: 500, headers: { 'Content-Type': 'application/json' } },
       );
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: false },
-    });
+const supabase = createClient(projectUrl, serviceRoleKey, {
+  auth: { persistSession: false },
+});
+
 
     const { article_id } = await req.json();
 
