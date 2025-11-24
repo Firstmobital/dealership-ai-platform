@@ -254,22 +254,25 @@ serve(async (req: Request): Promise<Response> => {
         }),
       }).catch(console.error);
     }
-
+    
     // --------------------------------------------------------------
-    // 6) RAG Pipeline (unchanged)
+    // 6) RAG Pipeline (Stage 4+)
     // --------------------------------------------------------------
     let contextText = "No matching dealership knowledge found.";
 
     try {
+      // Use the same embedding model as ingestion for dimension consistency
       const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-small",
+        model: "text-embedding-3-large",
         input: user_message,
       });
 
-      const embedding = embeddingResponse.data?.[0]?.embedding;
+      const embedding = embeddingResponse.data?.[0]?.embedding as
+        | number[]
+        | undefined;
 
       if (embedding) {
-        const { data: matches } = await supabase.rpc(
+        const { data: matches, error: matchError } = await supabase.rpc(
           "match_knowledge_chunks",
           {
             query_embedding: embedding,
@@ -278,39 +281,59 @@ serve(async (req: Request): Promise<Response> => {
           }
         );
 
-        if (matches?.length) {
-          const articleIds = [...new Set(matches.map((m: any) => m.article_id))];
+        if (matchError) {
+          console.error("[ai-handler] match_knowledge_chunks error:", matchError);
+        } else if (matches?.length) {
+          // Collect all article IDs from matches
+          const articleIds = [
+            ...new Set(matches.map((m: any) => m.article_id)),
+          ];
 
-          const { data: articles } = await supabase
+          // Fetch articles to enforce org + sub-org scoping
+          const { data: articles, error: articlesError } = await supabase
             .from("knowledge_articles")
             .select("id, organization_id, sub_organization_id")
             .in("id", articleIds);
 
-          const allowedIds = new Set(
-            (articles ?? [])
-              .filter((a) => {
-                if (a.organization_id !== organizationId) return false;
-                if (!subOrganizationId)
-                  return a.sub_organization_id === null;
-                return (
-                  a.sub_organization_id === null ||
-                  a.sub_organization_id === subOrganizationId
-                );
-              })
-              .map((a) => a.id)
-          );
+          if (articlesError) {
+            console.error(
+              "[ai-handler] knowledge_articles lookup error:",
+              articlesError
+            );
+          } else if (articles && articles.length > 0) {
+            const allowedIds = new Set(
+              articles
+                .filter((a: any) => {
+                  if (a.organization_id !== organizationId) return false;
 
-          const filtered = matches.filter((m: any) =>
-            allowedIds.has(m.article_id)
-          );
+                  // If conversation has no sub-org: only allow org-level (sub_org null)
+                  if (!subOrganizationId) {
+                    return a.sub_organization_id === null;
+                  }
 
-          if (filtered.length > 0) {
-            contextText = filtered
-              .map(
-                (m: any) =>
-                  `- ${m.chunk} (score: ${Number(m.similarity).toFixed(2)})`
-              )
-              .join("\n");
+                  // If conversation has a sub-org:
+                  //  - allow org-level (null)
+                  //  - OR that exact sub-org
+                  return (
+                    a.sub_organization_id === null ||
+                    a.sub_organization_id === subOrganizationId
+                  );
+                })
+                .map((a: any) => a.id)
+            );
+
+            const filtered = matches.filter((m: any) =>
+              allowedIds.has(m.article_id)
+            );
+
+            if (filtered.length > 0) {
+              contextText = filtered
+                .map(
+                  (m: any) =>
+                    `- ${m.chunk} (score: ${Number(m.similarity).toFixed(2)})`
+                )
+                .join("\n");
+            }
           }
         }
       }

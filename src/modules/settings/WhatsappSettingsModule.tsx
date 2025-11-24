@@ -1,431 +1,243 @@
-import { useEffect, useState, FormEvent } from "react";
+// src/modules/settings/WhatsappSettingsModule.tsx
+
+import { useEffect, useState } from "react";
 import {
-  Info,
+  Loader2,
   Phone,
   Save,
-  Loader2,
-  EyeOff,
-  Eye,
-  SendHorizontal,
-  Copy,
-  Check,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
 } from "lucide-react";
-
+import { useWhatsappSettingsStore } from "../../state/useWhatsappSettingsStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
-import { useWhatsappSettingsStore } from "../../state/useWhatsappSettingsStore";
-
-type FormState = {
-  phone_number: string;
-  api_token: string;
-  verify_token: string;
-  whatsapp_phone_id: string;
-  whatsapp_business_id: string;
-};
-
-type Status =
-  | { type: "success"; message: string }
-  | { type: "error"; message: string }
-  | null;
 
 export function WhatsappSettingsModule() {
-  const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
-
   const {
     settings,
     loading,
-    loadSettings,
+    saving,
+    error,
+    isOrgFallback,
+    fetchSettings,
     saveSettings,
+    clearError,
   } = useWhatsappSettingsStore();
 
-  const [form, setForm] = useState<FormState>({
+  const { currentOrganization } = useOrganizationStore();
+  const { activeSubOrg } = useSubOrganizationStore();
+
+  const [form, setForm] = useState({
     phone_number: "",
     api_token: "",
     verify_token: "",
     whatsapp_phone_id: "",
     whatsapp_business_id: "",
+    is_active: true,
   });
 
-  const [status, setStatus] = useState<Status>(null);
-  const [apiVisible, setApiVisible] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [testSending, setTestSending] = useState(false);
-  const [saveComplete, setSaveComplete] = useState(false);
-
-  const webhookUrl = `${window.location.origin}/functions/v1/whatsapp-inbound`;
-
-  /* -------------------------------------------------------------
-     LOAD SETTINGS FOR ORG + SUB ORG
-  ------------------------------------------------------------- */
+  // Load settings on org/sub-org change
   useEffect(() => {
     if (!currentOrganization) return;
+    fetchSettings().catch(console.error);
+  }, [currentOrganization?.id, activeSubOrg?.id]);
 
-    loadSettings(currentOrganization.id, activeSubOrg?.id ?? null).catch(() =>
-      setStatus({
-        type: "error",
-        message: "Failed to load WhatsApp settings. Check console.",
-      })
-    );
-  }, [currentOrganization?.id, activeSubOrg?.id, loadSettings]);
-
-  /* -------------------------------------------------------------
-     SYNC FORM WHEN SETTINGS CHANGE
-  ------------------------------------------------------------- */
+  // Apply loaded settings to local form
   useEffect(() => {
-    if (!settings) return;
-
-    setForm({
-      phone_number: settings.phone_number ?? "",
-      api_token: settings.api_token ?? "",
-      verify_token: settings.verify_token ?? "",
-      whatsapp_phone_id: settings.whatsapp_phone_id ?? "",
-      whatsapp_business_id: settings.whatsapp_business_id ?? "",
-    });
+    if (!settings) {
+      setForm({
+        phone_number: "",
+        api_token: "",
+        verify_token: "",
+        whatsapp_phone_id: "",
+        whatsapp_business_id: "",
+        is_active: true,
+      });
+    } else {
+      setForm({
+        phone_number: settings.phone_number ?? "",
+        api_token: settings.api_token ?? "",
+        verify_token: settings.verify_token ?? "",
+        whatsapp_phone_id: settings.whatsapp_phone_id ?? "",
+        whatsapp_business_id: settings.whatsapp_business_id ?? "",
+        is_active: settings.is_active ?? true,
+      });
+    }
   }, [settings]);
 
-  /* -------------------------------------------------------------
-     HELPERS
-  ------------------------------------------------------------- */
-  const copyToClipboard = (text: string, field: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(field);
-    setTimeout(() => setCopied(null), 1500);
+  const update = (field: string, value: any) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const isConnected =
-    form.phone_number &&
-    form.api_token &&
-    form.whatsapp_phone_id &&
-    form.whatsapp_business_id;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearError();
 
-  const handleChange =
-    (field: keyof FormState) =>
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      setForm((prev) => ({ ...prev, [field]: event.target.value }));
-    };
-
-  /* -------------------------------------------------------------
-     SAVE SETTINGS (ORG + SUB ORG)
-  ------------------------------------------------------------- */
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-
-    if (!currentOrganization?.id) {
-      setStatus({ type: "error", message: "Select an organization first." });
-      return;
-    }
-
-    try {
-      await saveSettings(currentOrganization.id, activeSubOrg?.id ?? null, form);
-
-      setStatus({ type: "success", message: "Settings saved." });
-      setSaveComplete(true);
-      setTimeout(() => setSaveComplete(false), 2000);
-    } catch {
-      setStatus({ type: "error", message: "Failed to save settings." });
-    }
+    await saveSettings({
+      phone_number: form.phone_number,
+      api_token: form.api_token,
+      verify_token: form.verify_token,
+      whatsapp_phone_id: form.whatsapp_phone_id,
+      whatsapp_business_id: form.whatsapp_business_id,
+      is_active: form.is_active,
+    });
   };
-
-  /* -------------------------------------------------------------
-     SEND TEST MESSAGE (ORG + SUB ORG)
-  ------------------------------------------------------------- */
-  const sendTestMessage = async () => {
-    if (!currentOrganization?.id) return;
-
-    if (!form.phone_number) {
-      setStatus({
-        type: "error",
-        message: "Enter a target phone number first.",
-      });
-      return;
-    }
-
-    setTestSending(true);
-    setStatus(null);
-
-    try {
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-send`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY}`,
-          },
-          body: JSON.stringify({
-            organization_id: currentOrganization.id,
-            sub_organization_id: activeSubOrg?.id ?? null,
-            to: form.phone_number,
-            type: "text",
-            text: "Hello! This is a test message from Techwheels AI. 🚗",
-          }),
-        }
-      );
-
-      const data = await resp.json();
-
-      if (!resp.ok) {
-        throw new Error(data?.error || "Test send failed");
-      }
-
-      setStatus({
-        type: "success",
-        message: "Test message sent successfully.",
-      });
-    } catch (err: any) {
-      setStatus({
-        type: "error",
-        message: err?.message || "Failed to send test message",
-      });
-    }
-
-    setTestSending(false);
-  };
-
-  /* -------------------------------------------------------------
-     UI
-  ------------------------------------------------------------- */
-  if (!currentOrganization) {
-    return (
-      <div className="flex h-full items-center justify-center rounded-2xl border border-white/5 bg-slate-950/60 p-6 text-sm text-slate-400">
-        Select an organization to configure WhatsApp settings.
-      </div>
-    );
-  }
 
   return (
-    <div className="flex h-full flex-col gap-6">
-      {/* HEADER */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold text-white">
-            <Phone className="text-accent" size={20} />
-            WhatsApp Settings
-          </h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Configure WhatsApp Cloud API for{" "}
-            <span className="text-slate-200">
-              {currentOrganization.name} —{" "}
-              {activeSubOrg?.name ?? "General"}
-            </span>
-          </p>
-        </div>
-
-        <div
-          className={`rounded-full px-4 py-1 text-xs font-semibold ${
-            isConnected
-              ? "bg-emerald-600/20 text-emerald-300"
-              : "bg-rose-600/20 text-rose-300"
-          }`}
-        >
-          {isConnected ? "Connected" : "Not Connected"}
-        </div>
+    <div className="flex h-full flex-col px-6 py-6 text-slate-200">
+      <div>
+        <h1 className="text-xl font-semibold text-white">WhatsApp Settings</h1>
+        <p className="text-sm text-slate-400">
+          Configure WhatsApp Cloud API for this organization or division.
+        </p>
       </div>
 
-      {/* FORM */}
-      <form
-        onSubmit={handleSubmit}
-        className="flex flex-col gap-6 rounded-2xl border border-white/5 bg-slate-950/80 p-6"
-      >
-        {status && (
-          <div
-            className={`rounded-lg px-4 py-2 text-sm ${
-              status.type === "success"
-                ? "bg-emerald-500/10 text-emerald-300"
-                : "bg-rose-500/10 text-rose-300"
-            }`}
-          >
-            {status.message}
+      {/* Context Banner */}
+      <div className="mt-4 mb-6">
+        {activeSubOrg ? (
+          isOrgFallback ? (
+            <div className="flex items-center gap-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 p-3">
+              <AlertTriangle className="text-yellow-400" size={18} />
+              <span className="text-xs text-yellow-300">
+                This division has <b>no WhatsApp override</b>.  
+                Currently using <b>organization-level settings</b>.
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 rounded-lg bg-green-500/10 border border-green-500/30 p-3">
+              <ShieldCheck className="text-green-400" size={18} />
+              <span className="text-xs text-green-300">
+                <b>{activeSubOrg.name}</b> has its own WhatsApp configuration.
+              </span>
+            </div>
+          )
+        ) : (
+          <div className="flex items-center gap-3 rounded-lg bg-blue-500/10 border border-blue-500/30 p-3">
+            <Phone className="text-blue-400" size={18} />
+            <span className="text-xs text-blue-300">
+              Configuring <b>organization-level</b> WhatsApp settings.
+            </span>
           </div>
         )}
+      </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <InputField
-            label="WhatsApp Phone Number"
+      {/* Form */}
+      <form
+        onSubmit={handleSubmit}
+        className="flex flex-col gap-4 rounded-xl border border-slate-700 bg-slate-900 p-6 max-w-2xl"
+      >
+        {/* Phone Number */}
+        <div>
+          <label className="mb-1 block text-xs text-slate-400">
+            WhatsApp Phone Number (with country code)
+          </label>
+          <input
+            type="text"
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
             value={form.phone_number}
-            onChange={handleChange("phone_number")}
-            placeholder="e.g. 9174xxxxxxx"
+            onChange={(e) => update("phone_number", e.target.value)}
+            placeholder="e.g. 919999888877"
           />
+        </div>
 
-          {/* TOKEN FIELD */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              Permanent Access Token
-            </label>
-            <div className="relative">
-              <input
-                type={apiVisible ? "text" : "password"}
-                value={form.api_token}
-                onChange={handleChange("api_token")}
-                placeholder="EAAGxxxxx"
-                className="w-full rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-white pr-10 outline-none ring-accent/30 focus:border-accent focus:ring-2"
-              />
-              <button
-                type="button"
-                onClick={() => setApiVisible((v) => !v)}
-                className="absolute right-2 top-2 text-slate-400 hover:text-white"
-              >
-                {apiVisible ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-          </div>
+        {/* API Token */}
+        <div>
+          <label className="mb-1 block text-xs text-slate-400">
+            Permanent API Token
+          </label>
+          <input
+            type="password"
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.api_token}
+            onChange={(e) => update("api_token", e.target.value)}
+            placeholder="EAAG... your system user token"
+          />
+        </div>
 
-          <InputField
-            label="Verify Token"
+        {/* Verify Token */}
+        <div>
+          <label className="mb-1 block text-xs text-slate-400">
+            Webhook Verify Token
+          </label>
+          <input
+            type="text"
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
             value={form.verify_token}
-            onChange={handleChange("verify_token")}
-            placeholder="Custom token for webhook verification"
+            onChange={(e) => update("verify_token", e.target.value)}
+            placeholder="Your webhook verify token"
           />
+        </div>
 
-          <InputField
-            label="WhatsApp Phone Number ID"
+        {/* Phone ID */}
+        <div>
+          <label className="mb-1 block text-xs text-slate-400">
+            WhatsApp Phone ID
+          </label>
+          <input
+            type="text"
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
             value={form.whatsapp_phone_id}
-            onChange={handleChange("whatsapp_phone_id")}
-            placeholder="123456789012345"
-          />
-
-          <InputField
-            label="WhatsApp Business Account ID"
-            value={form.whatsapp_business_id}
-            onChange={handleChange("whatsapp_business_id")}
+            onChange={(e) => update("whatsapp_phone_id", e.target.value)}
             placeholder="123456789012345"
           />
         </div>
 
-        <div className="mt-2 flex items-center justify-between">
-          <p className="flex items-center gap-2 text-xs text-slate-500">
-            <Info size={14} />
-            Settings stored in{" "}
-            <code className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-200">
-              whatsapp_settings
-            </code>
-            .
-          </p>
+        {/* Business ID */}
+        <div>
+          <label className="mb-1 block text-xs text-slate-400">
+            WhatsApp Business Account ID
+          </label>
+          <input
+            type="text"
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+            value={form.whatsapp_business_id}
+            onChange={(e) => update("whatsapp_business_id", e.target.value)}
+            placeholder="1234567890"
+          />
+        </div>
 
+        {/* Active Toggle */}
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={form.is_active}
+            onChange={(e) => update("is_active", e.target.checked)}
+            className="h-4 w-4"
+          />
+          <span className="text-sm text-slate-300">Enable WhatsApp</span>
+        </div>
+
+        {/* Submit */}
+        <div className="mt-4">
           <button
             type="submit"
-            disabled={loading}
-            className={`inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-accent/30 transition ${
-              loading
-                ? "opacity-60 cursor-not-allowed"
-                : "hover:bg-accent/80"
-            }`}
+            disabled={saving}
+            className="flex items-center gap-2 rounded-md bg-accent px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {loading ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : saveComplete ? (
-              <Check size={16} />
+            {saving ? (
+              <Loader2 className="animate-spin" size={16} />
             ) : (
               <Save size={16} />
             )}
-            <span>
-              {loading ? "Saving..." : saveComplete ? "Saved" : "Save settings"}
-            </span>
+            Save Settings
           </button>
         </div>
+
+        {/* Error */}
+        {error && (
+          <div className="mt-3 flex items-center gap-2 rounded-md bg-red-500/10 border border-red-500/30 p-3 text-xs text-red-300">
+            <ShieldAlert size={16} /> {error}
+          </div>
+        )}
       </form>
 
-      {/* WEBHOOK + TEST */}
-      <div className="rounded-2xl border border-white/5 bg-slate-950/80 p-6 flex flex-col gap-6">
-        <h2 className="text-lg font-semibold text-white">Testing & Webhook</h2>
-
-        <button
-          onClick={sendTestMessage}
-          disabled={testSending}
-          className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60 w-fit"
-        >
-          {testSending ? (
-            <Loader2 size={16} className="animate-spin" />
-          ) : (
-            <SendHorizontal size={16} />
-          )}
-          {testSending ? "Sending..." : "Send Test Message"}
-        </button>
-
-        <WebhookField
-          label="Webhook URL"
-          value={webhookUrl}
-          copied={copied === "webhook"}
-          onCopy={() => copyToClipboard(webhookUrl, "webhook")}
-        />
-
-        <WebhookField
-          label="Verify Token"
-          value={form.verify_token}
-          copied={copied === "verify"}
-          onCopy={() => copyToClipboard(form.verify_token, "verify")}
-        />
-
-        <p className="text-xs text-slate-400">
-          Add these values in Meta Dashboard →{" "}
-          <span className="text-slate-200">Webhooks</span>
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* --------------------------------------------------------------
-   SMALL COMPONENTS
--------------------------------------------------------------- */
-
-function InputField({
-  label,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-medium uppercase tracking-wide text-slate-400">
-        {label}
-      </label>
-      <input
-        type="text"
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        className="rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 text-sm text-white outline-none ring-accent/30 focus:border-accent focus:ring-2"
-      />
-    </div>
-  );
-}
-
-function WebhookField({
-  label,
-  value,
-  copied,
-  onCopy,
-}: {
-  label: string;
-  value: string;
-  copied: boolean;
-  onCopy: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-medium uppercase tracking-wide text-slate-400">
-        {label}
-      </label>
-
-      <div className="relative flex items-center">
-        <code className="w-full truncate rounded-lg border border-white/10 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
-          {value}
-        </code>
-
-        <button
-          onClick={onCopy}
-          className="absolute right-2 text-slate-300 hover:text-white"
-        >
-          {copied ? <Check size={16} /> : <Copy size={16} />}
-        </button>
-      </div>
+      {loading && (
+        <div className="mt-6 flex items-center gap-2 text-slate-400">
+          <Loader2 className="animate-spin" size={16} />
+          Loading WhatsApp settings...
+        </div>
+      )}
     </div>
   );
 }

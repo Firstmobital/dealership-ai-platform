@@ -78,3 +78,62 @@
   - Inserts chunks into knowledge_chunks for RAG.
 - Result: AI fallback questions can now be promoted into fully searchable KB
   articles in one click, closing the learning loop for the bot.
+
+## 2025-11-24 – Step 2: Auth + Shell Foundation
+
+- Rebuilt App.tsx with protected routing, auth guard, and nested modules (chats, KB, bot, workflows, campaigns, settings, WhatsApp, unanswered).
+- Implemented robust useAuthStore with Supabase v2 (session persistence, login, signup, logout, reset, update password).
+- Cleaned and finalized Login / Signup / ResetPassword / UpdatePassword pages.
+- Fixed Sidebar navigation structure to match routes.
+- Fixed Topbar sign-out and connected OrganizationSwitcher + SubOrgSwitcher.
+- Resolved activeOrganization vs currentOrganization mismatch in SubOrgSwitcher.
+
+## 2025-11-24 – Step 4A: Knowledge Base Store
+
+- Implemented useKnowledgeBaseStore with org + sub_org aware fetching of knowledge_articles.
+- Added createArticleFromText using ai-generate-kb edge function (RAG ingestion).
+- Added createArticleFromFile: uploads to knowledge-base bucket, then invokes ai-generate-kb for text extraction + chunking.
+- Added deleteArticle with organization guard and automatic list refresh.
+- Standardized error/loading/uploading states for Knowledge Base UI.
+
+## Step 4B – UnansweredQuestionsModule
+
+- Implemented full UI for unanswered questions.
+- Added list view, selection, preview, deletion.
+- Added Save-to-KB UI linking to kb-save-from-unanswered function.
+- Fully integrated multi-org + sub-org flows.
+- Polished UX consistent with KB module.
+
+## Step 4C – kb-save-from-unanswered Edge Function
+- Fully implemented unanswered → KB pipeline.
+- Loads unanswered question by org + sub-org.
+- Creates KB article with AI-generated summary.
+- Chunks question text and generates embeddings.
+- Inserts knowledge_chunks rows.
+- Deletes unanswered question after saving.
+- Fully matches frontend store contract.
+
+## Step 5B – WhatsApp Settings UI
+
+- Implemented full WhatsAppSettingsModule with hybrid fallback support.
+- Shows banners for org-level fallback vs sub-org override.
+- Supports editing phone number, API token, verify token, phone ID, business ID.
+- Supports enabling/disabling WA.
+- Matches useWhatsappSettingsStore hybrid behavior exactly.
+- Fully multi-tenant and sub-organization aware.
+
+## Step 5C – Sub-Organization Store
+
+- Implemented full useSubOrganizationStore with CRUD for sub_organizations.
+- Added activeSubOrg state and context switching for multi-tenant flows.
+- Integrated with organization store for scoped fetching.
+- Ensures inbox, WhatsApp, KB, and campaign modules respect sub-org isolation.
+- Fully compatible with hybrid WhatsApp settings (org fallback).
+
+## Step 5D – SubOrganizationsPanel UI
+
+- Implemented full UI for sub-organization management.
+- Supports create, edit, delete, and activate sub-org.
+- Integrated with useSubOrganizationStore and org switcher.
+- Matches overall design system of the platform.
+- Fully multi-tenant and sub-org aware.

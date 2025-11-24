@@ -11,6 +11,9 @@ const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") || "test-token";
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
+const WHATSAPP_API_BASE_URL =
+  Deno.env.get("WHATSAPP_API_BASE_URL") ??
+  "https://graph.facebook.com/v20.0";
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -46,7 +49,6 @@ async function verifyWebhook(req: Request): Promise<Response> {
 /* =====================================================================================
    AUTO-ASSIGNMENT (Stage 5D)
 ===================================================================================== */
-// >>> NEW: Stage 5D auto-assignment helper
 async function autoAssignConversationAgent(
   subOrganizationId: string | null
 ): Promise<string | null> {
@@ -221,6 +223,82 @@ async function resolveSubOrganizationId(
 }
 
 /* =====================================================================================
+   MEDIA DOWNLOAD + STORAGE (NEW)
+===================================================================================== */
+
+async function downloadAndStoreMedia(
+  mediaId: string,
+  apiToken: string,
+  orgId: string,
+  conversationId: string
+): Promise<{ mediaUrl: string | null; mimeType: string | null }> {
+  try {
+    // 1) Get media URL + mime type from Meta
+    const metaRes = await fetch(
+      `${WHATSAPP_API_BASE_URL}/${mediaId}?access_token=${apiToken}`,
+    );
+    const metaJson: any = await metaRes.json();
+
+    if (!metaRes.ok) {
+      log("MEDIA_META_ERROR", { status: metaRes.status, body: metaJson });
+      return { mediaUrl: null, mimeType: null };
+    }
+
+    const url = metaJson.url as string | undefined;
+    const mimeType = metaJson.mime_type as string | undefined;
+
+    if (!url) {
+      return { mediaUrl: null, mimeType: null };
+    }
+
+    // 2) Download binary
+    const fileRes = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+      },
+    });
+
+    if (!fileRes.ok) {
+      log("MEDIA_DOWNLOAD_ERROR", {
+        status: fileRes.status,
+        headers: Object.fromEntries(fileRes.headers.entries()),
+      });
+      return { mediaUrl: null, mimeType: mimeType ?? null };
+    }
+
+    const blob = await fileRes.blob();
+
+    // 3) Upload to Supabase Storage
+    const ext = mimeType?.split("/")?.[1] ?? "bin";
+    const path = `${orgId}/${conversationId}/${mediaId}.${ext}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .upload(path, blob, {
+        contentType: mimeType ?? "application/octet-stream",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      log("MEDIA_UPLOAD_ERROR", uploadError);
+      return { mediaUrl: null, mimeType: mimeType ?? null };
+    }
+
+    // 4) Get public URL
+    const { data: publicUrlData } = supabase.storage
+      .from(WHATSAPP_MEDIA_BUCKET)
+      .getPublicUrl(path);
+
+    const publicUrl = publicUrlData?.publicUrl ?? null;
+
+    return { mediaUrl: publicUrl, mimeType: mimeType ?? null };
+  } catch (err) {
+    log("MEDIA_FATAL_ERROR", err);
+    return { mediaUrl: null, mimeType: null };
+  }
+}
+
+/* =====================================================================================
    MAIN HANDLER
 ===================================================================================== */
 serve(async (req: Request) => {
@@ -255,37 +333,75 @@ serve(async (req: Request) => {
     const contactInfo = value.contacts?.[0];
     const phoneNumberId = value.metadata?.phone_number_id;
 
-    const { data: waSettings } = await supabase
+    if (!phoneNumberId) {
+      log("MISSING_PHONE_NUMBER_ID", { value });
+      return new Response(JSON.stringify({ error: "No phone_number_id" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const { data: waSettings, error: waSettingsError } = await supabase
       .from("whatsapp_settings")
       .select("organization_id, api_token, sub_organization_id")
       .eq("whatsapp_phone_id", phoneNumberId)
       .maybeSingle();
 
-    const organizationId = waSettings.organization_id;
-    const apiToken = waSettings.api_token;
-    const waSettingsSubOrgId = waSettings.sub_organization_id ?? null;
+    if (waSettingsError) {
+      log("WA_SETTINGS_ERROR", waSettingsError);
+    }
 
-    /* Extract text */
+    if (!waSettings) {
+      log("WA_SETTINGS_NOT_FOUND", { phoneNumberId });
+      return new Response(
+        JSON.stringify({ error: "No WhatsApp settings for this phone_number_id" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const organizationId = waSettings.organization_id as string;
+    const apiToken = waSettings.api_token as string | null;
+    const waSettingsSubOrgId = (waSettings.sub_organization_id ??
+      null) as string | null;
+
+    /* Extract type + text + potential media id */
     const type = waMessage.type || "text";
-    let text = null;
+    let text: string | null = null;
+    let mediaId: string | null = null;
 
-    if (type === "text") text = waMessage.text?.body ?? null;
-    if (type === "button") text = waMessage.button?.text ?? null;
-    if (type === "interactive")
+    if (type === "text") {
+      text = waMessage.text?.body ?? null;
+    } else if (type === "button") {
+      text = waMessage.button?.text ?? null;
+    } else if (type === "interactive") {
       text =
         waMessage.interactive?.button_reply?.title ??
         waMessage.interactive?.list_reply?.title ??
         null;
-    if (type === "image") text = waMessage.image?.caption ?? "Customer sent an image";
-    if (type === "video") text = waMessage.video?.caption ?? "Customer sent a video";
-    if (type === "audio") text = "Customer sent audio";
-    if (type === "voice") text = "Customer sent voice";
-    if (type === "sticker") text = "Customer sent sticker";
-    if (type === "document")
+    } else if (type === "image") {
+      text = waMessage.image?.caption ?? "Customer sent an image";
+      mediaId = waMessage.image?.id ?? null;
+    } else if (type === "video") {
+      text = waMessage.video?.caption ?? "Customer sent a video";
+      mediaId = waMessage.video?.id ?? null;
+    } else if (type === "audio") {
+      text = "Customer sent audio";
+      mediaId = waMessage.audio?.id ?? null;
+    } else if (type === "voice") {
+      text = "Customer sent voice";
+      mediaId = waMessage.audio?.id ?? null;
+    } else if (type === "sticker") {
+      text = "Customer sent sticker";
+      mediaId = waMessage.sticker?.id ?? null;
+    } else if (type === "document") {
       text =
         waMessage.document?.caption ??
         waMessage.document?.filename ??
         "Customer sent document";
+      mediaId = waMessage.document?.id ?? null;
+    } else {
+      text = "Unsupported message type.";
+    }
 
     /* ------------------ Resolve sub-organization ------------------ */
     const subOrganizationId = await resolveSubOrganizationId(
@@ -308,7 +424,7 @@ serve(async (req: Request) => {
     let contactId: string;
 
     if (!existingContact) {
-      const { data: inserted } = await supabase
+      const { data: inserted, error: insertContactError } = await supabase
         .from("contacts")
         .insert({
           organization_id: organizationId,
@@ -317,6 +433,12 @@ serve(async (req: Request) => {
         })
         .select()
         .single();
+
+      if (insertContactError || !inserted) {
+        log("CONTACT_INSERT_ERROR", insertContactError);
+        return new Response("Failed to create contact", { status: 500 });
+      }
+
       contactId = inserted.id;
     } else {
       contactId = existingContact.id;
@@ -326,7 +448,7 @@ serve(async (req: Request) => {
     }
 
     /* =====================================================================================
-       CONVERSATION HANDLING (AUTO-ASSIGNMENT ADDED)
+       CONVERSATION HANDLING (AUTO-ASSIGNMENT)
     ====================================================================================== */
     let convQuery = supabase
       .from("conversations")
@@ -349,10 +471,11 @@ serve(async (req: Request) => {
     let conversationId: string;
 
     if (!existingConv) {
-      // >>> NEW: Auto-assign agent for NEW conversations
-      const autoAssignedUserId = await autoAssignConversationAgent(subOrganizationId);
+      const autoAssignedUserId = await autoAssignConversationAgent(
+        subOrganizationId,
+      );
 
-      const { data: newConv } = await supabase
+      const { data: newConv, error: newConvError } = await supabase
         .from("conversations")
         .insert({
           organization_id: organizationId,
@@ -361,18 +484,25 @@ serve(async (req: Request) => {
           ai_enabled: true,
           sub_organization_id: subOrganizationId,
           last_message_at: new Date().toISOString(),
-          assigned_to: autoAssignedUserId, // >>> NEW
+          assigned_to: autoAssignedUserId,
+          whatsapp_user_phone: waNumber,
         })
         .select()
         .single();
+
+      if (newConvError || !newConv) {
+        log("CONV_INSERT_ERROR", newConvError);
+        return new Response("Failed to create conversation", { status: 500 });
+      }
 
       conversationId = newConv.id;
     } else {
       conversationId = existingConv.id;
 
-      // >>> NEW: Auto-assign if existing conversation has no agent
       if (!existingConv.assigned_to) {
-        const autoAssignedUserId = await autoAssignConversationAgent(subOrganizationId);
+        const autoAssignedUserId = await autoAssignConversationAgent(
+          subOrganizationId,
+        );
 
         if (autoAssignedUserId) {
           await supabase
@@ -380,29 +510,52 @@ serve(async (req: Request) => {
             .update({
               assigned_to: autoAssignedUserId,
               last_message_at: new Date().toISOString(),
+              whatsapp_user_phone: waNumber,
             })
             .eq("id", conversationId);
         } else {
           await supabase
             .from("conversations")
-            .update({ last_message_at: new Date().toISOString() })
+            .update({
+              last_message_at: new Date().toISOString(),
+              whatsapp_user_phone: waNumber,
+            })
             .eq("id", conversationId);
         }
       } else {
         await supabase
           .from("conversations")
-          .update({ last_message_at: new Date().toISOString() })
+          .update({
+            last_message_at: new Date().toISOString(),
+            whatsapp_user_phone: waNumber,
+          })
           .eq("id", conversationId);
       }
     }
 
-    /* ------------------ Store message ------------------ */
+    /* ------------------ MEDIA HANDLING (optional, if apiToken + mediaId) ------------------ */
+    let mediaUrl: string | null = null;
+    let mimeType: string | null = null;
+
+    if (mediaId && apiToken) {
+      const stored = await downloadAndStoreMedia(
+        mediaId,
+        apiToken,
+        organizationId,
+        conversationId,
+      );
+      mediaUrl = stored.mediaUrl;
+      mimeType = stored.mimeType;
+    }
+
+    /* ------------------ Store message (aligned with schema) ------------------ */
     await supabase.from("messages").insert({
       conversation_id: conversationId,
-      sender: "customer",
+      sender: "customer", // keep as-is to match your existing data
       message_type: type,
-      text,
-      media_url: null,
+      content: text,
+      media_url: mediaUrl,
+      mime_type: mimeType,
       channel: "whatsapp",
       sub_organization_id: subOrganizationId,
     });

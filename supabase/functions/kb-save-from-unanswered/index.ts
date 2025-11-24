@@ -3,155 +3,245 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 
+/* =====================================================================================
+   ENV
+===================================================================================== */
+
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
-
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-type SaveBody = {
-  organization_id: string;
-  sub_organization_id?: string | null;
-  question: string;
-  content: string;
-};
+/* =====================================================================================
+   HELPERS
+===================================================================================== */
 
-function chunkText(input: string, maxLen = 800): string[] {
-  const normalized = input.replace(/\r\n/g, "\n");
-  const paragraphs = normalized.split(/\n{2,}/);
+// Chunk text for embeddings
+function chunkText(text: string, maxChars = 1200): string[] {
+  const cleaned = text.replace(/\r\n/g, "\n").trim();
+  if (!cleaned) return [];
 
+  const paragraphs = cleaned.split(/\n{2,}/);
   const chunks: string[] = [];
-  let buffer = "";
+  let current = "";
 
   for (const para of paragraphs) {
     const p = para.trim();
     if (!p) continue;
 
-    if ((buffer + "\n\n" + p).length > maxLen) {
-      if (buffer) chunks.push(buffer.trim());
-      if (p.length > maxLen) {
-        for (let i = 0; i < p.length; i += maxLen) {
-          chunks.push(p.slice(i, i + maxLen));
-        }
-        buffer = "";
-      } else {
-        buffer = p;
-      }
+    if ((current + "\n\n" + p).length <= maxChars) {
+      current = current ? `${current}\n\n${p}` : p;
     } else {
-      buffer = buffer ? buffer + "\n\n" + p : p;
+      if (current) chunks.push(current);
+
+      if (p.length > maxChars) {
+        for (let i = 0; i < p.length; i += maxChars) {
+          chunks.push(p.slice(i, i + maxChars));
+        }
+        current = "";
+      } else {
+        current = p;
+      }
     }
   }
 
-  if (buffer.trim()) {
-    chunks.push(buffer.trim());
-  }
+  if (current) chunks.push(current);
 
   return chunks;
 }
 
-serve(async (req: Request) => {
-  if (req.method !== "POST") {
-    return new Response("Method not allowed", { status: 405 });
+// Generate a short abstract to store in knowledge_articles.content
+async function summarize(text: string, title: string): Promise<string> {
+  if (!OPENAI_API_KEY) {
+    console.warn("[kb-save-from-unanswered] Missing OPENAI_API_KEY – using truncated fallback summary.");
+    return text.slice(0, 600);
   }
 
+  const prompt = `
+You are helping build a knowledge base for a dealership AI.
+Create a short 4–6 sentence summary suitable for KB display.
+
+Title: ${title}
+
+Content:
+${text.slice(0, 3000)}
+
+Return ONLY the summary.
+  `.trim();
+
+  const resp = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+  });
+
+  return resp.choices?.[0]?.message?.content?.trim() || text.slice(0, 600);
+}
+
+// Generate embeddings for chunks
+async function embedChunks(chunks: string[]): Promise<number[][]> {
+  if (!OPENAI_API_KEY) {
+    console.warn("[kb-save-from-unanswered] No OPENAI_API_KEY – returning zero vectors.");
+    return chunks.map(() => Array(1536).fill(0));
+  }
+
+  const resp = await openai.embeddings.create({
+    model: "text-embedding-3-large",
+    input: chunks,
+  });
+
+  return resp.data.map((row: any) => row.embedding as number[]);
+}
+
+/* =====================================================================================
+   MAIN FUNCTION
+===================================================================================== */
+
+serve(async (req: Request) => {
   try {
-    const body = (await req.json()) as SaveBody;
-
-    const organization_id = body.organization_id;
-    const sub_organization_id = body.sub_organization_id ?? null;
-    const question = (body.question ?? "").trim();
-    const content = (body.content ?? "").trim();
-
-    if (!organization_id || !question || !content) {
+    if (req.method !== "POST") {
       return new Response(
-        JSON.stringify({
-          error: "organization_id, question and content are required",
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
+        JSON.stringify({ error: "Method not allowed" }),
+        { status: 405 }
       );
     }
 
-    const nowIso = new Date().toISOString();
-    const title =
-      question.length > 120 ? question.slice(0, 117) + "..." : question;
+    const {
+      organization_id,
+      sub_organization_id,
+      question_id,
+      title,
+      summary,
+    } = await req.json();
 
-    // 1) Insert knowledge_articles row
-    const { data: article, error: articleErr } = await supabase
+    if (!organization_id || !question_id) {
+      return new Response(
+        JSON.stringify({ error: "Missing required fields" }),
+        { status: 400 }
+      );
+    }
+
+    /* =====================================================================================
+       STEP 1 — Load the unanswered question
+    ===================================================================================== */
+
+    const { data: q, error: qErr } = await supabase
+      .from("unanswered_questions")
+      .select("*")
+      .eq("id", question_id)
+      .eq("organization_id", organization_id)
+      .single();
+
+    if (qErr || !q) {
+      console.error("[kb-save-from-unanswered] Load question error:", qErr);
+      return new Response(
+        JSON.stringify({ error: "Unanswered question not found" }),
+        { status: 404 }
+      );
+    }
+
+    const questionText = q.question.trim();
+    const articleTitle = title || questionText.slice(0, 80);
+    const articleSummary =
+      summary ||
+      (await summarize(questionText, articleTitle));
+
+    /* =====================================================================================
+       STEP 2 — Insert knowledge_articles
+    ===================================================================================== */
+
+    const { data: aInsert, error: aErr } = await supabase
       .from("knowledge_articles")
       .insert({
         organization_id,
-        sub_organization_id,
-        title,
-        description: question,
-        content,
-        created_at: nowIso,
-        updated_at: nowIso,
+        sub_organization_id: sub_organization_id ?? null,
+        title: articleTitle,
+        content: articleSummary, // short KB abstract
       })
       .select("id")
       .single();
 
-    if (articleErr || !article) {
-      console.error("[kb-save-from-unanswered] article insert error:", articleErr);
+    if (aErr || !aInsert) {
+      console.error("[kb-save-from-unanswered] Failed to insert article:", aErr);
       return new Response(
-        JSON.stringify({ error: "Failed to create knowledge article" }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
+        JSON.stringify({ error: "Failed to create KB article" }),
+        { status: 500 }
       );
     }
 
-    const articleId = article.id as string;
+    const articleId = aInsert.id;
 
-    // 2) Chunk content and embed
-    const chunks = chunkText(content, 800);
+    /* =====================================================================================
+       STEP 3 — Chunk + Embed full question text
+    ===================================================================================== */
 
-    if (chunks.length > 0) {
-      const embeddingResp = await openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: chunks,
+    const chunks = chunkText(questionText);
+    const vectors = await embedChunks(chunks);
+
+    if (vectors.length !== chunks.length) {
+      console.error("[kb-save-from-unanswered] Chunk mismatch", {
+        chunks: chunks.length,
+        vectors: vectors.length,
       });
-
-      const rows = chunks.map((chunk, idx) => {
-        const emb = embeddingResp.data[idx]?.embedding;
-        return {
-          article_id: articleId,
-          chunk,
-          embedding: emb,
-        };
-      });
-
-      const filteredRows = rows.filter((r) => Array.isArray(r.embedding));
-
-      if (filteredRows.length > 0) {
-        const { error: chunkErr } = await supabase
-          .from("knowledge_chunks")
-          .insert(filteredRows);
-
-        if (chunkErr) {
-          console.error(
-            "[kb-save-from-unanswered] chunks insert error:",
-            chunkErr,
-          );
-        }
-      }
+      return new Response(
+        JSON.stringify({ error: "Embedding generation failed" }),
+        { status: 500 }
+      );
     }
 
+    const chunkRecords = chunks.map((chunk, i) => ({
+      article_id: articleId,
+      chunk,
+      embedding: vectors[i],
+    }));
+
+    const { error: chunkErr } = await supabase
+      .from("knowledge_chunks")
+      .insert(chunkRecords);
+
+    if (chunkErr) {
+      console.error("[kb-save-from-unanswered] Failed to save chunks:", chunkErr);
+      return new Response(
+        JSON.stringify({ error: "Failed to save KB chunks" }),
+        { status: 500 }
+      );
+    }
+
+    /* =====================================================================================
+       STEP 4 — Delete unanswered question
+    ===================================================================================== */
+
+    const { error: delErr } = await supabase
+      .from("unanswered_questions")
+      .delete()
+      .eq("id", question_id);
+
+    if (delErr) {
+      console.error("[kb-save-from-unanswered] Failed to delete unanswered q:", delErr);
+      // Not fatal — article is created anyway
+    }
+
+    /* =====================================================================================
+       DONE
+    ===================================================================================== */
+
     return new Response(
       JSON.stringify({
+        success: true,
         article_id: articleId,
-        created: true,
+        chunks: chunkRecords.length,
       }),
-      { headers: { "Content-Type": "application/json" } },
+      { status: 200 }
     );
-  } catch (err: any) {
-    console.error("[kb-save-from-unanswered] fatal error:", err);
+  } catch (err) {
+    console.error("[kb-save-from-unanswered] Fatal:", err);
     return new Response(
-      JSON.stringify({
-        error: err?.message ?? "Internal Server Error",
-      }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
+      JSON.stringify({ error: "Internal Server Error" }),
+      { status: 500 }
     );
   }
 });

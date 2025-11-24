@@ -1,7 +1,9 @@
+// src/App.tsx
+import { useEffect, type ReactElement } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { useEffect } from "react";
 
 import { AppLayout } from "./layouts/AppLayout";
+
 import { ChatsModule } from "./modules/chats/ChatsModule";
 import { KnowledgeBaseModule } from "./modules/knowledge-base/KnowledgeBaseModule";
 import { BotPersonalityModule } from "./modules/bot-personality/BotPersonalityModule";
@@ -15,29 +17,35 @@ import { LoginPage } from "./modules/auth/LoginPage";
 import { SignupPage } from "./modules/auth/SignupPage";
 import { ResetPasswordPage } from "./modules/auth/ResetPasswordPage";
 import { UpdatePasswordPage } from "./modules/auth/UpdatePasswordPage";
+
 import { useAuthStore } from "./state/useAuthStore";
 
+function FullScreenLoader() {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-slate-200">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        <p className="text-sm text-slate-400">Preparing your dealership workspace…</p>
+      </div>
+    </div>
+  );
+}
 
-// ---------------------------------------------------------------------------
-// PROTECTED WRAPPER — BLOCKS UNAUTHENTICATED USERS
-// ---------------------------------------------------------------------------
-function ProtectedAppLayout() {
-  const { session, initialize, loading } = useAuthStore();
+function RequireAuth({ children }: { children: ReactElement }) {
+  const { user, initialized, loading, initialize } = useAuthStore();
   const location = useLocation();
 
   useEffect(() => {
-    initialize().catch(console.error);
-  }, [initialize]);
+    if (!initialized && !loading) {
+      initialize().catch(console.error);
+    }
+  }, [initialized, loading, initialize]);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-200">
-        <div className="text-sm text-slate-400">Loading dashboard…</div>
-      </div>
-    );
+  if (!initialized || loading) {
+    return <FullScreenLoader />;
   }
 
-  if (!session) {
+  if (!user) {
     return (
       <Navigate
         to="/auth/login"
@@ -47,49 +55,57 @@ function ProtectedAppLayout() {
     );
   }
 
-  return <AppLayout />;
+  return children;
 }
 
-
-// ---------------------------------------------------------------------------
-// MAIN ROUTING
-// ---------------------------------------------------------------------------
 function App() {
   return (
     <Routes>
+      {/* ----------------------------- Auth routes ---------------------------- */}
+      <Route path="/auth/login" element={<LoginPage />} />
+      <Route path="/auth/signup" element={<SignupPage />} />
+      <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/auth/update-password" element={<UpdatePasswordPage />} />
 
-      {/* -------------------------- Public Auth Routes ------------------------ */}
-      <Route path="/auth">
-        <Route index element={<Navigate to="/auth/login" replace />} />
-        <Route path="login" element={<LoginPage />} />
-        <Route path="signup" element={<SignupPage />} />
-        <Route path="reset-password" element={<ResetPasswordPage />} />
-        <Route path="update-password" element={<UpdatePasswordPage />} />
-      </Route>
+      {/* ------------------------ Protected application ----------------------- */}
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        }
+      >
+        {/* Default = Chats Inbox */}
+        <Route index element={<ChatsModule />} />
 
-      {/* -------------------------- Protected Dashboard ----------------------- */}
-      <Route path="/" element={<ProtectedAppLayout />}>
-
-        {/* Default -> chats */}
-        <Route index element={<Navigate to="/chats" replace />} />
-
+        {/* Chats explicitly */}
         <Route path="chats" element={<ChatsModule />} />
-        <Route path="knowledge-base" element={<KnowledgeBaseModule />} />
-        <Route path="bot" element={<BotPersonalityModule />} />
-        <Route path="workflows" element={<WorkflowModule />} />
-        <Route path="campaigns" element={<CampaignsModule />} />
 
-        {/* ⭐ FIXED: Relative route */}
-        <Route path="unanswered" element={<UnansweredQuestionsModule />} />
+        {/* Knowledge Base */}
+        <Route path="knowledge" element={<KnowledgeBaseModule />} />
+
+        {/* Bot Personality */}
+        <Route path="bot" element={<BotPersonalityModule />} />
+
+        {/* Workflows */}
+        <Route path="workflows" element={<WorkflowModule />} />
+
+        {/* Campaigns */}
+        <Route path="campaigns" element={<CampaignsModule />} />
 
         {/* Settings */}
         <Route path="settings" element={<SettingsModule />} />
+
+        {/* WhatsApp Settings */}
         <Route path="settings/whatsapp" element={<WhatsappSettingsModule />} />
+
+        {/* Unanswered questions */}
+        <Route path="unanswered" element={<UnansweredQuestionsModule />} />
       </Route>
 
-      {/* -------------------------- Fallback Redirect ------------------------- */}
+      {/* ---------------------------- Fallback 404 ---------------------------- */}
       <Route path="*" element={<Navigate to="/" replace />} />
-
     </Routes>
   );
 }

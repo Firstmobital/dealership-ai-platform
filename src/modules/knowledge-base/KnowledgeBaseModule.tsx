@@ -1,402 +1,268 @@
-import { useEffect, useState } from 'react';
-import { FilePlus2, FileText, Loader2, Upload } from 'lucide-react';
-import { useKnowledgeBaseStore } from '../../state/useKnowledgeBaseStore';
-import { useOrganizationStore } from '../../state/useOrganizationStore';
-import { useSubOrganizationStore } from '../../state/useSubOrganizationStore';
-import { supabase } from '../../lib/supabaseClient';
+// src/modules/knowledge-base/KnowledgeBaseModule.tsx
 
-type EditorState = {
-  title: string;
-  description: string;
-  content: string;
-};
+import { useEffect, useRef, useState } from "react";
+import {
+  FileUp,
+  FileText,
+  Loader2,
+  Search,
+  Trash2,
+  XCircle,
+} from "lucide-react";
+import { useKnowledgeBaseStore } from "../../state/useKnowledgeBaseStore";
+import { useOrganizationStore } from "../../state/useOrganizationStore";
+import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
+import type { KnowledgeArticle } from "../../types/database";
 
 export function KnowledgeBaseModule() {
   const {
     articles,
-    chunks,
-    unanswered,
     loading,
+    uploading,
+    error,
     fetchArticles,
-    fetchChunks,
-    fetchUnanswered,
-    saveArticle,
-    markUnansweredIrrelevant
+    createArticleFromText,
+    createArticleFromFile,
+    deleteArticle,
+    setSelectedArticle,
+    selectedArticle,
+    searchTerm,
+    setSearchTerm,
   } = useKnowledgeBaseStore();
 
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
 
-  const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
-  const [editor, setEditor] = useState<EditorState>({
-    title: '',
-    description: '',
-    content: ''
-  });
+  const [textTitle, setTextTitle] = useState("");
+  const [textContent, setTextContent] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [isSaving, setIsSaving] = useState(false);
-  const [isEmbedding, setIsEmbedding] = useState(false);
-  const [embedStatus, setEmbedStatus] = useState<string | null>(null);
-
-  // Load org + sub-org specific data
+  // Fetch KB articles when org or sub-org changes
   useEffect(() => {
     if (!currentOrganization) return;
-    void fetchArticles(currentOrganization.id);
-    void fetchUnanswered(currentOrganization.id);
-  }, [currentOrganization, activeSubOrg?.id, fetchArticles, fetchUnanswered]);
+    fetchArticles().catch(console.error);
+    setSelectedArticle(null);
+  }, [currentOrganization?.id, activeSubOrg?.id]);
 
-  // Whenever we change article selection, hydrate the editor + chunks
-  useEffect(() => {
-    if (!selectedArticleId) {
-      setEditor({
-        title: '',
-        description: '',
-        content: ''
-      });
-      return;
-    }
+  const handleTextSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!textTitle.trim() || !textContent.trim()) return;
 
-    const article = articles.find((a) => a.id === selectedArticleId);
-    if (article) {
-      setEditor({
-        title: article.title,
-        description: article.description ?? '',
-        content: article.content
-      });
-      void fetchChunks(article.id);
-    }
-  }, [selectedArticleId, articles, fetchChunks]);
-
-  const currentChunks = selectedArticleId
-    ? chunks[selectedArticleId] ?? []
-    : [];
-
-  const handleNewArticle = () => {
-    setSelectedArticleId(null);
-    setEmbedStatus(null);
-    setEditor({
-      title: '',
-      description: '',
-      content: ''
-    });
-  };
-
-  const handleSave = async () => {
-    if (!currentOrganization) return;
-    if (!editor.title.trim() || !editor.content.trim()) {
-      alert('Title and content are required.');
-      return;
-    }
-
-    setIsSaving(true);
-    setEmbedStatus(null);
-
-    try {
-      const saved = await saveArticle({
-        id: selectedArticleId ?? undefined,
-        organization_id: currentOrganization.id,
-        sub_organization_id: activeSubOrg?.id ?? null, // 👈 key change
-        title: editor.title.trim(),
-        description: editor.description.trim() || null,
-        content: editor.content.trim()
-      });
-
-      setSelectedArticleId(saved.id);
-    } catch (error) {
-      console.error('Failed to save article:', error);
-      alert('Failed to save article. Check console for details.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleEmbed = async () => {
-    if (!selectedArticleId) {
-      alert('Select or save an article first.');
-      return;
-    }
-
-    setIsEmbedding(true);
-    setEmbedStatus(null);
-
-    try {
-      const { data, error } = await supabase.functions.invoke('embed-article', {
-        body: { article_id: selectedArticleId }
-      });
-
-      if (error) {
-        console.error('Embed error:', error);
-        setEmbedStatus('❌ Failed to generate embeddings.');
-      } else {
-        const count = (data as any)?.chunks ?? 0;
-        setEmbedStatus(`✅ Generated ${count} embeddings for this article.`);
-        await fetchChunks(selectedArticleId);
-      }
-    } catch (err) {
-      console.error('Embed exception:', err);
-      setEmbedStatus('❌ Error while calling embed-article.');
-    } finally {
-      setIsEmbedding(false);
-    }
-  };
-
-  const handleAddUnansweredToKb = async (id: string, question: string) => {
-    // Prefill editor so you can turn this into an article
-    setSelectedArticleId(null);
-    setEditor({
-      title: question.slice(0, 80),
-      description: 'Auto-created from an unanswered customer question.',
-      content: question
+    await createArticleFromText({
+      title: textTitle.trim(),
+      content: textContent.trim(),
     });
 
-    // Optionally remove it from unanswered list
-    try {
-      await markUnansweredIrrelevant(id);
-    } catch (error) {
-      console.error('Failed to remove unanswered question:', error);
+    setTextTitle("");
+    setTextContent("");
+  };
+
+  const handleFileSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) return;
+
+    await createArticleFromFile({
+      file,
+      title: file.name,
+    });
+
+    setFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
+  };
+
+  const handleDelete = async (article: KnowledgeArticle) => {
+    if (!window.confirm(`Delete KB article "${article.title}"?`)) return;
+    await deleteArticle(article.id);
+    setSelectedArticle(null);
   };
 
   return (
-    <div className="grid h-full grid-cols-[280px,1.6fr,1.1fr] gap-6">
-      {/* LEFT: Articles list */}
-      <div className="flex h-full flex-col rounded-2xl border border-white/5 bg-slate-900/60">
-        <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
-            <FileText size={16} />
-            Knowledge Articles
-          </div>
-          <button
-            type="button"
-            onClick={handleNewArticle}
-            className="inline-flex items-center gap-1 rounded-full bg-accent/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white hover:bg-accent"
-          >
-            <FilePlus2 size={14} />
-            New
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {loading && (
-            <div className="flex items-center justify-center gap-2 p-4 text-xs text-slate-400">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Loading articles...
-            </div>
-          )}
-
-          {articles.map((article) => {
-            const isActive = selectedArticleId === article.id;
-            return (
-              <button
-                key={article.id}
-                type="button"
-                onClick={() => {
-                  setEmbedStatus(null);
-                  setSelectedArticleId(article.id);
-                }}
-                className={`flex w-full flex-col gap-1 border-b border-white/5 px-4 py-3 text-left text-xs transition hover:bg-white/5 ${
-                  isActive ? 'bg-accent/10' : ''
-                }`}
-              >
-                <span className="text-sm font-medium text-white line-clamp-1">
-                  {article.title}
-                </span>
-                {article.description && (
-                  <span className="text-[11px] text-slate-400 line-clamp-2">
-                    {article.description}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-
-          {!loading && !articles.length && (
-            <div className="p-4 text-xs text-slate-400">
-              No articles yet. Create your first knowledge article on the right.
-            </div>
-          )}
+    <div className="flex h-full flex-col px-6 py-6 text-slate-200">
+      {/* Header */}
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 classbKnowledgeArticleassName="text-xl font-semibold text-white">
+            Knowledge Base
+          </h1>
+          <p className="text-sm text-slate-400">
+            AI reference library. Upload text or files to train the AI.
+          </p>
         </div>
       </div>
 
-      {/* MIDDLE: Editor */}
-      <div className="flex h-full flex-col rounded-2xl border border-white/5 bg-slate-900/60">
-        <div className="flex items-center justify-between border-b border-white/5 px-6 py-3">
-          <div>
-            <h2 className="text-sm font-semibold text-white">
-              {selectedArticleId ? 'Edit Article' : 'New Article'}
-            </h2>
-            <p className="text-[11px] text-slate-400">
-              Write structured dealership knowledge for the AI to use.
-            </p>
-          </div>
+      {/* Search + Upload */}
+      <div className="mb-6 flex gap-4">
+        {/* Search */}
+        <div className="flex w-1/2 items-center rounded-md border border-slate-700 bg-slate-900 px-3">
+          <Search size={18} className="text-slate-500" />
+          <input
+            type="text"
+            placeholder="Search knowledge..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyUp={() => fetchArticles().catch(console.error)}
+            className="ml-2 w-full bg-transparent py-2 text-sm text-white outline-none"
+          />
+        </div>
+
+        {/* File Upload */}
+        <form onSubmit={handleFileSubmit} className="flex gap-2">
+          <input
+            type="file"
+            accept=".txt,.pdf,.doc,.docx"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            ref={fileInputRef}
+            className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+          />
+
           <button
-            type="button"
-            className="flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-200"
+            type="submit"
+            disabled={uploading || !file}
+            className="flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
           >
-            <Upload size={14} />
-            Import (Coming Soon)
+            {uploading ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <FileUp size={16} />
+            )}
+            Upload
           </button>
-        </div>
-
-        <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4 text-sm">
-          <div className="space-y-1">
-            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              Title
-            </label>
-            <input
-              type="text"
-              className="w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-accent"
-              value={editor.title}
-              onChange={(e) =>
-                setEditor((prev) => ({ ...prev, title: e.target.value }))
-              }
-              placeholder="e.g. Altroz XZ+ CNG Offer & Pricing Guide"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              Short Description
-            </label>
-            <input
-              type="text"
-              className="w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-accent"
-              value={editor.description}
-              onChange={(e) =>
-                setEditor((prev) => ({
-                  ...prev,
-                  description: e.target.value
-                }))
-              }
-              placeholder="Optional summary for this article"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              Content
-            </label>
-            <textarea
-              className="h-64 w-full resize-none rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-accent"
-              value={editor.content}
-              onChange={(e) =>
-                setEditor((prev) => ({ ...prev, content: e.target.value }))
-              }
-              placeholder={`Paste your Altroz / showroom knowledge here.\n\nUse clear bullet points, variants, prices, offers, finance schemes, etc.\nThe AI will use embeddings over this content.`}
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between border-t border-white/5 px-6 py-3">
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            {embedStatus && <span>{embedStatus}</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving}
-              className="rounded-full border border-accent/60 bg-accent/10 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-accent hover:bg-accent/20 disabled:opacity-60"
-            >
-              {isSaving ? 'Saving…' : 'Save Article'}
-            </button>
-            <button
-              type="button"
-              onClick={handleEmbed}
-              disabled={isEmbedding || !selectedArticleId}
-              className="rounded-full bg-accent px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-white hover:bg-accent/80 disabled:opacity-60"
-            >
-              {isEmbedding ? 'Embedding…' : 'Generate Embeddings'}
-            </button>
-          </div>
-        </div>
+        </form>
       </div>
 
-      {/* RIGHT: Chunks + Unanswered */}
-      <div className="flex h-full flex-col gap-4">
-        <div className="flex flex-1 flex-col rounded-2xl border border-white/5 bg-slate-900/60">
-          <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+      {/* Text Upload */}
+      <div className="mb-6 rounded-xl border border-slate-700 bg-slate-900 p-4">
+        <h2 className="mb-3 text-sm font-semibold text-white">
+          Add Knowledge from Text
+        </h2>
+
+        <form onSubmit={handleTextSubmit} className="space-y-4">
+          <input
+            type="text"
+            placeholder="Article title"
+            value={textTitle}
+            onChange={(e) => setTextTitle(e.target.value)}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+          />
+
+          <textarea
+            placeholder="Paste text content here..."
+            value={textContent}
+            onChange={(e) => setTextContent(e.target.value)}
+            rows={4}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+          />
+
+          <button
+            type="submit"
+            disabled={uploading}
+            className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {uploading ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
               <FileText size={16} />
-              Generated Chunks
+            )}
+            Ingest Text
+          </button>
+        </form>
+      </div>
+
+      {/* Content layout */}
+      <div className="flex flex-1 gap-6 overflow-hidden">
+        {/* Left pane: articles list */}
+        <div className="w-1/3 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-4">
+          <h2 className="mb-3 text-sm font-semibold text-white">
+            Articles ({articles.length})
+          </h2>
+
+          {loading ? (
+            <div className="flex items-center gap-2 py-6 text-slate-400">
+              <Loader2 className="animate-spin" size={16} />
+              Loading...
             </div>
-          </div>
-          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3 text-[11px] text-slate-200">
-            {!selectedArticleId && (
-              <p className="text-slate-500">
-                Save & embed an article to see its chunks here.
-              </p>
-            )}
-            {selectedArticleId && !currentChunks.length && (
-              <p className="text-slate-500">
-                No chunks yet. Click &quot;Generate Embeddings&quot; after saving.
-              </p>
-            )}
-            {currentChunks.map((chunk) => (
-              <div
-                key={chunk.id}
-                className="rounded-xl border border-white/10 bg-slate-950/60 p-2"
-              >
-                <p className="whitespace-pre-wrap leading-snug">{chunk.chunk}</p>
-              </div>
-            ))}
-          </div>
+          ) : articles.length === 0 ? (
+            <p className="py-6 text-sm text-slate-500">
+              No knowledge articles yet.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {articles.map((article) => {
+                const isSelected = selectedArticle?.id === article.id;
+                return (
+                  <li
+                    key={article.id}
+                    className={`cursor-pointer rounded-md border px-3 py-2 text-sm transition
+                      ${
+                        isSelected
+                          ? "border-accent bg-accent/20 text-accent"
+                          : "border-slate-700 bg-slate-950 hover:bg-slate-800"
+                      }`}
+                    onClick={() => setSelectedArticle(article)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium">{article.title}</p>
+                      <button
+                        className="text-slate-400 hover:text-red-400"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(article);
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-400">
+                      {article.content}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
-        <div className="flex flex-1 flex-col rounded-2xl border border-white/5 bg-slate-900/60">
-          <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
-              Unanswered Questions
+        {/* Right pane: article preview */}
+        <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-900 p-4">
+          {!selectedArticle ? (
+            <div className="flex flex-1 items-center justify-center text-slate-500">
+              Select an article to view its summary.
             </div>
-          </div>
-          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3 text-[11px] text-slate-200">
-            {!unanswered.length && (
-              <p className="text-slate-500">
-                No unanswered questions yet. Once customers ask things the bot
-                cannot answer, they will appear here.
-              </p>
-            )}
-
-            {unanswered.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-xl border border-white/10 bg-slate-950/60 p-2"
-              >
-                <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-400">
-                  {item.occurrences}x asked
-                </div>
-                <p className="mb-2 whitespace-pre-wrap text-[11px] leading-snug">
-                  {item.question}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleAddUnansweredToKb(item.id, item.question)
-                    }
-                    className="rounded-full bg-accent px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-accent/80"
-                  >
-                    Add to KB
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => markUnansweredIrrelevant(item.id)}
-                    className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 hover:bg-white/5"
-                  >
-                    Ignore
-                  </button>
-                </div>
+          ) : (
+            <div className="flex flex-col overflow-y-auto">
+              <div className="flex items-start justify-between">
+                <h2 className="text-lg font-semibold text-white">
+                  {selectedArticle.title}
+                </h2>
+                <button
+                  onClick={() => setSelectedArticle(null)}
+                  className="text-slate-400 hover:text-slate-200"
+                >
+                  <XCircle size={20} />
+                </button>
               </div>
-            ))}
 
-            {!unanswered.length && (
-              <p className="mt-1 text-[10px] text-slate-500">
-                Train your AI by turning common questions into KB articles.
+              <div className="mt-4 text-sm text-slate-300 whitespace-pre-wrap">
+                {selectedArticle.content || "No summary available."}
+              </div>
+
+              <p className="mt-6 text-xs text-slate-500">
+                ID: {selectedArticle.id}
               </p>
-            )}
-          </div>
+              <p className="text-xs text-slate-500">
+                Created: {new Date(selectedArticle.created_at).toLocaleString()}
+              </p>
+            </div>
+          )}
         </div>
       </div>
+
+      {error && (
+        <p className="mt-4 text-sm text-red-400">Error: {error}</p>
+      )}
     </div>
   );
 }

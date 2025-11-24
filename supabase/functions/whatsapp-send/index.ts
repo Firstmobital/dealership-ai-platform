@@ -2,274 +2,340 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
-/* =====================================================================================
+/* ===========================================================================
    ENV
-===================================================================================== */
+=========================================================================== */
 
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+
+// Optional override for Meta Graph base URL (defaults to v20.0)
+const WHATSAPP_API_BASE_URL =
+  Deno.env.get("WHATSAPP_API_BASE_URL") ??
+  "https://graph.facebook.com/v20.0";
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-/* =====================================================================================
-   LOGGING
-===================================================================================== */
-
-function log(stage: string, data: any) {
-  console.log(`[whatsapp-send] ${stage}`, JSON.stringify(data, null, 2));
-}
-
-/* =====================================================================================
+/* ===========================================================================
    TYPES
-===================================================================================== */
+=========================================================================== */
+
+type MessageType =
+  | "text"
+  | "typing_on"
+  | "template"
+  | "image"
+  | "video"
+  | "audio"
+  | "document";
 
 type SendBody = {
   organization_id?: string;
   sub_organization_id?: string | null;
   to?: string;
-  type?: "text" | "typing_on" | "template";
+  type?: MessageType;
+
+  // Text
   text?: string;
 
-  // (optional) future-proof template fields
+  // Template
   template_name?: string;
   template_language?: string;
   template_variables?: string[];
+
+  // Media URLs (public links)
+  image_url?: string;
+  video_url?: string;
+  audio_url?: string;
+  document_url?: string;
+  filename?: string;
 };
 
-/* =====================================================================================
+/* ===========================================================================
    HELPERS
-===================================================================================== */
+=========================================================================== */
 
-/**
- * Resolve the best whatsapp_settings row using Option D:
- *  1) If sub_organization_id provided → try that first.
- *  2) Then fallback to org-level (sub_organization_id IS NULL).
- *  3) Then fallback to any active row for the org.
- */
-async function resolveWhatsappSettings(
-  organizationId: string,
-  subOrganizationId?: string | null,
-) {
-  // 1) Try exact (org + sub_org)
-  if (subOrganizationId) {
+async function resolveWhatsappSettings(orgId: string, subOrgId: string | null) {
+  // Hybrid logic:
+  // 1) If subOrgId provided: try that scope first
+  // 2) Fallback to org-level settings (sub_organization_id IS NULL)
+  // 3) If no subOrgId: only use org-level
+
+  // 1) Sub-org scope
+  if (subOrgId) {
     const { data, error } = await supabase
       .from("whatsapp_settings")
-      .select("id, api_token, whatsapp_phone_id, sub_organization_id")
-      .eq("organization_id", organizationId)
-      .eq("sub_organization_id", subOrganizationId)
-      .eq("is_active", true)
+      .select("*")
+      .eq("organization_id", orgId)
+      .eq("sub_organization_id", subOrgId)
       .maybeSingle();
 
     if (error) {
-      log("RESOLVE_SETTINGS_SUBORG_ERR", error);
+      console.error("[whatsapp-send] sub-org settings error:", error);
     }
-    if (data) {
+    if (data && data.is_active !== false) {
       return data;
     }
-  }
 
-  // 2) Fallback: org-level (no sub_org)
-  {
-    const { data, error } = await supabase
+    // 2) Fallback to org-level
+    const { data: orgData, error: orgError } = await supabase
       .from("whatsapp_settings")
-      .select("id, api_token, whatsapp_phone_id, sub_organization_id")
-      .eq("organization_id", organizationId)
+      .select("*")
+      .eq("organization_id", orgId)
       .is("sub_organization_id", null)
-      .eq("is_active", true)
       .maybeSingle();
 
-    if (error) {
-      log("RESOLVE_SETTINGS_ORGLEVEL_ERR", error);
+    if (orgError) {
+      console.error("[whatsapp-send] org-level fallback error:", orgError);
     }
-    if (data) {
-      return data;
+    if (orgData && orgData.is_active !== false) {
+      return orgData;
     }
+
+    return null;
   }
 
-  // 3) Final fallback: any active row for org
-  {
-    const { data, error } = await supabase
-      .from("whatsapp_settings")
-      .select("id, api_token, whatsapp_phone_id, sub_organization_id")
-      .eq("organization_id", organizationId)
-      .eq("is_active", true)
-      .limit(1);
+  // 3) Org-level only
+  const { data, error } = await supabase
+    .from("whatsapp_settings")
+    .select("*")
+    .eq("organization_id", orgId)
+    .is("sub_organization_id", null)
+    .maybeSingle();
 
-    if (error) {
-      log("RESOLVE_SETTINGS_ANY_ERR", error);
-    }
-    if (data && data.length > 0) {
-      return data[0];
-    }
+  if (error) {
+    console.error("[whatsapp-send] org-level error:", error);
+  }
+
+  if (data && data.is_active !== false) {
+    return data;
   }
 
   return null;
 }
 
-/**
- * Build the WhatsApp Cloud API request body based on type.
- * Currently supports:
- *  - "text" → normal text message
- *  - "typing_on" → send a "typing" state style payload (best-effort)
- *  - you can extend with "template" later
- */
-function buildWhatsappPayload(args: {
-  to: string;
-  type: "text" | "typing_on" | "template";
-  text?: string;
-  template_name?: string;
-  template_language?: string;
-  template_variables?: string[];
-}) {
-  const { to, type, text, template_name, template_language, template_variables } =
-    args;
+function buildWhatsappPayload(body: SendBody) {
+  const { type, to } = body;
 
-  if (type === "typing_on") {
-    // WhatsApp Cloud API doesn't have a perfect "typing" only state like Messenger.
-    // Common hack: send a message with a short delay or ephemeral indicator.
-    // Here we send a 'mark as read' style stub or very short message can be changed later.
-    return {
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: {
-        body: "…", // you can change this to something else or remove typing_on support if not desired
-      },
-    };
+  if (!type || !to) {
+    throw new Error("Missing type or to");
   }
 
-  if (type === "template" && template_name && template_language) {
-    return {
-      messaging_product: "whatsapp",
-      to,
-      type: "template",
-      template: {
-        name: template_name,
-        language: {
-          code: template_language,
-        },
-        components: template_variables?.length
-          ? [
-              {
-                type: "body",
-                parameters: template_variables.map((v) => ({
-                  type: "text",
-                  text: v,
-                })),
-              },
-            ]
-          : [],
-      },
-    };
-  }
-
-  // default: plain text
-  return {
+  // WhatsApp Cloud API base fields
+  const base: any = {
     messaging_product: "whatsapp",
     to,
-    type: "text",
-    text: {
-      body: text || "",
-    },
+    type,
   };
+
+  switch (type) {
+    case "text": {
+      if (!body.text?.trim()) {
+        throw new Error("Missing text for type=text");
+      }
+      base.text = { body: body.text.trim() };
+      return base;
+    }
+
+    case "template": {
+      if (!body.template_name || !body.template_language) {
+        throw new Error("Missing template_name or template_language");
+      }
+
+      const components: any[] = [];
+      if (body.template_variables && body.template_variables.length > 0) {
+        components.push({
+          type: "body",
+          parameters: body.template_variables.map((v) => ({
+            type: "text",
+            text: v,
+          })),
+        });
+      }
+
+      base.template = {
+        name: body.template_name,
+        language: {
+          code: body.template_language,
+        },
+        components,
+      };
+      return base;
+    }
+
+    case "image": {
+      if (!body.image_url) {
+        throw new Error("Missing image_url for type=image");
+      }
+      base.image = {
+        link: body.image_url,
+      };
+      return base;
+    }
+
+    case "video": {
+      if (!body.video_url) {
+        throw new Error("Missing video_url for type=video");
+      }
+      base.video = {
+        link: body.video_url,
+      };
+      return base;
+    }
+
+    case "audio": {
+      if (!body.audio_url) {
+        throw new Error("Missing audio_url for type=audio");
+      }
+      base.audio = {
+        link: body.audio_url,
+      };
+      return base;
+    }
+
+    case "document": {
+      if (!body.document_url) {
+        throw new Error("Missing document_url for type=document");
+      }
+      base.document = {
+        link: body.document_url,
+        filename: body.filename || undefined,
+      };
+      return base;
+    }
+
+    case "typing_on": {
+      // WhatsApp Cloud API doesn't support typing indicators like Messenger.
+      // Treat this as a NO-OP, but we return success so UI doesn't break.
+      return null;
+    }
+
+    default:
+      throw new Error(`Unsupported message type: ${type}`);
+  }
 }
 
-/* =====================================================================================
+/* ===========================================================================
    MAIN HANDLER
-===================================================================================== */
+=========================================================================== */
 
-serve(async (req: Request): Promise<Response> => {
+serve(async (req: Request) => {
   try {
     if (req.method !== "POST") {
-      return new Response("Method not allowed", { status: 405 });
+      return new Response(
+        JSON.stringify({ error: "Method not allowed" }),
+        { status: 405, headers: { "Content-Type": "application/json" } },
+      );
     }
 
-    const body = (await req.json().catch(() => null)) as SendBody | null;
-    log("INBOUND_REQUEST", body);
+    const body = (await req.json()) as SendBody;
 
-    if (!body) {
+    const orgId = body.organization_id?.trim();
+    const subOrgId =
+      body.sub_organization_id === undefined
+        ? null
+        : body.sub_organization_id;
+    const to = body.to?.trim();
+    const type = body.type;
+
+    if (!orgId) {
       return new Response(
-        JSON.stringify({ error: "Invalid JSON body" }),
+        JSON.stringify({ error: "Missing organization_id" }),
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    const {
-      organization_id,
-      sub_organization_id,
-      to,
-      type = "text",
-      text,
-      template_name,
-      template_language,
-      template_variables,
-    } = body;
-
-    if (!organization_id || !to) {
+    if (!type) {
       return new Response(
-        JSON.stringify({ error: "Missing organization_id or to" }),
+        JSON.stringify({ error: "Missing type" }),
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    // ------------------------------------------------------------------
-    // Resolve WhatsApp settings (Option D)
-    // ------------------------------------------------------------------
-    const settings = await resolveWhatsappSettings(
-      organization_id,
-      sub_organization_id ?? null,
-    );
+    // For "typing_on", do nothing (no-op)
+    if (type === "typing_on") {
+      return new Response(
+        JSON.stringify({ success: true, message: "typing_on ignored (no-op)" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
 
-    if (!settings) {
-      log("NO_SETTINGS_FOUND", { organization_id, sub_organization_id });
+    if (!to) {
+      return new Response(
+        JSON.stringify({ error: "Missing to" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Resolve WhatsApp settings (hybrid: sub-org override, else org-level)
+    const settings = await resolveWhatsappSettings(orgId, subOrgId);
+
+    if (
+      !settings ||
+      !settings.api_token ||
+      !settings.whatsapp_phone_id
+    ) {
+      console.error("[whatsapp-send] No valid settings found for org/sub-org", {
+        orgId,
+        subOrgId,
+      });
       return new Response(
         JSON.stringify({
           error:
-            "No active WhatsApp settings found for this organization/sub-organization",
+            "WhatsApp settings not configured (api_token or whatsapp_phone_id missing).",
         }),
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    const apiToken: string = settings.api_token;
-    const whatsappPhoneId: string = settings.whatsapp_phone_id;
+    const accessToken = settings.api_token as string;
+    const phoneId = settings.whatsapp_phone_id as string;
 
-    // ------------------------------------------------------------------
-    // Build outbound payload
-    // ------------------------------------------------------------------
-    const waPayload = buildWhatsappPayload({
-      to,
-      type,
-      text,
-      template_name,
-      template_language,
-      template_variables,
-    });
+    // Build WA payload
+    let waPayload: any;
+    try {
+      waPayload = buildWhatsappPayload({ ...body, to, type });
+      if (!waPayload) {
+        // typing_on no-op already handled above, this is just extra guard
+        return new Response(
+          JSON.stringify({ success: true, message: "No-op" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    } catch (err: any) {
+      console.error("[whatsapp-send] Payload build error:", err);
+      return new Response(
+        JSON.stringify({ error: err?.message ?? "Invalid WhatsApp payload." }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
 
-    log("WA_OUTBOUND_PAYLOAD", { whatsappPhoneId, waPayload });
-
-    const url = `https://graph.facebook.com/v20.0/${whatsappPhoneId}/messages`;
+    const url = `${WHATSAPP_API_BASE_URL}/${phoneId}/messages`;
 
     const waRes = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiToken}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
+        Accept: "application/json",
       },
       body: JSON.stringify(waPayload),
     });
 
     const waJson = await waRes.json().catch(() => null);
-    log("WA_RESPONSE", { status: waRes.status, body: waJson });
 
     if (!waRes.ok) {
+      console.error("[whatsapp-send] Meta API error:", {
+        status: waRes.status,
+        body: waJson,
+      });
       return new Response(
         JSON.stringify({
-          error: "WhatsApp API error",
-          status: waRes.status,
-          details: waJson,
+          error: "Failed to send WhatsApp message.",
+          meta_status: waRes.status,
+          meta_response: waJson,
         }),
         { status: 500, headers: { "Content-Type": "application/json" } },
       );
@@ -278,12 +344,13 @@ serve(async (req: Request): Promise<Response> => {
     return new Response(
       JSON.stringify({
         success: true,
-        whatsapp_response: waJson,
+        meta_status: waRes.status,
+        meta_response: waJson,
       }),
-      { headers: { "Content-Type": "application/json" } },
+      { status: 200, headers: { "Content-Type": "application/json" } },
     );
-  } catch (err: any) {
-    log("FATAL_ERROR", { message: err?.message, stack: err?.stack });
+  } catch (err) {
+    console.error("[whatsapp-send] Fatal error:", err);
     return new Response(
       JSON.stringify({ error: "Internal Server Error" }),
       { status: 500, headers: { "Content-Type": "application/json" } },

@@ -1,10 +1,10 @@
+// src/components/topbar/SubOrgSwitcher.tsx
 import { useEffect } from "react";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
 export function SubOrgSwitcher() {
-  const { activeOrganization } = useOrganizationStore();
-
+  const { currentOrganization } = useOrganizationStore();
   const {
     subOrgs,
     activeSubOrg,
@@ -15,25 +15,42 @@ export function SubOrgSwitcher() {
 
   // Load sub-orgs when organization changes
   useEffect(() => {
-    if (activeOrganization?.id) {
-      fetchSubOrgs(activeOrganization.id);
-    }
-  }, [activeOrganization?.id]);
+    if (!currentOrganization) return;
+    fetchSubOrgs(currentOrganization.id).catch(console.error);
+  }, [currentOrganization?.id, fetchSubOrgs]);
 
-  if (!activeOrganization) return null;
+  if (!currentOrganization) {
+    return (
+      <div className="text-xs text-slate-500">
+        Select an organization to choose division
+      </div>
+    );
+  }
+
+  if (loading && !subOrgs.length) {
+    return <div className="text-xs text-slate-400">Loading divisions…</div>;
+  }
+
+  if (!subOrgs.length) {
+    return (
+      <div className="text-xs text-slate-400">
+        No divisions yet for this organization
+      </div>
+    );
+  }
 
   return (
-    <div className="flex items-center gap-2">
-      <label className="text-xs text-gray-400">Division:</label>
-
+    <div className="flex flex-col">
+      <span className="text-xs uppercase tracking-wide text-slate-500">
+        Division
+      </span>
       <select
-        disabled={loading}
         value={activeSubOrg?.id ?? ""}
         onChange={(e) => {
           const sub = subOrgs.find((s) => s.id === e.target.value) ?? null;
           setActive(sub);
         }}
-        className="rounded-md bg-slate-800 text-white text-sm px-2 py-1 border border-slate-700"
+        className="mt-0.5 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-100"
       >
         {subOrgs.map((s) => (
           <option key={s.id} value={s.id}>

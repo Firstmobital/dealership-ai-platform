@@ -1,118 +1,254 @@
+// src/state/useWhatsappSettingsStore.ts
 import { create } from "zustand";
+import { supabase } from "../lib/supabaseClient";
+import { useOrganizationStore } from "./useOrganizationStore";
+import { useSubOrganizationStore } from "./useSubOrganizationStore";
 import type { WhatsappSettings } from "../types/database";
-import {
-  fetchWhatsappSettings,
-  upsertWhatsappSettings,
-} from "../lib/api/whatsapp";
 
 type WhatsappSettingsState = {
   settings: WhatsappSettings | null;
   loading: boolean;
+  saving: boolean;
   error: string | null;
 
-  loadSettings: (
-    organizationId: string,
-    subOrganizationId: string | null
-  ) => Promise<void>;
+  /**
+   * true = we are currently using ORG-LEVEL settings as a fallback
+   * even though a sub-org is selected.
+   */
+  isOrgFallback: boolean;
 
-  saveSettings: (
-    organizationId: string,
-    subOrganizationId: string | null,
-    values: Partial<WhatsappSettings>
-  ) => Promise<void>;
+  fetchSettings: () => Promise<void>;
+  saveSettings: (params: {
+    phone_number: string;
+    api_token: string;
+    verify_token: string;
+    whatsapp_phone_id: string;
+    whatsapp_business_id: string;
+    is_active: boolean;
+  }) => Promise<void>;
+  clearError: () => void;
 };
 
+function normalizeSettings(raw: any | null): WhatsappSettings | null {
+  if (!raw) return null;
+  return {
+    ...raw,
+    phone_number: raw.phone_number ?? "",
+    api_token: raw.api_token ?? "",
+    verify_token: raw.verify_token ?? "",
+    whatsapp_phone_id: raw.whatsapp_phone_id ?? "",
+    whatsapp_business_id: raw.whatsapp_business_id ?? "",
+    is_active: raw.is_active ?? true,
+  } as WhatsappSettings;
+}
+
 export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
-  (set) => ({
+  (set, get) => ({
     settings: null,
     loading: false,
+    saving: false,
     error: null,
+    isOrgFallback: false,
 
-    // -------------------------------------------------------------
-    // LOAD SETTINGS FOR ORG + SUB-ORG
-    // -------------------------------------------------------------
-    loadSettings: async (
-      organizationId: string,
-      subOrganizationId: string | null
-    ) => {
+    clearError: () => set({ error: null }),
+
+    /**
+     * Load WhatsApp settings using hybrid logic:
+     * - If sub-org selected: try sub-org row first, else fallback to org-level row
+     * - If no sub-org: use org-level row only
+     */
+    fetchSettings: async () => {
+      const { currentOrganization } = useOrganizationStore.getState();
+      const { activeSubOrg } = useSubOrganizationStore.getState();
+
+      if (!currentOrganization) {
+        set({
+          error: "Select an organization to configure WhatsApp settings.",
+          settings: null,
+          isOrgFallback: false,
+        });
+        return;
+      }
+
       set({ loading: true, error: null });
 
       try {
-        const data = await fetchWhatsappSettings(
-          organizationId,
-          subOrganizationId
-        );
+        const orgId = currentOrganization.id;
+        const subOrgId = activeSubOrg?.id ?? null;
 
-        if (!data) {
-          // No row yet for this org + sub-org → keep settings null,
-          // the UI will show an empty form.
-          set({ settings: null, loading: false });
+        // 1) Try sub-org specific config when sub-org is selected
+        if (subOrgId) {
+          let subQuery = supabase
+            .from("whatsapp_settings")
+            .select("*")
+            .eq("organization_id", orgId)
+            .eq("sub_organization_id", subOrgId)
+            .maybeSingle();
+
+          const { data: subData, error: subError } = await subQuery;
+
+          if (subError) {
+            console.error("[WA-SETTINGS] Load sub-org error:", subError);
+          }
+
+          if (subData) {
+            set({
+              loading: false,
+              settings: normalizeSettings(subData),
+              isOrgFallback: false,
+              error: null,
+            });
+            return;
+          }
+
+          // 2) Fallback: org-level settings (sub_organization_id IS NULL)
+          const { data: orgData, error: orgError } = await supabase
+            .from("whatsapp_settings")
+            .select("*")
+            .eq("organization_id", orgId)
+            .is("sub_organization_id", null)
+            .maybeSingle();
+
+          if (orgError) {
+            console.error(
+              "[WA-SETTINGS] Load org-level fallback error:",
+              orgError
+            );
+          }
+
+          if (orgData) {
+            set({
+              loading: false,
+              settings: normalizeSettings(orgData),
+              isOrgFallback: true,
+              error: null,
+            });
+            return;
+          }
+
+          // 3) Nothing at sub-org or org-level
+          set({
+            loading: false,
+            settings: null,
+            isOrgFallback: false,
+            error: null,
+          });
           return;
         }
 
-        const normalized: WhatsappSettings = {
-          ...data,
-          organization_id: data.organization_id ?? organizationId,
-          sub_organization_id:
-            data.sub_organization_id ?? subOrganizationId ?? null,
-          phone_number: data.phone_number ?? "",
-          api_token: data.api_token ?? "",
-          verify_token: data.verify_token ?? "",
-          whatsapp_phone_id: data.whatsapp_phone_id ?? "",
-          whatsapp_business_id: data.whatsapp_business_id ?? "",
-          is_active: data.is_active ?? true,
-        };
+        // 4) No sub-org selected: load only org-level settings
+        const { data, error } = await supabase
+          .from("whatsapp_settings")
+          .select("*")
+          .eq("organization_id", orgId)
+          .is("sub_organization_id", null)
+          .maybeSingle();
 
-        set({ settings: normalized, loading: false });
-      } catch (err: any) {
+        if (error) {
+          console.error("[WA-SETTINGS] Load org-level error:", error);
+        }
+
         set({
           loading: false,
-          error: err?.message ?? "Failed to load WhatsApp settings",
+          settings: normalizeSettings(data),
+          isOrgFallback: false,
+          error: null,
         });
-        throw err;
+      } catch (err: any) {
+        console.error("[WA-SETTINGS] fetchSettings exception:", err);
+        set({
+          loading: false,
+          settings: null,
+          isOrgFallback: false,
+          error:
+            err?.message ?? "Unexpected error while loading WhatsApp settings.",
+        });
       }
     },
 
-    // -------------------------------------------------------------
-    // SAVE SETTINGS (UPSERT ORG + SUB-ORG)
-    // -------------------------------------------------------------
-    saveSettings: async (
-      organizationId: string,
-      subOrganizationId: string | null,
-      values
-    ) => {
-      set({ loading: true, error: null });
+    /**
+     * Save settings for the CURRENT context:
+     * - If sub-org selected: creates/updates a SUB-ORG row (override)
+     * - If no sub-org: creates/updates ORG-LEVEL row
+     *
+     * Any org-level fallback that was being shown is NOT overwritten unless
+     * we are actually in org-level context.
+     */
+    saveSettings: async ({
+      phone_number,
+      api_token,
+      verify_token,
+      whatsapp_phone_id,
+      whatsapp_business_id,
+      is_active,
+    }) => {
+      const { currentOrganization } = useOrganizationStore.getState();
+      const { activeSubOrg } = useSubOrganizationStore.getState();
+      const { settings } = get();
+
+      if (!currentOrganization) {
+        set({
+          error: "Select an organization before saving WhatsApp settings.",
+        });
+        return;
+      }
+
+      set({ saving: true, error: null });
 
       try {
-        const data = await upsertWhatsappSettings(
-          organizationId,
-          subOrganizationId,
-          values
-        );
+        const orgId = currentOrganization.id;
+        const subOrgId = activeSubOrg?.id ?? null;
 
-        const normalized: WhatsappSettings = {
-          ...data,
-          organization_id: data.organization_id ?? organizationId,
-          sub_organization_id:
-            data.sub_organization_id ?? subOrganizationId ?? null,
-          phone_number: data.phone_number ?? "",
-          api_token: data.api_token ?? "",
-          verify_token: data.verify_token ?? "",
-          whatsapp_phone_id: data.whatsapp_phone_id ?? "",
-          whatsapp_business_id: data.whatsapp_business_id ?? "",
-          is_active: data.is_active ?? true,
+        const payload: any = {
+          organization_id: orgId,
+          sub_organization_id: subOrgId,
+          phone_number: phone_number.trim(),
+          api_token: api_token.trim(),
+          verify_token: verify_token.trim(),
+          whatsapp_phone_id: whatsapp_phone_id.trim(),
+          whatsapp_business_id: whatsapp_business_id.trim(),
+          is_active,
         };
 
-        set({ settings: normalized, loading: false });
-      } catch (err: any) {
-        console.error("[WA-SETTINGS] Save error:", err);
+        // If we already have a row for EXACT scope (org + subOrg), include id
+        if (
+          settings &&
+          settings.organization_id === orgId &&
+          settings.sub_organization_id === subOrgId
+        ) {
+          payload.id = settings.id;
+        }
+
+        const { data, error } = await supabase
+          .from("whatsapp_settings")
+          .upsert(payload, {
+            onConflict: "organization_id,sub_organization_id",
+          })
+          .select("*")
+          .single();
+
+        if (error) {
+          console.error("[WA-SETTINGS] saveSettings error:", error);
+          set({
+            saving: false,
+            error: error.message ?? "Failed to save WhatsApp settings.",
+          });
+          return;
+        }
 
         set({
-          loading: false,
-          error: err?.message ?? "Failed to save WhatsApp settings",
+          saving: false,
+          settings: normalizeSettings(data),
+          isOrgFallback: false, // we now have a specific row for this scope
+          error: null,
         });
-
-        throw err;
+      } catch (err: any) {
+        console.error("[WA-SETTINGS] saveSettings exception:", err);
+        set({
+          saving: false,
+          error:
+            err?.message ?? "Unexpected error while saving WhatsApp settings.",
+        });
       }
     },
   })

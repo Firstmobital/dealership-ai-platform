@@ -1,3 +1,4 @@
+// src/components/common/Topbar.tsx
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { SubOrgSwitcher } from "../topbar/SubOrgSwitcher";
 import { useAuthStore } from "../../state/useAuthStore";
@@ -9,21 +10,23 @@ export function Topbar() {
 
   return (
     <header className="flex items-center justify-between border-b border-white/5 bg-slate-900/80 px-6 py-4 backdrop-blur">
-      {/* LEFT SIDE */}
+      {/* LEFT: Org + Sub-org */}
       <div className="flex items-center gap-4">
         <OrganizationSwitcher />
-        <SubOrgSwitcher /> {/* Division (Sales / Service / General) */}
+        <SubOrgSwitcher />
       </div>
 
-      {/* RIGHT SIDE */}
+      {/* RIGHT: User + Sign out */}
       <div className="flex items-center gap-3">
-        <div className="text-right">
+        <div className="flex flex-col items-end">
           <p className="text-sm font-medium text-white">{displayName}</p>
           <p className="text-xs text-slate-400">Dealership AI Admin</p>
         </div>
 
         <button
-          onClick={() => signOut().catch(console.error)}
+          onClick={() => {
+            signOut().catch(console.error);
+          }}
           className="rounded-md border border-white/10 px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-accent hover:text-white"
         >
           Sign out
