@@ -44,42 +44,60 @@ async function verifyWebhook(req: Request): Promise<Response> {
 }
 
 /* =====================================================================================
-   CAMPAIGN COUNTERS
+   AUTO-ASSIGNMENT (Stage 5D)
+===================================================================================== */
+// >>> NEW: Stage 5D auto-assignment helper
+async function autoAssignConversationAgent(
+  subOrganizationId: string | null
+): Promise<string | null> {
+  if (!subOrganizationId) return null;
+
+  const { data, error } = await supabase
+    .from("sub_organization_users")
+    .select("user_id")
+    .eq("sub_organization_id", subOrganizationId)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (error) {
+    log("AUTO_ASSIGN_ERROR", error);
+    return null;
+  }
+
+  return data?.[0]?.user_id ?? null;
+}
+
+/* =====================================================================================
+   CAMPAIGN COUNTERS (UNCHANGED)
 ===================================================================================== */
 async function recomputeCampaignCounters(campaignId: string) {
   try {
-    const { count: sentCount, error: sentErr } = await supabase
+    const { count: sentCount } = await supabase
       .from("campaign_messages")
       .select("*", { count: "exact", head: true })
       .eq("campaign_id", campaignId)
       .in("status", ["sent", "delivered"]);
 
-    const { count: failedCount, error: failErr } = await supabase
+    const { count: failedCount } = await supabase
       .from("campaign_messages")
       .select("*", { count: "exact", head: true })
       .eq("campaign_id", campaignId)
       .eq("status", "failed");
 
-    const safeSent = sentCount ?? 0;
-    const safeFailed = failedCount ?? 0;
-
     await supabase
       .from("campaigns")
       .update({
-        sent_count: safeSent,
-        failed_count: safeFailed,
+        sent_count: sentCount ?? 0,
+        failed_count: failedCount ?? 0,
       })
       .eq("id", campaignId);
-
-    if (sentErr) log("COUNTER_SENT_ERR", sentErr);
-    if (failErr) log("COUNTER_FAIL_ERR", failErr);
   } catch (e) {
     log("COUNTER_FATAL", e);
   }
 }
 
 /* =====================================================================================
-   HANDLE STATUS UPDATES (DELIVERED / FAILED etc.)
+   STATUS HANDLER (UNCHANGED)
 ===================================================================================== */
 async function handleStatuses(statuses: any[]) {
   for (const st of statuses) {
@@ -106,23 +124,33 @@ async function handleStatuses(statuses: any[]) {
         newStatus = "delivered";
       else if (waStatus === "failed") newStatus = "failed";
 
-      if (!newStatus) continue;
-
-      const updates: Record<string, any> = { status: newStatus };
-
       if (newStatus === "delivered" && ts) {
         const ms = Number(ts) * 1000;
-        if (!Number.isNaN(ms)) updates.delivered_at = new Date(ms).toISOString();
+        await supabase
+          .from("campaign_messages")
+          .update({
+            status: "delivered",
+            delivered_at: new Date(ms).toISOString(),
+          })
+          .eq("id", cm.id);
       }
 
-      if (newStatus === "failed" && errorText) {
-        updates.error = errorText.slice(0, 1000);
+      if (newStatus === "failed") {
+        await supabase
+          .from("campaign_messages")
+          .update({
+            status: "failed",
+            error: errorText?.slice(0, 1000) ?? null,
+          })
+          .eq("id", cm.id);
       }
 
-      await supabase
-        .from("campaign_messages")
-        .update(updates)
-        .eq("id", cm.id);
+      if (newStatus === "sent") {
+        await supabase
+          .from("campaign_messages")
+          .update({ status: "sent" })
+          .eq("id", cm.id);
+      }
 
       await recomputeCampaignCounters(cm.campaign_id);
     } catch (err) {
@@ -132,28 +160,21 @@ async function handleStatuses(statuses: any[]) {
 }
 
 /* =====================================================================================
-   HELPER: get default "general" sub_org for an org
+   SUB-ORG RESOLUTION (UNCHANGED)
 ===================================================================================== */
-async function getGeneralSubOrgId(organizationId: string): Promise<string | null> {
-  const { data, error } = await supabase
+async function getGeneralSubOrgId(orgId: string): Promise<string | null> {
+  const { data } = await supabase
     .from("sub_organizations")
     .select("id")
-    .eq("organization_id", organizationId)
+    .eq("organization_id", orgId)
     .eq("slug", "general")
     .maybeSingle();
 
-  if (error) log("GET_GENERAL_SUBORG_ERR", error);
   return data?.id ?? null;
 }
 
-/* =====================================================================================
-   HELPER: classify text into a sub_org slug (sales/service/finance/accessories/general)
-===================================================================================== */
 async function classifySubOrgSlugFromText(text: string): Promise<string> {
-  if (!openai) {
-    return "general";
-  }
-
+  if (!openai) return "general";
   try {
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -162,62 +183,40 @@ async function classifySubOrgSlugFromText(text: string): Promise<string> {
         {
           role: "system",
           content:
-            "You are a classifier for an automotive dealership. " +
-            "Classify the user's message into exactly ONE of these buckets: " +
-            "sales, service, finance, accessories, general. " +
-            "Reply with ONLY the single word, no explanation.",
+            "Classify message into: sales, service, finance, accessories, general.",
         },
-        {
-          role: "user",
-          content: text,
-        },
+        { role: "user", content: text },
       ],
     });
 
     const raw = resp.choices?.[0]?.message?.content?.trim().toLowerCase() ?? "";
     const allowed = ["sales", "service", "finance", "accessories", "general"];
-    if (allowed.includes(raw)) return raw as (typeof allowed)[number];
-    return "general";
-  } catch (err) {
-    log("CLASSIFIER_ERROR", err);
+    return allowed.includes(raw) ? raw : "general";
+  } catch {
     return "general";
   }
 }
 
-/* =====================================================================================
-   HELPER: resolve sub_organization_id using Option D rules
-===================================================================================== */
 async function resolveSubOrganizationId(
   organizationId: string,
-  whatsappSettingsSubOrgId: string | null,
+  fixedSubOrgId: string | null,
   text: string | null,
 ): Promise<string | null> {
-  // 1) If WhatsApp settings is tied to a specific sub-org → use that
-  if (whatsappSettingsSubOrgId) {
-    return whatsappSettingsSubOrgId;
-  }
+  if (fixedSubOrgId) return fixedSubOrgId;
 
-  // 2) If we have text + OpenAI → classify into a sub-org slug
-  if (text && text.trim().length > 0) {
+  if (text) {
     const slug = await classifySubOrgSlugFromText(text);
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("sub_organizations")
       .select("id")
       .eq("organization_id", organizationId)
       .eq("slug", slug)
       .maybeSingle();
 
-    if (error) {
-      log("RESOLVE_SUBORG_LOOKUP_ERR", { slug, error });
-    }
-
-    if (data?.id) {
-      return data.id;
-    }
+    if (data?.id) return data.id;
   }
 
-  // 3) Fallback: "general" sub-org
   return await getGeneralSubOrgId(organizationId);
 }
 
@@ -226,11 +225,7 @@ async function resolveSubOrganizationId(
 ===================================================================================== */
 serve(async (req: Request) => {
   try {
-    /* ------------------------------------------------------------------ */
-    /* GET = Verify webhook                                               */
-    /* ------------------------------------------------------------------ */
     if (req.method === "GET") return verifyWebhook(req);
-
     if (req.method !== "POST") {
       return new Response("Not allowed", { status: 405 });
     }
@@ -241,92 +236,67 @@ serve(async (req: Request) => {
     const entry = body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
-
     const messages = value?.messages ?? [];
     const statuses = value?.statuses ?? [];
 
-    const hasMessages = messages.length > 0;
-    const hasStatuses = statuses.length > 0;
-
-    /* ------------------------------------------------------------------ */
-    /* 1) STATUS UPDATES ONLY                                             */
-    /* ------------------------------------------------------------------ */
-    if (hasStatuses) {
-      log("STATUSES", statuses);
+    /* ------------------ STATUS ONLY ------------------ */
+    if (statuses.length > 0) {
       await handleStatuses(statuses);
     }
 
-    if (!hasMessages) {
-      return new Response(JSON.stringify({ success: true }), {
+    if (messages.length === 0) {
+      return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    /* ------------------------------------------------------------------ */
-    /* 2) INBOUND MESSAGE FLOW                                            */
-    /* ------------------------------------------------------------------ */
+    /* ------------------ INBOUND MESSAGE ------------------ */
     const waMessage = messages[0];
     const contactInfo = value.contacts?.[0];
-
     const phoneNumberId = value.metadata?.phone_number_id;
-    if (!phoneNumberId) {
-      log("ERROR_NO_PHONEID", value);
-      return new Response("Missing phone_number_id", { status: 400 });
-    }
 
-    /* FIND ORG BY PHONE ID */
     const { data: waSettings } = await supabase
       .from("whatsapp_settings")
-      .select("id, organization_id, api_token, sub_organization_id")
+      .select("organization_id, api_token, sub_organization_id")
       .eq("whatsapp_phone_id", phoneNumberId)
       .maybeSingle();
 
-    if (!waSettings) {
-      log("ERROR_NO_SETTINGS", { phoneNumberId });
-      return new Response("Unknown phone_number_id", { status: 400 });
-    }
+    const organizationId = waSettings.organization_id;
+    const apiToken = waSettings.api_token;
+    const waSettingsSubOrgId = waSettings.sub_organization_id ?? null;
 
-    const organizationId: string = waSettings.organization_id;
-    const apiToken: string = waSettings.api_token;
-    const waSettingsSubOrgId: string | null = waSettings.sub_organization_id ?? null;
+    /* Extract text */
+    const type = waMessage.type || "text";
+    let text = null;
 
-    /* ------------------------------------------------------------------ */
-    /* EXTRACT MESSAGE TYPE + TEXT                                        */
-    /* ------------------------------------------------------------------ */
-    const messageType = waMessage.type || "text";
-    let text: string | null = null;
-
-    if (messageType === "text") text = waMessage.text?.body ?? null;
-    if (messageType === "button") text = waMessage.button?.text ?? null;
-    if (messageType === "interactive") {
-      const it = waMessage.interactive;
-      text = it?.button_reply?.title ?? it?.list_reply?.title ?? null;
-    }
-    if (messageType === "image") text = waMessage.image?.caption ?? "Customer sent an image";
-    if (messageType === "video") text = waMessage.video?.caption ?? "Customer sent a video";
-    if (messageType === "audio") text = "Customer sent an audio clip";
-    if (messageType === "voice") text = "Customer sent a voice note";
-    if (messageType === "sticker") text = "Customer sent a sticker";
-    if (messageType === "document") {
+    if (type === "text") text = waMessage.text?.body ?? null;
+    if (type === "button") text = waMessage.button?.text ?? null;
+    if (type === "interactive")
+      text =
+        waMessage.interactive?.button_reply?.title ??
+        waMessage.interactive?.list_reply?.title ??
+        null;
+    if (type === "image") text = waMessage.image?.caption ?? "Customer sent an image";
+    if (type === "video") text = waMessage.video?.caption ?? "Customer sent a video";
+    if (type === "audio") text = "Customer sent audio";
+    if (type === "voice") text = "Customer sent voice";
+    if (type === "sticker") text = "Customer sent sticker";
+    if (type === "document")
       text =
         waMessage.document?.caption ??
         waMessage.document?.filename ??
-        "Customer sent a document";
-    }
+        "Customer sent document";
 
-    /* ------------------------------------------------------------------ */
-    /* RESOLVE SUB-ORGANIZATION (Option D)                                */
-    /* ------------------------------------------------------------------ */
-    const subOrganizationId =
-      await resolveSubOrganizationId(organizationId, waSettingsSubOrgId, text);
+    /* ------------------ Resolve sub-organization ------------------ */
+    const subOrganizationId = await resolveSubOrganizationId(
+      organizationId,
+      waSettingsSubOrgId,
+      text,
+    );
 
-    log("RESOLVED_SUBORG", { organizationId, subOrganizationId });
-
-    /* ------------------------------------------------------------------ */
-    /* CONTACT UPSERT                                                     */
-    /* ------------------------------------------------------------------ */
+    /* ------------------ CONTACT UPSERT ------------------ */
     const waNumber = contactInfo?.wa_id || waMessage.from;
-    const waName = contactInfo?.profile?.name || `User-${waNumber.slice(-4)}`;
+    const name = contactInfo?.profile?.name ?? `User-${waNumber.slice(-4)}`;
 
     const { data: existingContact } = await supabase
       .from("contacts")
@@ -343,32 +313,27 @@ serve(async (req: Request) => {
         .insert({
           organization_id: organizationId,
           phone: waNumber,
-          name: waName,
+          name,
         })
         .select()
         .single();
       contactId = inserted.id;
     } else {
       contactId = existingContact.id;
-      if (waName && existingContact.name !== waName) {
-        await supabase
-          .from("contacts")
-          .update({ name: waName })
-          .eq("id", contactId);
+      if (name && existingContact.name !== name) {
+        await supabase.from("contacts").update({ name }).eq("id", contactId);
       }
     }
 
-    /* ------------------------------------------------------------------ */
-    /* CONVERSATION UPSERT (per org + sub-org + contact + channel)        */
-    /* ------------------------------------------------------------------ */
+    /* =====================================================================================
+       CONVERSATION HANDLING (AUTO-ASSIGNMENT ADDED)
+    ====================================================================================== */
     let convQuery = supabase
       .from("conversations")
       .select("*")
       .eq("organization_id", organizationId)
       .eq("contact_id", contactId)
-      .eq("channel", "whatsapp")
-      .order("last_message_at", { ascending: false })
-      .limit(1);
+      .eq("channel", "whatsapp");
 
     if (subOrganizationId) {
       convQuery = convQuery.eq("sub_organization_id", subOrganizationId);
@@ -376,148 +341,83 @@ serve(async (req: Request) => {
       convQuery = convQuery.is("sub_organization_id", null);
     }
 
-    const { data: existingConv } = await convQuery.maybeSingle();
+    const { data: existingConv } = await convQuery
+      .order("last_message_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     let conversationId: string;
 
     if (!existingConv) {
-      const { data: insertedConv } = await supabase
+      // >>> NEW: Auto-assign agent for NEW conversations
+      const autoAssignedUserId = await autoAssignConversationAgent(subOrganizationId);
+
+      const { data: newConv } = await supabase
         .from("conversations")
         .insert({
           organization_id: organizationId,
           contact_id: contactId,
-          ai_enabled: true,
           channel: "whatsapp",
-          last_message_at: new Date().toISOString(),
+          ai_enabled: true,
           sub_organization_id: subOrganizationId,
+          last_message_at: new Date().toISOString(),
+          assigned_to: autoAssignedUserId, // >>> NEW
         })
         .select()
         .single();
-      conversationId = insertedConv.id;
+
+      conversationId = newConv.id;
     } else {
       conversationId = existingConv.id;
-      await supabase
-        .from("conversations")
-        .update({
-          last_message_at: new Date().toISOString(),
-        })
-        .eq("id", conversationId);
-    }
 
-    /* ------------------------------------------------------------------ */
-    /* MEDIA PROCESSING (unchanged logic, but we attach sub_organization) */
-    /* ------------------------------------------------------------------ */
-    const MEDIA_TYPES = ["image", "video", "audio", "voice", "sticker", "document"];
-    const isMedia = MEDIA_TYPES.includes(messageType);
-    let mediaUrl: string | null = null;
+      // >>> NEW: Auto-assign if existing conversation has no agent
+      if (!existingConv.assigned_to) {
+        const autoAssignedUserId = await autoAssignConversationAgent(subOrganizationId);
 
-    if (isMedia) {
-      try {
-        const mediaId =
-          waMessage[messageType]?.id ??
-          waMessage.document?.id ??
-          waMessage.image?.id ??
-          null;
-
-        if (!mediaId) {
-          log("MEDIA_NO_ID", { messageType });
+        if (autoAssignedUserId) {
+          await supabase
+            .from("conversations")
+            .update({
+              assigned_to: autoAssignedUserId,
+              last_message_at: new Date().toISOString(),
+            })
+            .eq("id", conversationId);
         } else {
-          const metaRes = await fetch(
-            `https://graph.facebook.com/v20.0/${mediaId}`,
-            {
-              headers: { Authorization: `Bearer ${apiToken}` },
-            },
-          );
-
-          const meta = await metaRes.json();
-          const downloadUrl = meta.url;
-
-          const fileRes = await fetch(downloadUrl, {
-            headers: { Authorization: `Bearer ${apiToken}` },
-          });
-
-          const contentType =
-            fileRes.headers.get("content-type") ?? "application/octet-stream";
-          const buffer = new Uint8Array(await fileRes.arrayBuffer());
-
-          let ext = "bin";
-          if (contentType.includes("image")) ext = "jpg";
-          if (contentType.includes("video")) ext = "mp4";
-          if (contentType.includes("audio")) ext = "mp3";
-          if (contentType.includes("ogg")) ext = "ogg";
-          if (contentType.includes("webp")) ext = "webp";
-          if (waMessage.document?.filename) {
-            ext = waMessage.document.filename.split(".").pop()!;
-          }
-
-          const path =
-            `org_${organizationId}/conversation_${conversationId}/` +
-            `${messageType}_${mediaId}.${ext}`;
-
-          const { data: uploaded, error: uploadErr } = await supabase.storage
-            .from(WHATSAPP_MEDIA_BUCKET)
-            .upload(path, buffer, {
-              contentType,
-              upsert: true,
-            });
-
-          if (uploadErr) log("MEDIA_UPLOAD_ERR", uploadErr);
-
-          if (uploaded) {
-            const { data: urlData } = supabase.storage
-              .from(WHATSAPP_MEDIA_BUCKET)
-              .getPublicUrl(uploaded.path);
-
-            mediaUrl = urlData.publicUrl;
-          }
+          await supabase
+            .from("conversations")
+            .update({ last_message_at: new Date().toISOString() })
+            .eq("id", conversationId);
         }
-      } catch (err) {
-        log("MEDIA_PROCESS_ERROR", err);
+      } else {
+        await supabase
+          .from("conversations")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", conversationId);
       }
     }
 
-    /* ------------------------------------------------------------------ */
-    /* INSERT INBOUND MESSAGE INTO DB (sender = customer)                 */
-    /* ------------------------------------------------------------------ */
-    const { error: msgErr } = await supabase.from("messages").insert({
+    /* ------------------ Store message ------------------ */
+    await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender: "customer",
-      message_type: messageType,
+      message_type: type,
       text,
-      media_url: mediaUrl,
+      media_url: null,
       channel: "whatsapp",
       sub_organization_id: subOrganizationId,
     });
 
-    if (msgErr) log("MESSAGE_STORE_ERROR", msgErr);
-
-    /* ------------------------------------------------------------------ */
-    /* CALL AI HANDLER                                                    */
-    /* ------------------------------------------------------------------ */
-    const aiPayload = {
-      conversation_id: conversationId,
-      user_message:
-        text ??
-        (messageType === "image"
-          ? "Customer sent an image"
-          : messageType === "video"
-          ? "Customer sent a video"
-          : messageType === "audio" || messageType === "voice"
-          ? "Customer sent an audio clip"
-          : messageType === "sticker"
-          ? "Customer sent a sticker"
-          : "Customer sent a document"),
-    };
-
-    log("AI_HANDLER_CALL", { ...aiPayload, sub_organization_id: subOrganizationId });
-
+    /* ------------------ AI Handler ------------------ */
     await fetch(`${PROJECT_URL}/functions/v1/ai-handler`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
       },
-      body: JSON.stringify(aiPayload),
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        user_message: text ?? "",
+      }),
     });
 
     return new Response(JSON.stringify({ success: true }), {

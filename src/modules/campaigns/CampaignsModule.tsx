@@ -169,6 +169,7 @@ export function CampaignsModule() {
     try {
       const newId = await createCampaignWithMessages({
         organizationId: currentOrganization.id,
+        sub_organization_id: activeSubOrg?.id ?? null,      // ✅ ADD HERE
         name: builderState.name,
         description: builderState.description,
         templateBody: builderState.templateBody,
@@ -176,7 +177,7 @@ export function CampaignsModule() {
         scheduledAt: builderState.scheduledAt || null,
         rows: csvState.parsedRows,
       });
-
+      
       if (newId) {
         setSelectedCampaignId(newId);
         await fetchCampaigns(currentOrganization.id);

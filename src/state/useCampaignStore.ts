@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
-import type { Campaign, CampaignMessage } from "../types/database";
 
+import type { Campaign, CampaignMessage } from "../types/database";
 import { useSubOrganizationStore } from "./useSubOrganizationStore";
 
 type CsvRow = {
@@ -19,6 +19,7 @@ type CampaignState = {
 
   createCampaignWithMessages: (args: {
     organizationId: string;
+    sub_organization_id?: string | null;
     name: string;
     description?: string;
     templateBody: string;
@@ -40,12 +41,11 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   messages: {},
   loading: false,
 
-  /* -------------------------------------------------------------------------- */
-  /* FETCH CAMPAIGNS (ORG + SUB ORG AWARE)                                      */
-  /* -------------------------------------------------------------------------- */
+  /* -------------------------------------------------------------- */
+  /* FETCH CAMPAIGNS (ORG + SUB-ORG AWARE)                          */
+  /* -------------------------------------------------------------- */
   fetchCampaigns: async (organizationId) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
-
     set({ loading: true });
 
     let query = supabase
@@ -74,9 +74,9 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     });
   },
 
-  /* -------------------------------------------------------------------------- */
-  /* FETCH CAMPAIGN MESSAGES (SUB ORG AWARE)                                    */
-  /* -------------------------------------------------------------------------- */
+  /* -------------------------------------------------------------- */
+  /* FETCH CAMPAIGN MESSAGES (SUB-ORG AWARE)                        */
+  /* -------------------------------------------------------------- */
   fetchCampaignMessages: async (campaignId) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
@@ -107,11 +107,12 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     }));
   },
 
-  /* -------------------------------------------------------------------------- */
-  /* CREATE CAMPAIGN + INSERT MESSAGES (SUB ORG INCLUDED)                       */
-  /* -------------------------------------------------------------------------- */
+  /* -------------------------------------------------------------- */
+  /* CREATE CAMPAIGN + INSERT MESSAGES (SUB-ORG INCLUDED)           */
+  /* -------------------------------------------------------------- */
   createCampaignWithMessages: async ({
     organizationId,
+    sub_organization_id,
     name,
     description,
     templateBody,
@@ -120,16 +121,17 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     rows,
   }) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
+    const finalSubOrg = sub_organization_id ?? activeSubOrg?.id ?? null;
 
     const status = scheduledAt ? "scheduled" : "draft";
     const totalRecipients = rows.length;
 
-    /* 1️⃣ Create campaign */
+    /* 1️⃣ Create Campaign */
     const { data: campaignData, error: campaignError } = await supabase
       .from("campaigns")
       .insert({
         organization_id: organizationId,
-        sub_organization_id: activeSubOrg?.id ?? null, // <<<<<< NEW
+        sub_organization_id: finalSubOrg, // ← REQUIRED
         name,
         description: description ?? null,
         channel: "whatsapp",
@@ -151,12 +153,12 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
 
     const campaignId = campaignData.id as string;
 
-    /* 2️⃣ Insert campaign_messages */
+    /* 2️⃣ Insert Campaign Messages */
     if (rows.length > 0) {
       const messagesPayload = rows.map((row) => ({
         organization_id: organizationId,
-        sub_organization_id: activeSubOrg?.id ?? null, // <<<<<< NEW
         campaign_id: campaignId,
+        sub_organization_id: finalSubOrg, // ← REQUIRED
         phone: row.phone,
         variables: row.variables,
         status: "pending",
@@ -167,24 +169,21 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         .insert(messagesPayload);
 
       if (messagesError) {
-        console.error(
-          "[useCampaignStore] insert campaign_messages error",
-          messagesError
-        );
+        console.error("[useCampaignStore] insert messages error", messagesError);
         throw messagesError;
       }
     }
 
-    /* 3️⃣ Refresh list + messages */
+    /* 3️⃣ Refresh stores */
     await get().fetchCampaigns(organizationId);
     await get().fetchCampaignMessages(campaignId);
 
     return campaignId;
   },
 
-  /* -------------------------------------------------------------------------- */
-  /* LAUNCH CAMPAIGN (set status = scheduled)                                   */
-  /* -------------------------------------------------------------------------- */
+  /* -------------------------------------------------------------- */
+  /* LAUNCH CAMPAIGN                                                */
+  /* -------------------------------------------------------------- */
   launchCampaign: async (campaignId, scheduledAt) => {
     const effectiveTime = scheduledAt ?? new Date().toISOString();
 
@@ -210,9 +209,9 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     }));
   },
 
-  /* -------------------------------------------------------------------------- */
-  /* RETRY FAILED MESSAGES (RESET TO PENDING)                                   */
-  /* -------------------------------------------------------------------------- */
+  /* -------------------------------------------------------------- */
+  /* RETRY FAILED (SUB-ORG AWARE)                                   */
+  /* -------------------------------------------------------------- */
   retryFailedMessages: async (campaignId) => {
     const { campaigns } = get();
     const campaign = campaigns.find((c) => c.id === campaignId);
@@ -230,16 +229,14 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         whatsapp_message_id: null,
       })
       .eq("campaign_id", campaignId)
-      .eq("sub_organization_id", activeSubOrg?.id ?? null);
+      .eq("sub_organization_id", activeSubOrg?.id ?? null); // ← REQUIRED
 
     if (error) {
       console.error("[useCampaignStore] retryFailedMessages error", error);
       throw error;
     }
 
-    if (organizationId) {
-      await get().fetchCampaigns(organizationId);
-    }
+    if (organizationId) await get().fetchCampaigns(organizationId);
     await get().fetchCampaignMessages(campaignId);
   },
 }));

@@ -6,8 +6,10 @@ import {
   Workflow,
   Megaphone,
   Settings,
-  PhoneCall
+  PhoneCall,
+  HelpCircle,          // ✅ ADD THIS
 } from 'lucide-react';
+
 import { SidebarLink } from './SidebarLink';
 
 export function Sidebar() {
@@ -15,7 +17,7 @@ export function Sidebar() {
     <aside className="flex h-full w-64 flex-col bg-slate-950/80 p-4 backdrop-blur">
       <div className="mb-6 flex items-center gap-3 text-lg font-semibold text-white">
         <Building2 className="text-accent" />
-        <span>Joyz Dealership AI</span>
+        <span>Sevendays AI</span>
       </div>
       <nav className="flex flex-1 flex-col gap-2">
         <SidebarLink to="/chats" icon={MessageCircle} label="Chats" />
@@ -28,6 +30,13 @@ export function Sidebar() {
           to="/settings/whatsapp"
           icon={PhoneCall}
           label="WhatsApp Settings"
+        />
+
+        {/* ✅ Correct Unanswered Questions link */}
+        <SidebarLink
+          to="/unanswered"
+          icon={HelpCircle}
+          label="Unanswered"
         />
       </nav>
     </aside>

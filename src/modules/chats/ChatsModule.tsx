@@ -11,6 +11,7 @@ import {
 
 import { useChatStore } from "../../state/useChatStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
+import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { ChatSidebarItem } from "./components/ChatSidebarItem";
 import type { Message } from "../../types/database";
@@ -41,6 +42,9 @@ export function ChatsModule() {
   } = useChatStore();
 
   const { currentOrganization } = useOrganizationStore();
+  const { activeSubOrg } = useSubOrganizationStore();
+
+  const subOrgKey = activeSubOrg?.id ?? "__no_suborg__";
 
   const [headerContact, setHeaderContact] = useState<HeaderContact | null>(
     null
@@ -52,13 +56,20 @@ export function ChatsModule() {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   /* -----------------------------------------------------------
-   * LOAD CONVERSATIONS WHEN ORG CHANGES
+   * LOAD CONVERSATIONS WHEN ORG OR SUB-ORG CHANGES
    * -----------------------------------------------------------*/
   useEffect(() => {
     if (currentOrganization?.id) {
       fetchConversations(currentOrganization.id).catch(console.error);
     }
-  }, [currentOrganization?.id, fetchConversations]);
+  }, [currentOrganization?.id, subOrgKey, fetchConversations]);
+
+  /* -----------------------------------------------------------
+   * RESET ACTIVE CONVERSATION WHEN SUB-ORG CHANGES
+   * -----------------------------------------------------------*/
+  useEffect(() => {
+    setActiveConversation(null);
+  }, [subOrgKey, setActiveConversation]);
 
   /* -----------------------------------------------------------
    * LOAD MESSAGES WHEN ACTIVE CONVERSATION CHANGES
@@ -73,7 +84,7 @@ export function ChatsModule() {
   }, [activeConversationId, messages, fetchMessages, subscribeToMessages]);
 
   /* -----------------------------------------------------------
-   * SMART AUTO-SCROLL (only if user is near bottom)
+   * SMART AUTO-SCROLL
    * -----------------------------------------------------------*/
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -88,7 +99,7 @@ export function ChatsModule() {
   }, [messages]);
 
   /* -----------------------------------------------------------
-   * LOAD HEADER CONTACT (name + phone) WHEN ACTIVE CONVERSATION CHANGES
+   * LOAD CONTACT DETAILS WHEN ACTIVE CONVERSATION CHANGES
    * -----------------------------------------------------------*/
   useEffect(() => {
     async function loadContact() {
@@ -185,7 +196,7 @@ export function ChatsModule() {
   };
 
   /* -----------------------------------------------------------
-   * SEND MESSAGE (TEXT + OPTIONAL MEDIA)
+   * SEND MESSAGE (text / media)
    * -----------------------------------------------------------*/
   const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -200,16 +211,12 @@ export function ChatsModule() {
 
     setSending(true);
     try {
-      // Branch by channel
+      // WhatsApp channel (agent reply)
       if (activeConversation.channel === "whatsapp") {
-        // ------------------------------------------
-        // WhatsApp outbound (agent → customer)
-        // ------------------------------------------
         let mediaUrl: string | null = null;
         let messageType: string = "text";
 
         if (file) {
-          // Upload to Supabase Storage (whatsapp-media)
           const ext =
             file.name.split(".").pop() ||
             (file.type.startsWith("image/") ? "jpg" : "bin");
@@ -223,13 +230,13 @@ export function ChatsModule() {
               upsert: true,
             });
 
-          if (uploadError) {
-            console.error("[ChatsModule] media upload error:", uploadError);
-          } else {
+          if (!uploadError) {
             const { data: pub } = supabase.storage
               .from(WHATSAPP_MEDIA_BUCKET)
               .getPublicUrl(path);
             mediaUrl = pub?.publicUrl ?? null;
+          } else {
+            console.error("[ChatsModule] media upload error:", uploadError);
           }
 
           if (file.type.startsWith("image/")) {
@@ -239,7 +246,7 @@ export function ChatsModule() {
           }
         }
 
-        // Insert agent message in DB
+        // Insert message into DB
         const displayText =
           text ||
           (messageType === "image"
@@ -255,23 +262,20 @@ export function ChatsModule() {
           text: displayText || null,
           media_url: mediaUrl,
           channel: "whatsapp",
+          sub_organization_id: activeConversation.sub_organization_id,
         });
 
-        if (msgError) {
-          console.error("[ChatsModule] insert WA message error:", msgError);
-        } else {
-          // Refresh messages list
+        if (!msgError) {
           await fetchMessages(activeConversationId);
+        } else {
+          console.error("[ChatsModule] insert WA message error:", msgError);
         }
 
-        // Send via whatsapp-send Edge Function
-        if (!headerContact?.phone) {
-          console.warn(
-            "[ChatsModule] No contact phone found, skipping outbound WhatsApp send."
-          );
-        } else {
+        // Outbound WA API call
+        if (headerContact?.phone) {
           const body: any = {
             organization_id: activeConversation.organization_id,
+            sub_organization_id: activeConversation.sub_organization_id,
             to: headerContact.phone,
           };
 
@@ -296,19 +300,17 @@ export function ChatsModule() {
 
           if (error) {
             console.error("[ChatsModule] whatsapp-send error:", error);
-          } else {
-            console.log("[ChatsModule] whatsapp-send ok:", data);
           }
         }
       } else {
-        // ------------------------------------------
-        // Web / Internal chat (uses AI auto reply pipeline)
-        // ------------------------------------------
+        // Normal web/internal message
         const payload: Partial<Message> = {
           text,
           sender: "user",
           message_type: "text",
           channel: activeConversation.channel ?? "internal",
+          sub_organization_id: activeConversation.sub_organization_id,
+          organization_id: activeConversation.organization_id,
         };
 
         await sendMessage(activeConversationId, payload);
@@ -338,9 +340,7 @@ export function ChatsModule() {
    * -----------------------------------------------------------*/
   return (
     <div className="grid h-full grid-cols-[320px,1fr] gap-6">
-      {/* -------------------------------------------
-          SIDEBAR
-      ------------------------------------------- */}
+      {/* SIDEBAR */}
       <div className="flex h-full flex-col rounded-2xl border border-white/5 bg-slate-900/60">
         <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-300">
@@ -382,15 +382,12 @@ export function ChatsModule() {
         </div>
       </div>
 
-      {/* -------------------------------------------
-          MESSAGE PANEL
-      ------------------------------------------- */}
+      {/* MESSAGE PANEL */}
       <div className="flex h-full flex-col rounded-2xl border border-white/5 bg-slate-900/60">
         {activeConversationId && activeConversation ? (
           <>
             {/* HEADER */}
             <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
-              {/* LEFT: Contact + Channel */}
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-semibold text-white">
@@ -420,7 +417,6 @@ export function ChatsModule() {
                 </div>
               </div>
 
-              {/* RIGHT: AI Toggle */}
               <button
                 onClick={() =>
                   toggleAI(
@@ -468,11 +464,7 @@ export function ChatsModule() {
                 <label className="flex cursor-pointer items-center gap-2 rounded-full border border-dashed border-white/10 px-4 py-2 text-xs uppercase tracking-wide text-slate-300">
                   <Upload size={16} />
                   Attach
-                  <input
-                    type="file"
-                    name="file"
-                    className="hidden"
-                  />
+                  <input type="file" name="file" className="hidden" />
                 </label>
 
                 <input

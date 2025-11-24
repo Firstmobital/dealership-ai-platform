@@ -9,6 +9,7 @@ import { WorkflowModule } from "./modules/workflows/WorkflowModule";
 import { CampaignsModule } from "./modules/campaigns/CampaignsModule";
 import { SettingsModule } from "./modules/dashboard/SettingsModule";
 import { WhatsappSettingsModule } from "./modules/settings/WhatsappSettingsModule";
+import { UnansweredQuestionsModule } from "./modules/unanswered/UnansweredQuestionsModule";
 
 import { LoginPage } from "./modules/auth/LoginPage";
 import { SignupPage } from "./modules/auth/SignupPage";
@@ -16,7 +17,10 @@ import { ResetPasswordPage } from "./modules/auth/ResetPasswordPage";
 import { UpdatePasswordPage } from "./modules/auth/UpdatePasswordPage";
 import { useAuthStore } from "./state/useAuthStore";
 
-// Wrapper that ensures user is authenticated before showing AppLayout
+
+// ---------------------------------------------------------------------------
+// PROTECTED WRAPPER — BLOCKS UNAUTHENTICATED USERS
+// ---------------------------------------------------------------------------
 function ProtectedAppLayout() {
   const { session, initialize, loading } = useAuthStore();
   const location = useLocation();
@@ -46,10 +50,15 @@ function ProtectedAppLayout() {
   return <AppLayout />;
 }
 
+
+// ---------------------------------------------------------------------------
+// MAIN ROUTING
+// ---------------------------------------------------------------------------
 function App() {
   return (
     <Routes>
-      {/* Public auth routes */}
+
+      {/* -------------------------- Public Auth Routes ------------------------ */}
       <Route path="/auth">
         <Route index element={<Navigate to="/auth/login" replace />} />
         <Route path="login" element={<LoginPage />} />
@@ -58,22 +67,29 @@ function App() {
         <Route path="update-password" element={<UpdatePasswordPage />} />
       </Route>
 
-      {/* Protected app routes */}
+      {/* -------------------------- Protected Dashboard ----------------------- */}
       <Route path="/" element={<ProtectedAppLayout />}>
+
+        {/* Default -> chats */}
         <Route index element={<Navigate to="/chats" replace />} />
+
         <Route path="chats" element={<ChatsModule />} />
         <Route path="knowledge-base" element={<KnowledgeBaseModule />} />
         <Route path="bot" element={<BotPersonalityModule />} />
         <Route path="workflows" element={<WorkflowModule />} />
         <Route path="campaigns" element={<CampaignsModule />} />
 
+        {/* ⭐ FIXED: Relative route */}
+        <Route path="unanswered" element={<UnansweredQuestionsModule />} />
+
         {/* Settings */}
         <Route path="settings" element={<SettingsModule />} />
         <Route path="settings/whatsapp" element={<WhatsappSettingsModule />} />
       </Route>
 
-      {/* Fallback */}
+      {/* -------------------------- Fallback Redirect ------------------------- */}
       <Route path="*" element={<Navigate to="/" replace />} />
+
     </Routes>
   );
 }
