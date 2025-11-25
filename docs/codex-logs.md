@@ -137,3 +137,46 @@
 - Integrated with useSubOrganizationStore and org switcher.
 - Matches overall design system of the platform.
 - Fully multi-tenant and sub-org aware.
+
+## 2025-11-24 – Stage 6B: Edge Function + Schema Hardening (WhatsApp)
+
+- Added messages.mime_type column via stage_6b_add_mime_type_to_messages migration
+  to support storing inbound WhatsApp media MIME types.
+
+- Fixed whatsapp-inbound to insert into messages.text (not a non-existent
+  content column), aligning with the canonical messages schema.
+
+- Confirmed whatsapp-inbound stores:
+  - conversation_id
+  - sender = 'customer'
+  - message_type
+  - text
+  - media_url
+  - mime_type
+  - channel = 'whatsapp'
+  - sub_organization_id
+
+- Verified overall WhatsApp pipeline is consistent with multi-org + sub-org
+  design and RLS policies.
+
+## 2025-11-24 – Stage 6C Standardization Finalization
+
+- Fully removed SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.
+- Standardized PROJECT_URL and SERVICE_ROLE_KEY across all edge functions.
+- Updated supabase/.env and frontend .env.local to use the new canonical keys.
+- Ensured all edge functions initialize Supabase using:
+  createClient(PROJECT_URL, SERVICE_ROLE_KEY).
+- Unified configuration for local development, staging, and production environments.
+
+## 2025-11-24 – Stage 6D: Cleanup & Optimization (WhatsApp inbound)
+
+- Added messages.whatsapp_message_id and messages.wa_received_at columns with
+  a unique index on whatsapp_message_id to guarantee idempotent processing
+  of inbound WhatsApp webhooks.
+- Updated whatsapp-inbound edge function to:
+  - Check for existing messages by whatsapp_message_id and safely skip duplicates.
+  - Gate logs behind a DEBUG env flag to keep production logs clean.
+  - Truncate overly long inbound text to MAX_TEXT_LENGTH for safety.
+  - Store wa_received_at timestamp and whatsapp_message_id alongside each inbound
+    WhatsApp message.
+- This completes WhatsApp inbound hardening for Stage 6D.

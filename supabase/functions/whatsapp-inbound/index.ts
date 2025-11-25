@@ -14,6 +14,8 @@ const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 const WHATSAPP_API_BASE_URL =
   Deno.env.get("WHATSAPP_API_BASE_URL") ??
   "https://graph.facebook.com/v20.0";
+const DEBUG = Deno.env.get("DEBUG") === "true";
+const MAX_TEXT_LENGTH = 4000;
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -22,10 +24,14 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 /* =====================================================================================
-   STRUCTURED LOGGING
+   STRUCTURED LOGGING (DEBUG-GATED)
 ===================================================================================== */
 function log(stage: string, data: any) {
-  console.log(`[whatsapp-inbound] ${stage}`, JSON.stringify(data, null, 2));
+  if (!DEBUG) return;
+  console.log(
+    `[whatsapp-inbound] ${stage}`,
+    JSON.stringify(data, null, 2),
+  );
 }
 
 /* =====================================================================================
@@ -50,7 +56,7 @@ async function verifyWebhook(req: Request): Promise<Response> {
    AUTO-ASSIGNMENT (Stage 5D)
 ===================================================================================== */
 async function autoAssignConversationAgent(
-  subOrganizationId: string | null
+  subOrganizationId: string | null,
 ): Promise<string | null> {
   if (!subOrganizationId) return null;
 
@@ -162,7 +168,7 @@ async function handleStatuses(statuses: any[]) {
 }
 
 /* =====================================================================================
-   SUB-ORG RESOLUTION (UNCHANGED)
+   SUB-ORG RESOLUTION
 ===================================================================================== */
 async function getGeneralSubOrgId(orgId: string): Promise<string | null> {
   const { data } = await supabase
@@ -223,17 +229,16 @@ async function resolveSubOrganizationId(
 }
 
 /* =====================================================================================
-   MEDIA DOWNLOAD + STORAGE (NEW)
+   MEDIA DOWNLOAD + STORAGE
 ===================================================================================== */
 
 async function downloadAndStoreMedia(
   mediaId: string,
   apiToken: string,
   orgId: string,
-  conversationId: string
+  conversationId: string,
 ): Promise<{ mediaUrl: string | null; mimeType: string | null }> {
   try {
-    // 1) Get media URL + mime type from Meta
     const metaRes = await fetch(
       `${WHATSAPP_API_BASE_URL}/${mediaId}?access_token=${apiToken}`,
     );
@@ -251,7 +256,6 @@ async function downloadAndStoreMedia(
       return { mediaUrl: null, mimeType: null };
     }
 
-    // 2) Download binary
     const fileRes = await fetch(url, {
       headers: {
         Authorization: `Bearer ${apiToken}`,
@@ -267,8 +271,6 @@ async function downloadAndStoreMedia(
     }
 
     const blob = await fileRes.blob();
-
-    // 3) Upload to Supabase Storage
     const ext = mimeType?.split("/")?.[1] ?? "bin";
     const path = `${orgId}/${conversationId}/${mediaId}.${ext}`;
 
@@ -284,13 +286,11 @@ async function downloadAndStoreMedia(
       return { mediaUrl: null, mimeType: mimeType ?? null };
     }
 
-    // 4) Get public URL
     const { data: publicUrlData } = supabase.storage
       .from(WHATSAPP_MEDIA_BUCKET)
       .getPublicUrl(path);
 
     const publicUrl = publicUrlData?.publicUrl ?? null;
-
     return { mediaUrl: publicUrl, mimeType: mimeType ?? null };
   } catch (err) {
     log("MEDIA_FATAL_ERROR", err);
@@ -309,7 +309,7 @@ serve(async (req: Request) => {
     }
 
     const body = await req.json().catch(() => null);
-    log("RAW_BODY", body);
+    log("RAW_BODY", { hasBody: !!body });
 
     const entry = body?.entry?.[0];
     const change = entry?.changes?.[0];
@@ -330,15 +330,40 @@ serve(async (req: Request) => {
 
     /* ------------------ INBOUND MESSAGE ------------------ */
     const waMessage = messages[0];
+    const waMessageId: string | undefined = waMessage.id;
     const contactInfo = value.contacts?.[0];
     const phoneNumberId = value.metadata?.phone_number_id;
 
     if (!phoneNumberId) {
-      log("MISSING_PHONE_NUMBER_ID", { value });
+      log("MISSING_PHONE_NUMBER_ID", { valueExists: !!value });
       return new Response(JSON.stringify({ error: "No phone_number_id" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    /* ------------------ IDEMPOTENCY CHECK ------------------ */
+    if (waMessageId) {
+      const { data: existingMsg, error: existingMsgError } = await supabase
+        .from("messages")
+        .select("id")
+        .eq("whatsapp_message_id", waMessageId)
+        .maybeSingle();
+
+      if (existingMsgError) {
+        log("IDEMPOTENCY_CHECK_ERROR", existingMsgError);
+      }
+
+      if (existingMsg) {
+        log("DUPLICATE_MESSAGE_SKIPPED", { waMessageId });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            duplicate: true,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
     }
 
     const { data: waSettings, error: waSettingsError } = await supabase
@@ -401,6 +426,11 @@ serve(async (req: Request) => {
       mediaId = waMessage.document?.id ?? null;
     } else {
       text = "Unsupported message type.";
+    }
+
+    // Truncate text for safety
+    if (text && text.length > MAX_TEXT_LENGTH) {
+      text = text.slice(0, MAX_TEXT_LENGTH);
     }
 
     /* ------------------ Resolve sub-organization ------------------ */
@@ -533,7 +563,7 @@ serve(async (req: Request) => {
       }
     }
 
-    /* ------------------ MEDIA HANDLING (optional, if apiToken + mediaId) ------------------ */
+    /* ------------------ MEDIA HANDLING ------------------ */
     let mediaUrl: string | null = null;
     let mimeType: string | null = null;
 
@@ -551,13 +581,15 @@ serve(async (req: Request) => {
     /* ------------------ Store message (aligned with schema) ------------------ */
     await supabase.from("messages").insert({
       conversation_id: conversationId,
-      sender: "customer", // keep as-is to match your existing data
+      sender: "customer",
       message_type: type,
-      content: text,
+      text,
       media_url: mediaUrl,
       mime_type: mimeType,
       channel: "whatsapp",
       sub_organization_id: subOrganizationId,
+      whatsapp_message_id: waMessageId ?? null,
+      wa_received_at: new Date().toISOString(),
     });
 
     /* ------------------ AI Handler ------------------ */
@@ -577,7 +609,8 @@ serve(async (req: Request) => {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
-    log("FATAL_ERROR", err);
+    log("FATAL_ERROR", { error: String(err) });
     return new Response("Internal Error", { status: 500 });
   }
 });
+
