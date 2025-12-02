@@ -250,8 +250,9 @@ export function CampaignsModule() {
     ? campaigns.find((c) => c.id === selectedCampaignId) || null
     : null;
 
-  const activeMessages: CampaignMessage[] =
-    (selectedCampaignId && messages[selectedCampaignId]) ?? [];
+  const activeMessages: CampaignMessage[] = selectedCampaignId
+    ? messages[selectedCampaignId] ?? []
+    : [];
 
   /* ===================================================================== */
   /* UI (UNCHANGED BELOW EXCEPT FOR UPDATED CALLS ABOVE)                   */

@@ -310,7 +310,6 @@ export function ChatsModule() {
           message_type: "text",
           channel: activeConversation.channel ?? "internal",
           sub_organization_id: activeConversation.sub_organization_id,
-          organization_id: activeConversation.organization_id,
         };
 
         await sendMessage(activeConversationId, payload);

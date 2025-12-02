@@ -4,6 +4,26 @@
 export type UUID = string;
 
 // -------------------------------------------------------------
+// SUB-ORGANIZATIONS
+// -------------------------------------------------------------
+export type SubOrganization = {
+  id: UUID;
+  organization_id: UUID;
+  name: string;
+  slug: string;
+  description: string | null;
+  created_at?: string;
+};
+
+export type SubOrganizationUser = {
+  id: UUID;
+  sub_organization_id: UUID;
+  user_id: UUID;
+  role: "admin" | "agent" | "viewer" | string;
+  created_at?: string;
+};
+
+// -------------------------------------------------------------
 // ORGANIZATIONS
 // -------------------------------------------------------------
 export type Organization = {
@@ -11,6 +31,7 @@ export type Organization = {
   name: string;
   logo_url: string | null;
   type: string | null;
+  created_at?: string;
 };
 
 export type OrganizationUser = {
@@ -18,6 +39,7 @@ export type OrganizationUser = {
   organization_id: UUID;
   user_id: UUID;
   role: "owner" | "admin" | "agent";
+  created_at?: string;
 };
 
 // -------------------------------------------------------------
@@ -29,6 +51,7 @@ export type Contact = {
   phone: string;
   name: string | null;
   labels: Record<string, unknown> | null;
+  created_at?: string;
 };
 
 // -------------------------------------------------------------
@@ -44,6 +67,8 @@ export type Conversation = {
   ai_enabled: boolean;
   last_message_at: string | null;
   channel: ConversationChannel;
+  sub_organization_id: UUID | null;
+  created_at?: string;
 };
 
 export type MessageSender = "user" | "bot" | "customer";
@@ -57,6 +82,10 @@ export type Message = {
   media_url: string | null;
   created_at: string;
   channel: ConversationChannel;
+  sub_organization_id: UUID | null;
+  mime_type: string | null;
+  whatsapp_message_id: string | null;
+  wa_received_at: string | null;
 };
 
 // -------------------------------------------------------------
@@ -70,6 +99,7 @@ export type KnowledgeArticle = {
   content: string;
   created_at: string;
   updated_at: string;
+  sub_organization_id: UUID | null;
 };
 
 export type KnowledgeChunk = {
@@ -77,6 +107,8 @@ export type KnowledgeChunk = {
   article_id: UUID;
   chunk: string;
   embedding: number[];
+  created_at?: string;
+  sub_organization_id: UUID | null;
 };
 
 export type UnansweredQuestion = {
@@ -84,6 +116,7 @@ export type UnansweredQuestion = {
   organization_id: UUID;
   question: string;
   occurrences: number;
+  created_at?: string;
 };
 
 // -------------------------------------------------------------
@@ -97,12 +130,15 @@ export type BotPersonality = {
   emoji_usage: boolean;
   gender_voice: string;
   fallback_message: string;
+  sub_organization_id: UUID | null;
 };
 
 export type BotInstruction = {
   id: UUID;
   organization_id: UUID;
   rules: Record<string, unknown>;
+  sub_organization_id: UUID | null;
+  created_at?: string;
 };
 
 // -------------------------------------------------------------
@@ -114,6 +150,7 @@ export type Workflow = {
   name: string;
   description: string | null;
   trigger: Record<string, unknown> | null;
+  created_at?: string;
 };
 
 export type WorkflowStep = {
@@ -121,6 +158,7 @@ export type WorkflowStep = {
   workflow_id: UUID;
   step_order: number;
   action: Record<string, unknown>;
+  created_at?: string;
 };
 
 export type WorkflowLog = {
@@ -146,6 +184,7 @@ export type CampaignStatus =
 export type Campaign = {
   id: UUID;
   organization_id: UUID;
+  sub_organization_id: UUID | null;
   name: string;
   description: string | null;
 
@@ -163,6 +202,7 @@ export type Campaign = {
   sent_count: number;
   failed_count: number;
 
+  created_by: UUID | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -181,6 +221,7 @@ export type CampaignMessageStatus =
 export type CampaignMessage = {
   id: UUID;
   organization_id: UUID;
+  sub_organization_id: UUID | null;
   campaign_id: UUID;
   contact_id: UUID | null;
 
@@ -202,6 +243,7 @@ export type CampaignMessage = {
 export type WhatsappSettings = {
   id: UUID;
   organization_id: UUID;
+  sub_organization_id: UUID | null;
 
   phone_number: string | null;
   api_token: string | null;

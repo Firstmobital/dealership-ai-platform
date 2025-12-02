@@ -84,7 +84,7 @@ export function KnowledgeBaseModule() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 classbKnowledgeArticleassName="text-xl font-semibold text-white">
+          <h1 className="text-xl font-semibold text-white">
             Knowledge Base
           </h1>
           <p className="text-sm text-slate-400">

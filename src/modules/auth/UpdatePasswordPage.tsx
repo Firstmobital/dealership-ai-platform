@@ -26,7 +26,7 @@ export function UpdatePasswordPage() {
     }
   };
 
-  const passwordMismatch = password && confirm && password !== confirm;
+  const passwordMismatch = !!(password && confirm && password !== confirm);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950">

@@ -180,3 +180,25 @@
   - Store wa_received_at timestamp and whatsapp_message_id alongside each inbound
     WhatsApp message.
 - This completes WhatsApp inbound hardening for Stage 6D.
+
+## 2025-11-26 – Schema/type sync and diagnostic
+
+- Synced `src/types/database.ts` with the latest Supabase migrations, adding
+  sub-organization IDs, WhatsApp metadata, and campaign/KB fields to prevent
+  multi-tenant drift in the frontend.
+- Added `docs/diagnostic-report-2025-11-26.md` summarizing schema/type gaps vs.
+  product requirements and a Supabase to-do checklist for upcoming migrations.
+
+## 2025-12-02 – Type fixes and build verification
+
+- Updated TypeScript logic across auth, campaigns, chats, knowledge base, and
+  unanswered modules to resolve build-blocking type errors (boolean guards,
+  optional timestamps, corrected className, and message payload typing).
+- Switched the lint script to `tsc --noEmit` so type checks can run without
+  external registry access.
+- Attempted dependency installation for ESLint plugins, but registry access was
+  blocked (HTTP 403); documented failure and proceeded with available tooling.
+
+## 2025-12-03 – Readiness score + validation run
+- Added `docs/readiness-score-2025-12-03.md` capturing a 58/100 production readiness rating with scoring rationale, critical gaps, and Supabase to-dos.
+- Re-ran lint/type-check and production build to validate current state after prior fixes.

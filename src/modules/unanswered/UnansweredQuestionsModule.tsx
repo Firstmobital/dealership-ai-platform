@@ -123,7 +123,9 @@ export function UnansweredQuestionsModule() {
                     </div>
 
                     <p className="mt-1 text-xs text-slate-400">
-                      {new Date(q.created_at).toLocaleString()}
+                    {q.created_at
+                      ? new Date(q.created_at).toLocaleString()
+                      : "—"}
                     </p>
                   </li>
                 );
@@ -199,7 +201,10 @@ export function UnansweredQuestionsModule() {
                 ID: {selected.id}
               </p>
               <p className="text-xs text-slate-500">
-                Created: {new Date(selected.created_at).toLocaleString()}
+                Created:
+                {selected.created_at
+                  ? new Date(selected.created_at).toLocaleString()
+                  : " —"}
               </p>
             </div>
           )}
