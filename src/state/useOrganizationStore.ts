@@ -2,39 +2,31 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import type { Organization, SubOrganization } from "../types/database";
 
-type OrganizationState = {
-  // Full lists
+export type OrgState = {
   organizations: Organization[];
   subOrganizations: SubOrganization[];
 
-  // Currently active org and sub-org (objects)
   currentOrganization: Organization | null;
   currentSubOrganization: SubOrganization | null;
 
-  // Internal selection IDs to support persistence
   selectedOrganizationId: string | null;
   selectedSubOrganizationId: string | null;
 
-  // Load state
   loading: boolean;
   initialized: boolean;
 
-  /*
-   * Original APIs that the rest of your app already uses
-   */
+  // Legacy API — MUST remain for build
   fetchOrganizations: () => Promise<void>;
   fetchSubOrganizations: (orgId: string) => Promise<void>;
   switchOrganization: (orgId: string | null) => void;
   switchSubOrganization: (subOrgId: string | null) => void;
 
-  /*
-   * New helpers for app startup
-   */
+  // Stage 6E-2 additions
   hydrate: () => void;
   loadAll: () => Promise<void>;
 };
 
-export const useOrganizationStore = create<OrganizationState>((set, get) => ({
+export const useOrganizationStore = create<OrgState>((set, get) => ({
   organizations: [],
   subOrganizations: [],
 
@@ -47,22 +39,16 @@ export const useOrganizationStore = create<OrganizationState>((set, get) => ({
   loading: false,
   initialized: false,
 
-  // ---------------------------------------------------------------------------
-  // Hydrate selection from localStorage (IDs only)
-  // ---------------------------------------------------------------------------
   hydrate: () => {
-    const storedOrgId = localStorage.getItem("selectedOrgId");
-    const storedSubOrgId = localStorage.getItem("selectedSubOrgId");
+    const orgId = localStorage.getItem("selectedOrgId");
+    const subId = localStorage.getItem("selectedSubOrgId");
 
     set({
-      selectedOrganizationId: storedOrgId || null,
-      selectedSubOrganizationId: storedSubOrgId || null,
+      selectedOrganizationId: orgId || null,
+      selectedSubOrganizationId: subId || null,
     });
   },
 
-  // ---------------------------------------------------------------------------
-  // Load everything in one go (for App.tsx startup)
-  // ---------------------------------------------------------------------------
   loadAll: async () => {
     await get().fetchOrganizations();
 
@@ -74,63 +60,48 @@ export const useOrganizationStore = create<OrganizationState>((set, get) => ({
     set({ initialized: true });
   },
 
-  // ---------------------------------------------------------------------------
-  // LOAD ALL ORGANIZATIONS (used all over the app)
-  // ---------------------------------------------------------------------------
   fetchOrganizations: async () => {
     set({ loading: true });
 
-    const { selectedOrganizationId } = get();
-    const storedOrgId =
-      selectedOrganizationId || localStorage.getItem("selectedOrgId");
-
+    // Load all orgs
     const { data, error } = await supabase
       .from("organizations")
       .select("*")
       .order("name", { ascending: true });
 
     if (error) {
-      console.error("[OrgStore] fetchOrganizations error:", error);
+      console.error("[Org] fetchOrganizations error:", error);
       set({ loading: false });
       return;
     }
 
     const orgs = data ?? [];
-    let effectiveOrgId: string | null = storedOrgId ?? null;
 
-    if (!effectiveOrgId && orgs.length > 0) {
-      // if nothing in storage, pick first org
-      effectiveOrgId = orgs[0].id;
-    }
+    // Determine selected org
+    const stored = localStorage.getItem("selectedOrgId");
+    let selectedId = get().selectedOrganizationId || stored;
 
-    const currentOrg =
-      effectiveOrgId ? orgs.find((o) => o.id === effectiveOrgId) ?? null : null;
+    if (!selectedId && orgs.length) selectedId = orgs[0].id;
 
-    if (currentOrg) {
-      localStorage.setItem("selectedOrgId", currentOrg.id);
-    } else {
-      localStorage.removeItem("selectedOrgId");
+    const activeOrg =
+      selectedId ? orgs.find((o) => o.id === selectedId) ?? null : null;
+
+    if (activeOrg) {
+      localStorage.setItem("selectedOrgId", activeOrg.id);
     }
 
     set({
       organizations: orgs,
-      currentOrganization: currentOrg,
-      selectedOrganizationId: currentOrg ? currentOrg.id : null,
+      currentOrganization: activeOrg,
+      selectedOrganizationId: activeOrg ? activeOrg.id : null,
       loading: false,
     });
   },
 
-  // ---------------------------------------------------------------------------
-  // LOAD SUB-ORGS FOR ORG (divisions)
-  // ---------------------------------------------------------------------------
   fetchSubOrganizations: async (orgId: string) => {
     if (!orgId) return;
 
     set({ loading: true });
-
-    const { selectedSubOrganizationId } = get();
-    const storedSubOrgId =
-      selectedSubOrganizationId || localStorage.getItem("selectedSubOrgId");
 
     const { data, error } = await supabase
       .from("sub_organizations")
@@ -139,41 +110,31 @@ export const useOrganizationStore = create<OrganizationState>((set, get) => ({
       .order("name", { ascending: true });
 
     if (error) {
-      console.error("[OrgStore] fetchSubOrganizations error:", error);
+      console.error("[Org] fetchSubOrganizations error:", error);
       set({ loading: false });
       return;
     }
 
     const subs = data ?? [];
-    let effectiveSubOrgId: string | null = storedSubOrgId ?? null;
 
-    if (!effectiveSubOrgId && subs.length > 0) {
-      // if nothing in storage, pick first sub-org for this org
-      effectiveSubOrgId = subs[0].id;
-    }
+    const stored = localStorage.getItem("selectedSubOrgId");
+    let selectedId = get().selectedSubOrganizationId || stored;
 
-    const currentSubOrg =
-      effectiveSubOrgId
-        ? subs.find((s) => s.id === effectiveSubOrgId) ?? null
-        : null;
+    if (!selectedId && subs.length) selectedId = subs[0].id;
 
-    if (currentSubOrg) {
-      localStorage.setItem("selectedSubOrgId", currentSubOrg.id);
-    } else {
-      localStorage.removeItem("selectedSubOrgId");
-    }
+    const active =
+      selectedId ? subs.find((s) => s.id === selectedId) ?? null : null;
+
+    if (active) localStorage.setItem("selectedSubOrgId", active.id);
 
     set({
       subOrganizations: subs,
-      currentSubOrganization: currentSubOrg,
-      selectedSubOrganizationId: currentSubOrg ? currentSubOrg.id : null,
+      currentSubOrganization: active,
+      selectedSubOrganizationId: active ? active.id : null,
       loading: false,
     });
   },
 
-  // ---------------------------------------------------------------------------
-  // SWITCH ACTIVE ORGANIZATION (used in UI switchers)
-  // ---------------------------------------------------------------------------
   switchOrganization: (orgId: string | null) => {
     if (!orgId) {
       localStorage.removeItem("selectedOrgId");
@@ -181,71 +142,47 @@ export const useOrganizationStore = create<OrganizationState>((set, get) => ({
 
       set({
         currentOrganization: null,
-        selectedOrganizationId: null,
-        subOrganizations: [],
         currentSubOrganization: null,
+        selectedOrganizationId: null,
         selectedSubOrganizationId: null,
+        subOrganizations: [],
       });
       return;
     }
 
-    const { organizations } = get();
-    const org = organizations.find((o) => o.id === orgId) ?? null;
+    localStorage.setItem("selectedOrgId", orgId);
 
-    if (!org) {
-      console.warn("[OrgStore] switchOrganization: org not found for id", orgId);
-      return;
-    }
-
-    localStorage.setItem("selectedOrgId", org.id);
-
-    // When org changes, clear current sub-org selection
-    localStorage.removeItem("selectedSubOrgId");
+    const org =
+      get().organizations.find((o) => o.id === orgId) ?? null;
 
     set({
       currentOrganization: org,
-      selectedOrganizationId: org.id,
-      subOrganizations: [],
-      currentSubOrganization: null,
+      selectedOrganizationId: org?.id ?? null,
       selectedSubOrganizationId: null,
+      currentSubOrganization: null,
+      subOrganizations: [],
     });
 
-    // Load sub-orgs for the new org
-    get().fetchSubOrganizations(org.id).catch((err) =>
-      console.error("[OrgStore] switchOrganization -> fetchSubOrganizations error:", err)
-    );
+    if (org) {
+      get().fetchSubOrganizations(org.id);
+    }
   },
 
-  // ---------------------------------------------------------------------------
-  // SWITCH ACTIVE SUB-ORGANIZATION (used in SubOrg switcher)
-  // ---------------------------------------------------------------------------
   switchSubOrganization: (subOrgId: string | null) => {
     if (!subOrgId) {
       localStorage.removeItem("selectedSubOrgId");
-      set({
-        currentSubOrganization: null,
-        selectedSubOrganizationId: null,
-      });
+      set({ currentSubOrganization: null, selectedSubOrganizationId: null });
       return;
     }
 
-    const { subOrganizations } = get();
-    const subOrg =
-      subOrganizations.find((s) => s.id === subOrgId) ?? null;
+    localStorage.setItem("selectedSubOrgId", subOrgId);
 
-    if (!subOrg) {
-      console.warn(
-        "[OrgStore] switchSubOrganization: sub org not found for id",
-        subOrgId
-      );
-      return;
-    }
-
-    localStorage.setItem("selectedSubOrgId", subOrg.id);
+    const sub =
+      get().subOrganizations.find((s) => s.id === subOrgId) ?? null;
 
     set({
-      currentSubOrganization: subOrg,
-      selectedSubOrganizationId: subOrg.id,
+      currentSubOrganization: sub,
+      selectedSubOrganizationId: sub?.id ?? null,
     });
   },
 }));
