@@ -1,119 +1,165 @@
+// src/state/useOrganizationStore.ts
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
-import type { Organization, SubOrganization } from "../types/database";
 
-type OrganizationState = {
-  // Parent orgs list
-  organizations: Organization[];
-
-  // Sub-orgs list for the selected parent org
-  subOrganizations: SubOrganization[];
-
-  // Currently active org and sub-org
-  currentOrganization: Organization | null;
-  currentSubOrganization: SubOrganization | null;
-
-  // Load state
-  loading: boolean;
-
-  // ACTIONS
-  fetchOrganizations: () => Promise<void>;
-  fetchSubOrganizations: (organizationId: string) => Promise<void>;
-
-  switchOrganization: (organizationId: string) => void;
-  switchSubOrganization: (subOrgId: string | null) => void;
+export type Organization = {
+  id: string;
+  name: string;
+  created_at: string;
 };
 
-export const useOrganizationStore = create<OrganizationState>((set, get) => ({
-  // -----------------------------
-  // DEFAULT STATE
-  // -----------------------------
-  organizations: [],
-  subOrganizations: [],
-  currentOrganization: null,
-  currentSubOrganization: null,
-  loading: false,
+export type Division = {
+  id: string;
+  name: string;
+  organization_id: string;
+  created_at: string;
+};
 
-  // -----------------------------
-  // LOAD PARENT ORGANIZATIONS ONLY
-  // -----------------------------
-  fetchOrganizations: async () => {
+type OrgState = {
+  organizations: Organization[];
+  divisions: Division[];
+
+  selectedOrgId: string | null;
+  selectedDivisionId: string | null;
+
+  loading: boolean;
+  initialized: boolean;
+
+  hydrate: () => void;
+  loadAll: () => Promise<void>;
+  setOrg: (id: string) => void;
+  setDivision: (id: string) => void;
+
+  currentOrg: () => Organization | null;
+  currentDivision: () => Division | null;
+
+  divisionsForSelectedOrg: () => Division[];
+};
+
+export const useOrganizationStore = create<OrgState>((set, get) => ({
+  organizations: [],
+  divisions: [],
+
+  selectedOrgId: null,
+  selectedDivisionId: null,
+
+  loading: false,
+  initialized: false,
+
+  /* ----------------------------------------------------------
+   *  (1) HYDRATE STORE FROM LOCALSTORAGE
+   * -------------------------------------------------------- */
+  hydrate: () => {
+    const storedOrg = localStorage.getItem("selectedOrgId");
+    const storedDiv = localStorage.getItem("selectedDivisionId");
+
+    set({
+      selectedOrgId: storedOrg || null,
+      selectedDivisionId: storedDiv || null,
+    });
+  },
+
+  /* ----------------------------------------------------------
+   *  (2) LOAD ORGANIZATIONS + DIVISIONS
+   * -------------------------------------------------------- */
+  loadAll: async () => {
     set({ loading: true });
 
-    const { data, error } = await supabase
+    // Load organizations (multi-tenant)
+    const { data: orgs, error: orgErr } = await supabase
       .from("organizations")
       .select("*")
-      .order("name");
+      .order("name", { ascending: true });
 
-    if (error) {
-      console.error("[ORG] Error fetching organizations:", error);
-      set({ loading: false });
-      return;
-    }
-
-    const firstOrg = data?.[0] ?? null;
-
-    set({
-      organizations: data ?? [],
-      currentOrganization: firstOrg,
-      loading: false,
-    });
-
-    // Load sub-orgs for the default selected org
-    if (firstOrg) {
-      get().fetchSubOrganizations(firstOrg.id);
-    }
-  },
-
-  // -----------------------------
-  // LOAD SUB-ORGANIZATIONS FOR SELECTED ORG
-  // -----------------------------
-  fetchSubOrganizations: async (organizationId: string) => {
-    const { data, error } = await supabase
-      .from("sub_organizations")
+    // Load divisions (sub-orgs)
+    const { data: divs, error: divErr } = await supabase
+      .from("divisions")
       .select("*")
-      .eq("organization_id", organizationId)
-      .order("name");
+      .order("name", { ascending: true });
 
-    if (error) {
-      console.error("[SUB-ORG] Error loading sub organizations:", error);
-      return;
+    set({ organizations: orgs ?? [], divisions: divs ?? [] });
+
+    const state = get();
+
+    /* ----------------------------------------------------------
+     *  (A) AUTO-SELECT FIRST ORG IF NONE SELECTED
+     * -------------------------------------------------------- */
+    if (!state.selectedOrgId && orgs?.length) {
+      const firstOrg = orgs[0].id;
+      localStorage.setItem("selectedOrgId", firstOrg);
+      set({ selectedOrgId: firstOrg });
     }
 
-    set({
-      subOrganizations: data ?? [],
-      currentSubOrganization: null, // reset on load
-    });
+    /* ----------------------------------------------------------
+     *  (B) AUTO-SELECT DIVISION BELONGING TO CURRENT ORG
+     * -------------------------------------------------------- */
+    const newState = get();
+    const divisionsForThisOrg = divs?.filter(
+      (d) => d.organization_id === newState.selectedOrgId
+    );
+
+    if (divisionsForThisOrg && divisionsForThisOrg.length > 0) {
+      const stored = localStorage.getItem("selectedDivisionId");
+
+      const stillValid = divisionsForThisOrg.some((d) => d.id === stored);
+
+      if (!stored || !stillValid) {
+        const fallback = divisionsForThisOrg[0].id;
+        localStorage.setItem("selectedDivisionId", fallback);
+        set({ selectedDivisionId: fallback });
+      }
+    } else {
+      // org has zero divisions — clear division selection
+      set({ selectedDivisionId: null });
+      localStorage.removeItem("selectedDivisionId");
+    }
+
+    set({ loading: false, initialized: true });
   },
 
-  // -----------------------------
-  // SWITCH ACTIVE ORGANIZATION
-  // -----------------------------
-  switchOrganization: (organizationId: string) => {
-    const org = get().organizations.find((o) => o.id === organizationId) ?? null;
+  /* ----------------------------------------------------------
+   *  (3) SELECT ORGANIZATION
+   * -------------------------------------------------------- */
+  setOrg: (id) => {
+    localStorage.setItem("selectedOrgId", id);
+    set({ selectedOrgId: id });
 
-    set({
-      currentOrganization: org,
-      currentSubOrganization: null, // reset sub-org
-    });
+    // Auto-update divisions
+    const divs = get().divisions.filter((d) => d.organization_id === id);
 
-    if (org) {
-      get().fetchSubOrganizations(org.id);
+    if (divs.length > 0) {
+      localStorage.setItem("selectedDivisionId", divs[0].id);
+      set({ selectedDivisionId: divs[0].id });
+    } else {
+      set({ selectedDivisionId: null });
+      localStorage.removeItem("selectedDivisionId");
     }
   },
 
-  // -----------------------------
-  // SWITCH ACTIVE SUB-ORGANIZATION
-  // -----------------------------
-  switchSubOrganization: (subOrgId: string | null) => {
-    if (!subOrgId) {
-      set({ currentSubOrganization: null });
-      return;
-    }
+  /* ----------------------------------------------------------
+   *  (4) SELECT DIVISION
+   * -------------------------------------------------------- */
+  setDivision: (id) => {
+    localStorage.setItem("selectedDivisionId", id);
+    set({ selectedDivisionId: id });
+  },
 
-    const subOrg =
-      get().subOrganizations.find((s) => s.id === subOrgId) ?? null;
+  /* ----------------------------------------------------------
+   *  (5) GETTERS
+   * -------------------------------------------------------- */
+  currentOrg: () => {
+    const { organizations, selectedOrgId } = get();
+    return organizations.find((o) => o.id === selectedOrgId) || null;
+  },
 
-    set({ currentSubOrganization: subOrg });
+  currentDivision: () => {
+    const { divisions, selectedDivisionId } = get();
+    return divisions.find((d) => d.id === selectedDivisionId) || null;
+  },
+
+  divisionsForSelectedOrg: () => {
+    const { divisions, selectedOrgId } = get();
+    if (!selectedOrgId) return [];
+    return divisions.filter((d) => d.organization_id === selectedOrgId);
   },
 }));
