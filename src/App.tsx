@@ -20,7 +20,6 @@ import { ResetPasswordPage } from "./modules/auth/ResetPasswordPage";
 import { UpdatePasswordPage } from "./modules/auth/UpdatePasswordPage";
 
 import { useAuthStore } from "./state/useAuthStore";
-import { useOrganizationStore } from "./state/useOrganizationStore";
 
 
 function FullScreenLoader() {
@@ -58,14 +57,6 @@ function RequireAuth({ children }: { children: ReactElement }) {
 }
 
 function App() {
-  const orgStore = useOrganizationStore();
-
-  useEffect(() => {
-    // Hydrate from localStorage, then load from Supabase
-    orgStore.hydrate();
-    orgStore.loadAll(); // or loadOrganizations() if that's the name in your store
-  }, []);
-  return (
     <Routes>
       {/* ----------------------------- Auth routes ---------------------------- */}
       <Route path="/auth/login" element={<LoginPage />} />
