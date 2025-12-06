@@ -2,71 +2,102 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import type { Organization, SubOrganization } from "../types/database";
 
-type OrganizationState = {
-  // Parent orgs list
+export type OrgState = {
   organizations: Organization[];
-
-  // Sub-orgs list for the selected parent org
   subOrganizations: SubOrganization[];
 
-  // Currently active org and sub-org
   currentOrganization: Organization | null;
   currentSubOrganization: SubOrganization | null;
 
-  // Load state
+  selectedOrganizationId: string | null;
+  selectedSubOrganizationId: string | null;
+
   loading: boolean;
+  initialized: boolean;
 
-  /*
-   * Load all orgs where user is a member
-   */
+  // Legacy API — MUST remain for build
   fetchOrganizations: () => Promise<void>;
-
-  /*
-   * Load sub-orgs (divisions) for selected organization
-   */
   fetchSubOrganizations: (orgId: string) => Promise<void>;
-
-  /*
-   * Switch active parent organization
-   */
   switchOrganization: (orgId: string | null) => void;
-
-  /*
-   * Switch active sub-organization
-   */
   switchSubOrganization: (subOrgId: string | null) => void;
+
+  // Stage 6E-2 additions
+  hydrate: () => void;
+  loadAll: () => Promise<void>;
 };
 
-export const useOrganizationStore = create<OrganizationState>((set, get) => ({
+export const useOrganizationStore = create<OrgState>((set, get) => ({
   organizations: [],
   subOrganizations: [],
 
   currentOrganization: null,
   currentSubOrganization: null,
 
-  loading: false,
+  selectedOrganizationId: null,
+  selectedSubOrganizationId: null,
 
-  // -----------------------------
-  // LOAD ALL ORGANIZATIONS
-  // -----------------------------
+  loading: false,
+  initialized: false,
+
+  hydrate: () => {
+    const orgId = localStorage.getItem("selectedOrgId");
+    const subId = localStorage.getItem("selectedSubOrgId");
+
+    set({
+      selectedOrganizationId: orgId || null,
+      selectedSubOrganizationId: subId || null,
+    });
+  },
+
+  loadAll: async () => {
+    await get().fetchOrganizations();
+
+    const org = get().currentOrganization;
+    if (org) {
+      await get().fetchSubOrganizations(org.id);
+    }
+
+    set({ initialized: true });
+  },
+
   fetchOrganizations: async () => {
     set({ loading: true });
 
+    // Load all orgs
     const { data, error } = await supabase
       .from("organizations")
       .select("*")
       .order("name", { ascending: true });
 
-    if (!error && data) {
-      set({ organizations: data });
+    if (error) {
+      console.error("[Org] fetchOrganizations error:", error);
+      set({ loading: false });
+      return;
     }
 
-    set({ loading: false });
+    const orgs = data ?? [];
+
+    // Determine selected org
+    const stored = localStorage.getItem("selectedOrgId");
+    let selectedId = get().selectedOrganizationId || stored;
+
+    if (!selectedId && orgs.length) selectedId = orgs[0].id;
+
+    const activeOrg =
+      selectedId ? orgs.find((o) => o.id === selectedId) ?? null : null;
+
+    if (activeOrg) {
+      localStorage.setItem("selectedOrgId", activeOrg.id);
+    }
+
+    set({
+      organizations: orgs,
+      currentOrganization: activeOrg,
+      selectedOrganizationId: activeOrg ? activeOrg.id : null,
+      loading: false,
+    });
   },
 
-  // -----------------------------
-  // LOAD SUB-ORGS FOR ORG
-  // -----------------------------
   fetchSubOrganizations: async (orgId: string) => {
     if (!orgId) return;
 
@@ -78,47 +109,80 @@ export const useOrganizationStore = create<OrganizationState>((set, get) => ({
       .eq("organization_id", orgId)
       .order("name", { ascending: true });
 
-    if (!error && data) {
-      set({ subOrganizations: data });
+    if (error) {
+      console.error("[Org] fetchSubOrganizations error:", error);
+      set({ loading: false });
+      return;
     }
 
-    set({ loading: false });
+    const subs = data ?? [];
+
+    const stored = localStorage.getItem("selectedSubOrgId");
+    let selectedId = get().selectedSubOrganizationId || stored;
+
+    if (!selectedId && subs.length) selectedId = subs[0].id;
+
+    const active =
+      selectedId ? subs.find((s) => s.id === selectedId) ?? null : null;
+
+    if (active) localStorage.setItem("selectedSubOrgId", active.id);
+
+    set({
+      subOrganizations: subs,
+      currentSubOrganization: active,
+      selectedSubOrganizationId: active ? active.id : null,
+      loading: false,
+    });
   },
 
-  // -----------------------------
-  // SWITCH ACTIVE ORGANIZATION
-  // -----------------------------
   switchOrganization: (orgId: string | null) => {
     if (!orgId) {
+      localStorage.removeItem("selectedOrgId");
+      localStorage.removeItem("selectedSubOrgId");
+
       set({
         currentOrganization: null,
-        subOrganizations: [],
         currentSubOrganization: null,
+        selectedOrganizationId: null,
+        selectedSubOrganizationId: null,
+        subOrganizations: [],
       });
       return;
     }
 
+    localStorage.setItem("selectedOrgId", orgId);
+
     const org =
       get().organizations.find((o) => o.id === orgId) ?? null;
 
-    set({ currentOrganization: org });
+    set({
+      currentOrganization: org,
+      selectedOrganizationId: org?.id ?? null,
+      selectedSubOrganizationId: null,
+      currentSubOrganization: null,
+      subOrganizations: [],
+    });
 
-    // Reset active sub-org when org changes
-    set({ currentSubOrganization: null });
+    if (org) {
+      get().fetchSubOrganizations(org.id);
+    }
   },
 
-  // -----------------------------
-  // SWITCH ACTIVE SUB-ORGANIZATION
-  // -----------------------------
   switchSubOrganization: (subOrgId: string | null) => {
     if (!subOrgId) {
-      set({ currentSubOrganization: null });
+      localStorage.removeItem("selectedSubOrgId");
+      set({ currentSubOrganization: null, selectedSubOrganizationId: null });
       return;
     }
 
-    const subOrg =
+    localStorage.setItem("selectedSubOrgId", subOrgId);
+
+    const sub =
       get().subOrganizations.find((s) => s.id === subOrgId) ?? null;
 
-    set({ currentSubOrganization: subOrg });
+    set({
+      currentSubOrganization: sub,
+      selectedSubOrganizationId: sub?.id ?? null,
+    });
   },
 }));
