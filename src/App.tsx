@@ -57,6 +57,7 @@ function RequireAuth({ children }: { children: ReactElement }) {
 }
 
 function App() {
+  return (
     <Routes>
       {/* ----------------------------- Auth routes ---------------------------- */}
       <Route path="/auth/login" element={<LoginPage />} />
