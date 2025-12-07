@@ -203,3 +203,4 @@ language sql stable as $$
   order by kc.embedding <=> query_embedding
   limit match_count;
 $$;
+

@@ -22,3 +22,4 @@
 - [ ] Add indexes supporting org + sub-org filters on high-volume tables (messages, conversations, knowledge_chunks).
 - [ ] Confirm `whatsapp_message_id` uniqueness and wa_received_at ingestion in production data; backfill if needed.
 - [ ] Add workflow tables/triggers to support automation engine once designed.
+

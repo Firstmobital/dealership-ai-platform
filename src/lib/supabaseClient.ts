@@ -9,3 +9,5 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     storageKey: 'dealership-ai-session'
   }
 });
+
+

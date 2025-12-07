@@ -441,3 +441,4 @@ begin
 end$$;
 
 -- NOTE: Campaign RLS is already defined in 20251119071202_add_campaigns_and_campaign_messages.sql
+

@@ -10,3 +10,4 @@ alter table public.messages
 create unique index if not exists uniq_messages_whatsapp_message_id
   on public.messages (whatsapp_message_id)
   where whatsapp_message_id is not null;
+

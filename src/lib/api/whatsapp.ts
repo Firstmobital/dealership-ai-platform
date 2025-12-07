@@ -89,3 +89,5 @@ export async function upsertWhatsappSettings(
     is_active: data.is_active ?? true,
   } as WhatsappSettings;
 }
+
+

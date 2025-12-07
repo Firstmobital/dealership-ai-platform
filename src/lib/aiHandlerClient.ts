@@ -27,3 +27,4 @@ export async function sendToAiHandler(
   // You can tighten this type if you like
   return data as AiHandlerResponse;
 }
+

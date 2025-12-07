@@ -22,3 +22,7 @@ This report reconciles the product definition with the current codebase and high
 - [ ] Verify all tables touched by `sub_organization_id` have matching RLS policies and indexes for org+sub-org access.
 - [ ] Confirm Edge Functions (`ai-handler`, `whatsapp-*`, campaigns) require `sub_organization_id` inputs and validate org membership.
 - [ ] Re-run type generation or manual sync after future migrations to keep `src/types/database.ts` accurate.
+
+
+
+

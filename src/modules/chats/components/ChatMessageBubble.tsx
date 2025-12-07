@@ -120,3 +120,5 @@ export function ChatMessageBubble({ message }: { message: Message }) {
     </div>
   );
 }
+
+

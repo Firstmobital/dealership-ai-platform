@@ -24,3 +24,4 @@ export function SidebarLink({ to, icon: Icon, label }: SidebarLinkProps) {
     </NavLink>
   );
 }
+

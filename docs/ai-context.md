@@ -49,3 +49,4 @@ All major entities include an `organization_id` foreign key, enabling multi-ente
 - Live typing indicators.
 - Sales analytics dashboards.
 
+

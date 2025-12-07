@@ -4,3 +4,4 @@
 
 alter table public.messages
   add column if not exists mime_type text;
+

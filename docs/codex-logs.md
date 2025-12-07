@@ -226,3 +226,4 @@ and Supabase to-dos.
 - Cleaned up local code by deleting `supabase/functions/whatsapp-webhook`.
 
 Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `whatsapp-inbound` → `ai-handler`.
+
