@@ -308,8 +308,8 @@ export function ChatsModule() {
       <div className="flex h-full w-full gap-5">
 
         {/* LEFT PANEL */}
-        <div className="flex h-full w-80 flex-col rounded-2xl border border-gray-200 bg-white shadow-md dark:border-white/10 dark:bg-slate-900/80">
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-white/10">
+        <div className="flex h-full w-80 flex-col rounded-2xl border border-slate-200 bg-white shadow-md dark:border-white/10 dark:bg-slate-900/80">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-white/10">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
               <MessageCircle size={16} />
               Conversations
@@ -318,7 +318,7 @@ export function ChatsModule() {
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as any)}
-              className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-slate-600 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 dark:border-white/10 dark:bg-slate-900 dark:text-slate-300"
             >
               <option value="all">All</option>
               <option value="unassigned">Unassigned</option>
@@ -344,7 +344,7 @@ export function ChatsModule() {
         </div>
 
         {/* RIGHT PANEL */}
-        <div className="flex flex-1 flex-col rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70 overflow-hidden">
+        <div className="flex flex-1 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-slate-900/70 overflow-hidden">
           {!activeConversationId ? (
             <div className="flex flex-1 items-center justify-center text-slate-500 dark:text-slate-400">
               Select a conversation
@@ -352,7 +352,7 @@ export function ChatsModule() {
           ) : (
             <>
               {/* HEADER */}
-              <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-white/10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/10">
                 <div className="flex flex-col gap-1">
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -418,7 +418,7 @@ export function ChatsModule() {
               {/* INPUT BAR */}
               <form
                 onSubmit={handleSend}
-                className="border-t border-gray-200 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900 shadow-sm"
+                className="border-t border-slate-200 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900 shadow-sm"
               >
                 <div className="flex items-center gap-3">
                   <label className="flex cursor-pointer items-center justify-center rounded-full border border-slate-300 bg-slate-50 p-2 text-slate-600 hover:bg-slate-100 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200">
