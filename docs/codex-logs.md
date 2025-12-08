@@ -227,3 +227,14 @@ and Supabase to-dos.
 
 Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `whatsapp-inbound` → `ai-handler`.
 
+## 2025-12-08 – KB ingestion fixed in production
+
+- Root cause: production `knowledge_chunks` table was in a broken legacy state (wrong columns/FK, partial migrations).
+- Actions:
+  - Added rebuild migration to drop and recreate `knowledge_chunks` with `embedding vector(1536)` and IVFFLAT index.
+  - Cleaned up RLS for `knowledge_chunks`, allowing full `service_role` access.
+  - Updated `ai-generate-kb` to log and return real Supabase errors for chunk insertion.
+  - Verified with curl: ai-generate-kb now returns `success: true`, creates article + chunks.
+- Result:
+  - Knowledge Base text ingestion works end-to-end in production.
+  - Chat AI can now use KB articles for answers.

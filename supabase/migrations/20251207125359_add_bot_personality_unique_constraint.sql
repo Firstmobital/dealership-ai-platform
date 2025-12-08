@@ -15,4 +15,3 @@ ALTER TABLE bot_instructions
 ALTER TABLE bot_instructions
   ADD CONSTRAINT bot_instructions_org_suborg_key
   UNIQUE (organization_id, sub_organization_id);
-

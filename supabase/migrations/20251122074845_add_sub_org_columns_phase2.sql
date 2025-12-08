@@ -171,4 +171,3 @@ from public.sub_organizations so
 where ws.organization_id = so.organization_id
   and so.slug = 'general'
   and ws.sub_organization_id is null;
-

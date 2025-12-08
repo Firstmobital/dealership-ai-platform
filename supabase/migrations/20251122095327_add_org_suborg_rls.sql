@@ -854,4 +854,3 @@ on public.whatsapp_settings
 for all
 using (auth.role() = 'service_role')
 with check (auth.role() = 'service_role');
-

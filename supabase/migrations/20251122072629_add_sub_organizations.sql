@@ -29,4 +29,3 @@ create table public.sub_organization_users (
 
 comment on table public.sub_organization_users is
   'Links users to sub-organizations with a role (admin / agent / etc).';
-

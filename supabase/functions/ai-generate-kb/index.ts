@@ -438,26 +438,35 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     // Insert chunks
-    const records = chunks.map((chunk, i) => ({
-      article_id: article.id,
-      chunk,
-      embedding: vectors[i],
-    }));
+    // Insert chunks
+const records = chunks.map((chunk, i) => ({
+  article_id: article.id,
+  chunk,
+  embedding: vectors[i],
+}));
 
-    const chunkInsert = await safeSupabase<any>(
-      logger,
-      "knowledge_chunks.insert",
-      () => supabase.from("knowledge_chunks").insert(records)
-    );
+const { error: chunkError } = await supabase
+  .from("knowledge_chunks")
+  .insert(records);
 
-    if (!chunkInsert) {
-      return cors(
-        new Response(JSON.stringify({ error: "Failed to insert chunks", request_id }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        })
-      );
-    }
+if (chunkError) {
+  logger.error("KB_CHUNKS_INSERT_ERROR", { error: chunkError, article_id: article.id });
+
+  return cors(
+    new Response(
+      JSON.stringify({
+        error: "Failed to insert chunks",
+        details: chunkError,
+        request_id,
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    )
+  );
+}
+
 
     logger.info("KB article created", { article_id: article.id, chunks: records.length });
 

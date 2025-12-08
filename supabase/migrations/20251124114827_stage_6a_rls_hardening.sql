@@ -574,4 +574,3 @@ with check (
       and ou.user_id = auth.uid()
   )
 );
-

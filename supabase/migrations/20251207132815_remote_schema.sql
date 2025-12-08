@@ -144,7 +144,3 @@ using ((bucket_id = 'knowledge-base'::text));
   for update
   to authenticated
 using ((bucket_id = 'knowledge-base'::text));
-
-
-
-

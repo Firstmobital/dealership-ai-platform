@@ -110,4 +110,3 @@ WITH CHECK (
       AND ou.organization_id = bot_instructions.organization_id
   )
 );
-

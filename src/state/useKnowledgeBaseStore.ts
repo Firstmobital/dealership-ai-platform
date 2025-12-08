@@ -66,8 +66,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .order("created_at", { ascending: false });
 
       if (activeSubOrg) {
+        // division-specific KB
         query = query.eq("sub_organization_id", activeSubOrg.id);
       } else {
+        // org-level KB only
         query = query.is("sub_organization_id", null);
       }
 
@@ -112,11 +114,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
 
   /**
    * Create a knowledge article from raw text.
-   * We delegate chunking + embeddings to the `ai-generate-kb` edge function.
-   * - `content` here is the full raw text.
-   * - The function is responsible for:
-   *    - generating an abstract/short summary and storing in `knowledge_articles.content`
-   *    - inserting detailed chunks into `knowledge_chunks`.
+   * Delegates chunking + embeddings to the `ai-generate-kb` edge function.
    */
   createArticleFromText: async ({ title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -229,13 +227,13 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
             file_path: path,
             mime_type: file.type || null,
           },
-        }
+        },
       );
 
       if (invokeError) {
         console.error(
           "[KB] createArticleFromFile invoke error:",
-          invokeError
+          invokeError,
         );
         set({
           uploading: false,
@@ -264,8 +262,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /**
-   * Delete a knowledge article and (optionally) its chunks.
-   * We assume a DB ON DELETE CASCADE or a helper RPC will remove chunks.
+   * Delete a knowledge article.
+   * We rely on ON DELETE CASCADE or DB-side cleanup for chunks.
    */
   deleteArticle: async (articleId: string) => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -305,4 +303,3 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     }
   },
 }));
-

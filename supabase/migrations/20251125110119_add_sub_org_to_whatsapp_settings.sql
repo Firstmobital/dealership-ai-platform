@@ -7,4 +7,3 @@ alter table whatsapp_settings
 -- One settings row per (organization_id, sub_organization_id)
 create unique index if not exists uniq_whatsapp_settings_scope
   on whatsapp_settings (organization_id, sub_organization_id);
-
