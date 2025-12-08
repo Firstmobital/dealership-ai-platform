@@ -16,6 +16,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.51.5",
+    "react-hot-toast": "^2.6.0",
     "react-router-dom": "^6.22.3",
     "zustand": "^4.5.2"
   },
@@ -23,13 +24,13 @@
     "@types/node": "^20.12.7",
     "@types/react": "^18.2.21",
     "@types/react-dom": "^18.2.7",
-    "@vitejs/plugin-react": "^4.2.1",
     "@typescript-eslint/eslint-plugin": "^7.17.0",
     "@typescript-eslint/parser": "^7.17.0",
+    "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
     "eslint": "^8.57.0",
-    "eslint-plugin-react": "^7.34.1",
     "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react": "^7.34.1",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
     "postcss": "^8.4.38",
@@ -38,4 +39,3 @@
     "vite": "^5.4.21"
   }
 }
-
