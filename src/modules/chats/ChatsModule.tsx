@@ -1,5 +1,5 @@
 // src/modules/chats/ChatsModule.tsx
-// FINAL VERSION – WITH TYPING INDICATOR + ANIMATIONS + JOYZ UI
+// FINAL FIXED VERSION – WORKS ON VERCEL
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -20,10 +20,12 @@ import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
 import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { ChatSidebarItem } from "./components/ChatSidebarItem";
-import type { Message } from "../../types/database";
+
+import type { Message, Conversation } from "../../types/database";
 
 import { supabase } from "../../lib/supabaseClient";
 
+// Contact in header
 type HeaderContact = {
   name: string | null;
   phone: string | null;
@@ -50,36 +52,34 @@ export function ChatsModule() {
 
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
-
   const subOrgKey = activeSubOrg?.id ?? "__no_suborg__";
 
-  const [headerContact, setHeaderContact] = useState<HeaderContact | null>(null);
+  const [headerContact, setHeaderContact] =
+    useState<HeaderContact | null>(null);
   const [headerLoading, setHeaderLoading] = useState(false);
 
   const [sending, setSending] = useState(false);
 
-  /** NEW: Typing indicator state */
+  /** FIXED: Timeout type — Vercel-safe */
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isTyping, setIsTyping] = useState(false);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  /* -----------------------------------------------------------
-   * LOAD CONVERSATIONS WHEN ORG OR SUBORG CHANGES
-   * -----------------------------------------------------------*/
+  /* LOAD CONVERSATIONS WHEN ORG/SUBORG CHANGES */
   useEffect(() => {
     if (currentOrganization?.id) {
       fetchConversations(currentOrganization.id).catch(console.error);
     }
   }, [currentOrganization?.id, subOrgKey]);
 
-  /* Reset active conversation when switching divisions */
+  /* RESET ACTIVE ON DIVISION SWITCH */
   useEffect(() => {
     setActiveConversation(null);
   }, [subOrgKey]);
 
-  /* LOAD MESSAGES */
+  /* LOAD MESSAGES WHEN CONVERSATION CHANGES */
   useEffect(() => {
     if (!activeConversationId) return;
 
@@ -89,7 +89,7 @@ export function ChatsModule() {
     }
   }, [activeConversationId, messages]);
 
-  /* AUTO SCROLL */
+  /* AUTOMATIC SCROLLING */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -100,11 +100,12 @@ export function ChatsModule() {
     if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  /* WHEN BOT SENDS A MESSAGE → STOP TYPING INDICATOR */
+  /* STOP TYPING WHEN BOT MESSAGE ARRIVES */
   useEffect(() => {
     if (!activeConversationId) return;
+
     const msgs = messages[activeConversationId];
-    if (!msgs || msgs.length === 0) return;
+    if (!msgs?.length) return;
 
     const last = msgs[msgs.length - 1];
     if (last.sender === "bot") {
@@ -113,65 +114,61 @@ export function ChatsModule() {
     }
   }, [messages, activeConversationId]);
 
-  /* LOAD CONTACT DETAILS */
+  /* LOAD CONTACT INFO */
   useEffect(() => {
     async function load() {
-      if (!activeConversationId) {
-        setHeaderContact(null);
-        return;
-      }
+      if (!activeConversationId) return setHeaderContact(null);
 
       const conv = conversations.find((c) => c.id === activeConversationId);
-      if (!conv?.contact_id) return;
+      if (!conv?.contact_id) return setHeaderContact(null);
 
-      try {
-        setHeaderLoading(true);
-        const { data } = await supabase
-          .from("contacts")
-          .select("name, phone")
-          .eq("id", conv.contact_id)
-          .maybeSingle();
+      setHeaderLoading(true);
 
-        setHeaderContact({
-          name: data?.name ?? null,
-          phone: data?.phone ?? null,
-        });
-      } finally {
-        setHeaderLoading(false);
-      }
+      const { data } = await supabase
+        .from("contacts")
+        .select("name, phone")
+        .eq("id", conv.contact_id)
+        .maybeSingle();
+
+      setHeaderContact({
+        name: data?.name ?? null,
+        phone: data?.phone ?? null,
+      });
+
+      setHeaderLoading(false);
     }
 
     load();
   }, [activeConversationId]);
 
-  /* CHANNEL BADGE */
+  /* CHANNEL BADGE UI */
   const ChannelBadge = () => {
-    if (!activeConversationId) return null;
     const conv = conversations.find((c) => c.id === activeConversationId);
     if (!conv) return null;
 
     if (conv.channel === "whatsapp")
       return (
-        <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700 dark:bg-green-900/40 dark:text-green-300">
+        <span className="rounded-full bg-green-100 px-2 py-0.5 text-[11px] text-green-700 dark:bg-green-900/40 dark:text-green-300">
           WhatsApp
         </span>
       );
+
     if (conv.channel === "web")
       return (
-        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
           Web
         </span>
       );
 
     return (
-      <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+      <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">
         Internal
       </span>
     );
   };
 
   /* -----------------------------------------------------------
-   * SEND MESSAGE (text/media)
+   * SEND MESSAGE (TEXT + MEDIA + TYPING INDICATOR)
    * -----------------------------------------------------------*/
   const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -187,13 +184,13 @@ export function ChatsModule() {
     if (!text && !file) return;
     setSending(true);
 
-    /** NEW → Show “Agent is typing…” immediately */
+    /** Enable typing indicator visually */
     setIsTyping(true);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000);
 
     try {
-      /* ------------------------- WHATSAPP ------------------------- */
+      /* WHATSAPP SEND FLOW */
       if (conv.channel === "whatsapp") {
         let url: string | null = null;
         let msgType = "text";
@@ -233,7 +230,11 @@ export function ChatsModule() {
         await fetchMessages(conv.id);
 
         if (headerContact?.phone) {
-          const body: any = { to: headerContact.phone };
+          const body: any = {
+            organization_id: conv.organization_id,
+            sub_organization_id: conv.sub_organization_id,
+            to: headerContact.phone,
+          };
 
           if (msgType === "image") {
             body.type = "image";
@@ -249,13 +250,10 @@ export function ChatsModule() {
             body.text = text;
           }
 
-          body.organization_id = conv.organization_id;
-          body.sub_organization_id = conv.sub_organization_id;
-
           await supabase.functions.invoke("whatsapp-send", { body });
         }
       }
-      /* ------------------------- INTERNAL/WEB ------------------------- */
+      /* INTERNAL / WEB SEND FLOW */
       else {
         await sendMessage(activeConversationId, {
           text,
@@ -273,7 +271,22 @@ export function ChatsModule() {
   };
 
   /* -----------------------------------------------------------
-   * UI — MAIN
+   * FILTERED CONVERSATIONS  → (Fix for TS error)
+   * -----------------------------------------------------------*/
+  const filteredConversations: Conversation[] = conversations.filter(
+    (conversation: Conversation) => {
+      if (filter === "unassigned") return !conversation.assigned_to;
+      if (filter === "assigned") return Boolean(conversation.assigned_to);
+      if (filter === "bot") return conversation.ai_enabled;
+      if (filter === "whatsapp") return conversation.channel === "whatsapp";
+      if (filter === "web") return conversation.channel === "web";
+      if (filter === "internal") return conversation.channel === "internal";
+      return true;
+    }
+  );
+
+  /* -----------------------------------------------------------
+   * MAIN UI
    * -----------------------------------------------------------*/
 
   if (!currentOrganization) {
@@ -318,7 +331,7 @@ export function ChatsModule() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {filteredConversations.map((c) => (
+            {filteredConversations.map((c: Conversation) => (
               <ChatSidebarItem
                 key={c.id}
                 conversation={c}
