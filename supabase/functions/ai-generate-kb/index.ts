@@ -146,6 +146,7 @@ function chunkText(text: string, maxChars = 1200, maxChunks = 200): string[] {
         current = p;
       }
     }
+
     if (chunks.length > maxChunks) break;
   }
 
@@ -157,7 +158,6 @@ function chunkText(text: string, maxChars = 1200, maxChunks = 200): string[] {
 /* =====================================================================================
    FILE → TEXT EXTRACTION
 ===================================================================================== */
-
 async function extractTextFromFile(
   logger: ReturnType<typeof createLogger>,
   bucket: string,
@@ -169,12 +169,12 @@ async function extractTextFromFile(
 
   const mimeType = mime || (blob as any).type || "application/octet-stream";
 
-  // 1) Plain text
+  // Plain text
   if (mimeType.startsWith("text/")) {
     return await blob.text();
   }
 
-  // 2) Non-text files require OPENAI
+  // Requires OpenAI
   if (!openai) {
     logger.error("OPENAI_REQUIRED_FOR_FILE_EXTRACTION");
     return null;
@@ -191,7 +191,6 @@ async function extractTextFromFile(
 
   const fileForOpenAI = new File([uint8], filename, { type: mimeType });
 
-  // upload file
   let uploaded;
   try {
     uploaded = await openai.files.create({
@@ -203,7 +202,6 @@ async function extractTextFromFile(
     return null;
   }
 
-  // text extraction
   try {
     const resp = await openai.responses.create({
       model: "gpt-4.1-mini",
@@ -213,8 +211,7 @@ async function extractTextFromFile(
           content: [
             {
               type: "input_text",
-              text:
-                "Extract readable text only. No comments. Return up to 20000 characters.",
+              text: "Extract readable text only. No comments. Return up to 20000 characters.",
             },
             { type: "input_file", file_id: uploaded.id },
           ],
@@ -224,12 +221,9 @@ async function extractTextFromFile(
 
     let extracted = "";
     const output = (resp as any).output ?? [];
-
     for (const item of output) {
       for (const c of item.content ?? []) {
-        if (c.type === "output_text") {
-          extracted += c.text.value ?? "";
-        }
+        if (c.type === "output_text") extracted += c.text.value ?? "";
       }
     }
 
@@ -238,41 +232,6 @@ async function extractTextFromFile(
     logger.error("OPENAI_EXTRACTION_ERROR", { error: err });
     return null;
   }
-}
-
-/* =====================================================================================
-   ABSTRACT GENERATION
-===================================================================================== */
-async function generateAbstract(
-  logger: ReturnType<typeof createLogger>,
-  title: string,
-  text: string
-): Promise<string> {
-  if (!openai) {
-    logger.warn("NO_OPENAI_FOR_ABSTRACT");
-    return text.slice(0, 800);
-  }
-
-  const result = await safeOpenAI(logger, {
-    model: "gpt-4o-mini",
-    temperature: 0.3,
-    messages: [
-      {
-        role: "system",
-        content: "Summarize into 5–8 sentences, simple language.",
-      },
-      {
-        role: "user",
-        content: `Title: ${title}\n\nContent:\n${text.slice(0, 6000)}`,
-      },
-    ],
-  });
-
-  if (!result.ok) {
-    return text.slice(0, 800);
-  }
-
-  return result.text?.trim() || text.slice(0, 800);
 }
 
 /* =====================================================================================
@@ -341,6 +300,9 @@ serve(async (req: Request): Promise<Response> => {
 
     let fullText = "";
 
+    /* ============================================
+       SOURCE TYPE = TEXT
+    ============================================ */
     if (sourceType === "text") {
       if (!body.content?.trim()) {
         return cors(
@@ -353,8 +315,13 @@ serve(async (req: Request): Promise<Response> => {
       fullText = body.content.trim();
     }
 
+    /* ============================================
+       SOURCE TYPE = FILE
+    ============================================ */
     if (sourceType === "file") {
-      const { file_bucket, file_path, mime_type } = body;
+      const { file_bucket, file_path, mime_type } =
+        body || {};
+
       if (!file_bucket || !file_path) {
         return cors(
           new Response(
@@ -376,6 +343,9 @@ serve(async (req: Request): Promise<Response> => {
       fullText = text;
     }
 
+    /* ============================================
+       VALIDATE
+    ============================================ */
     if (!fullText.trim()) {
       return cors(
         new Response(JSON.stringify({ error: "Empty content", request_id }), {
@@ -385,10 +355,9 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    // Abstract
-    const abstract = await generateAbstract(logger, title, fullText);
-
-    // Chunk text
+    /* ============================================
+       CHUNKING
+    ============================================ */
     const chunks = chunkText(fullText);
     if (chunks.length === 0) {
       return cors(
@@ -399,18 +368,25 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    // Embeddings
+    /* ============================================
+       EMBEDDINGS
+    ============================================ */
     const vectors = await embedChunks(logger, chunks);
     if (!vectors || vectors.length !== chunks.length) {
       return cors(
-        new Response(JSON.stringify({ error: "Embedding generation failed", request_id }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        })
+        new Response(
+          JSON.stringify({ error: "Embedding generation failed", request_id }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
       );
     }
 
-    // Insert article
+    /* ============================================
+       INSERT ARTICLE — STORE FULL CONTENT
+    ============================================ */
     const article = await safeSupabase<{ id: string }>(
       logger,
       "knowledge_articles.insert",
@@ -422,7 +398,9 @@ serve(async (req: Request): Promise<Response> => {
             sub_organization_id: subOrgId,
             title,
             description: null,
-            content: abstract,
+
+            // ⭐ IMPORTANT: store EXACT full content
+            content: fullText,
           })
           .select("id")
           .single()
@@ -437,38 +415,44 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    // Insert chunks
-    // Insert chunks
-const records = chunks.map((chunk, i) => ({
-  article_id: article.id,
-  chunk,
-  embedding: vectors[i],
-}));
+    /* ============================================
+       INSERT CHUNKS + EMBEDDINGS
+    ============================================ */
+    const records = chunks.map((chunk, i) => ({
+      article_id: article.id,
+      chunk,
+      embedding: vectors[i],
+    }));
 
-const { error: chunkError } = await supabase
-  .from("knowledge_chunks")
-  .insert(records);
+    const { error: chunkError } = await supabase
+      .from("knowledge_chunks")
+      .insert(records);
 
-if (chunkError) {
-  logger.error("KB_CHUNKS_INSERT_ERROR", { error: chunkError, article_id: article.id });
+    if (chunkError) {
+      logger.error("KB_CHUNKS_INSERT_ERROR", {
+        error: chunkError,
+        article_id: article.id,
+      });
 
-  return cors(
-    new Response(
-      JSON.stringify({
-        error: "Failed to insert chunks",
-        details: chunkError,
-        request_id,
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
-    )
-  );
-}
+      return cors(
+        new Response(
+          JSON.stringify({
+            error: "Failed to insert chunks",
+            details: chunkError,
+            request_id,
+          }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      );
+    }
 
-
-    logger.info("KB article created", { article_id: article.id, chunks: records.length });
+    logger.info("KB article created", {
+      article_id: article.id,
+      chunks: records.length,
+    });
 
     return cors(
       new Response(
@@ -483,6 +467,7 @@ if (chunkError) {
     );
   } catch (err) {
     logger.error("FATAL", { error: String(err) });
+
     return cors(
       new Response(JSON.stringify({ error: "Internal Server Error", request_id }), {
         status: 500,
@@ -491,4 +476,3 @@ if (chunkError) {
     );
   }
 });
-
