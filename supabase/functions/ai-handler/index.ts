@@ -724,27 +724,27 @@ serve(async (req: Request): Promise<Response> => {
     -------------------------------------------------------------- */
     async function loadBotPersonality(organizationId: string, subOrgId: string | null) {
       let q = supabase
-      .from("bot_personality")
-      .select("*")
-      .eq("organization_id", organizationId);
-      
+        .from("bot_personality")
+        .select("*")
+        .eq("organization_id", organizationId);
+
       if (subOrgId) {
         q = q.eq("sub_organization_id", subOrgId);
       } else {
         q = q.is("sub_organization_id", null);
       }
-      
-      const { data: sub, error: subErr } = await q.maybeSingle();
+
+      const { data: sub } = await q.maybeSingle();
       if (sub) return sub;
-      
+
       // fallback to org-level
       const { data: org } = await supabase
-      .from("bot_personality")
-      .select("*")
-      .eq("organization_id", organizationId)
-      .is("sub_organization_id", null)
-      .maybeSingle();
-      
+        .from("bot_personality")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .is("sub_organization_id", null)
+        .maybeSingle();
+
       return (
         org ?? {
           fallback_message: "I'm sorry, I don’t have enough information to answer that.",
@@ -754,36 +754,35 @@ serve(async (req: Request): Promise<Response> => {
         }
       );
     }
-    
+
     async function loadBotInstructions(organizationId: string, subOrgId: string | null) {
       let q = supabase
-       .from("bot_instructions")
-       .select("rules")
-       .eq("organization_id", organizationId);
-       
-       if (subOrgId) {
+        .from("bot_instructions")
+        .select("rules")
+        .eq("organization_id", organizationId);
+
+      if (subOrgId) {
         q = q.eq("sub_organization_id", subOrgId);
       } else {
         q = q.is("sub_organization_id", null);
       }
-      
-      const { data: sub, error: subErr } = await q.maybeSingle();
+
+      const { data: sub } = await q.maybeSingle();
       if (sub) return sub;
-      
+
       // fallback to org-level
       const { data: org } = await supabase
-       .from("bot_instructions")
-       .select("rules")
-       .eq("organization_id", organizationId)
-       .is("sub_organization_id", null)
-       .maybeSingle();
-       
-       return org ?? { rules: {} };
-      }
-      
-      const personality = await loadBotPersonality(organizationId, subOrganizationId);
-      const extraInstructions = await loadBotInstructions(organizationId, subOrganizationId);
+        .from("bot_instructions")
+        .select("rules")
+        .eq("organization_id", organizationId)
+        .is("sub_organization_id", null)
+        .maybeSingle();
 
+      return org ?? { rules: {} };
+    }
+
+    const personality = await loadBotPersonality(organizationId, subOrganizationId);
+    const extraInstructions = await loadBotInstructions(organizationId, subOrganizationId);
 
     const fallbackMessage: string =
       personality?.fallback_message ??
@@ -1007,7 +1006,7 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     /* --------------------------------------------------------------
-       6) RAG PIPELINE
+       6) RAG PIPELINE (IMPROVED)
     -------------------------------------------------------------- */
     let contextText = "No relevant dealership knowledge found.";
 
@@ -1019,8 +1018,8 @@ serve(async (req: Request): Promise<Response> => {
           "match_knowledge_chunks",
           {
             query_embedding: embedding,
-            match_count: 20,
-            match_threshold: 0.3,
+            match_count: 10,
+            match_threshold: 0.15,
           },
         );
 
@@ -1059,12 +1058,21 @@ serve(async (req: Request): Promise<Response> => {
             );
 
             if (filtered.length) {
-              contextText = filtered
-                .map(
-                  (m: any) =>
-                    `- ${m.chunk} (score: ${Number(m.similarity).toFixed(2)})`,
+              const top = filtered
+                .sort(
+                  (a: any, b: any) =>
+                    (b.similarity ?? 0) - (a.similarity ?? 0),
                 )
-                .join("\n");
+                .slice(0, 8);
+
+              contextText = top.map((m: any) => m.chunk).join("\n\n");
+
+              scopedLogger.debug("[rag] matches found", {
+                total_matches: matches.length,
+                filtered_matches: filtered.length,
+              });
+            } else {
+              scopedLogger.debug("[rag] matches filtered out by org/suborg");
             }
           }
         } else {
@@ -1076,35 +1084,64 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     /* --------------------------------------------------------------
-       7) Build System Prompt
+       7) Build System Prompt (IMPROVED)
     -------------------------------------------------------------- */
-    const systemPrompt = `You are an AI assistant for an automotive dealership.
-    ORGANIZATION:
-    - Org ID: ${organizationId}
-    - Channel: ${channel}
-    ${
-      subOrganizationId
-      ? `- Division: ${subOrganizationId}`
-      : `- Division: general`
-    }
-    
-    PERSONALITY:
-    ${personaBlock}
-    
-    BOT RULES:
-    ${extraRules}
-    
-    KNOWLEDGE CONTEXT:
-    ${contextText}
-    
-    CONVERSATION HISTORY:
-    ${historyText}
-    
-    GUIDELINES:
-    - Answer only the latest user message.
-    - If unsure, say exactly: "${fallbackMessage}".
-    - WhatsApp replies should be short & simple.
-    `.trim();
+    const systemPrompt = `
+You are Techwheels AI — a professional automotive dealership assistant.
+
+Your job:
+- Use Knowledge Base (KB) context FIRST.
+- Use dealership tone & personality rules.
+- Answer concisely unless the customer asks for more details.
+- Follow bot instructions strictly.
+- Only fall back to the fallback message if no KB chunk is relevant.
+
+------------------------
+DEALERSHIP INFORMATION
+------------------------
+- Organization ID: ${organizationId}
+- Division: ${subOrganizationId || "general"}
+- Channel: ${channel}
+
+------------------------
+PERSONALITY RULES
+------------------------
+${personaBlock || "- Default neutral personality."}
+
+------------------------
+BOT RULES (JSON)
+------------------------
+${extraRules}
+
+------------------------
+KNOWLEDGE CONTEXT (MOST IMPORTANT)
+------------------------
+${contextText}
+
+Use this context as the primary source of truth about:
+- Models, pricing, variants, and offers
+- Dealership timings, location, and services
+- Policies, financing, and processes
+- Any dealership-specific instructions
+
+If multiple KB chunks are relevant, combine them into a single clear answer.
+
+------------------------
+CONVERSATION HISTORY
+------------------------
+${historyText}
+
+------------------------
+FORMATTING & STYLE
+------------------------
+- Always answer the latest customer message.
+- If answering with dealership info (timing, offers, etc.), use short bullet points where helpful.
+- Keep WhatsApp replies short & simple (1–3 sentences max).
+- If the user asks for next steps, suggest clear actions (Call, Visit, Test drive, Book service).
+- If you are not sure and KB is not relevant, say exactly: "${fallbackMessage}".
+
+Respond now to the customer's latest message only.
+`.trim();
 
     scopedLogger.debug("[ai-handler] system prompt built");
 
@@ -1197,4 +1234,3 @@ serve(async (req: Request): Promise<Response> => {
     );
   }
 });
-

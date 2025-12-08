@@ -7,13 +7,85 @@ import {
   Loader2,
   Search,
   Trash2,
-  XCircle,
+  X,
+  Plus,
+  Link,
+  File,
 } from "lucide-react";
+
 import { useKnowledgeBaseStore } from "../../state/useKnowledgeBaseStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import type { KnowledgeArticle } from "../../types/database";
 
+/* -----------------------------------------------------------
+ * AddNewArticleDropdown
+ * -----------------------------------------------------------*/
+function AddNewArticleDropdown({
+  onManual,
+  onUrl,
+  onPdf,
+}: {
+  onManual: () => void;
+  onUrl: () => void;
+  onPdf: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      {/* + New Button */}
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white"
+      >
+        <Plus size={16} />
+        New
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-2 w-40 rounded-md border border-slate-200 bg-white shadow-lg dark:border-white/10 dark:bg-slate-800">
+          <button
+            onClick={() => {
+              setOpen(false);
+              onManual();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <FileText size={16} />
+            Manual
+          </button>
+
+          <button
+            onClick={() => {
+              setOpen(false);
+              onUrl();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <Link size={16} />
+            URL
+          </button>
+
+          <button
+            onClick={() => {
+              setOpen(false);
+              onPdf();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <File size={16} />
+            PDF
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -----------------------------------------------------------
+ * MAIN MODULE
+ * -----------------------------------------------------------*/
 export function KnowledgeBaseModule() {
   const {
     articles,
@@ -33,40 +105,47 @@ export function KnowledgeBaseModule() {
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
 
-  const [textTitle, setTextTitle] = useState("");
-  const [textContent, setTextContent] = useState("");
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualContent, setManualContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  // Load KB when org or sub-org changes
+  /* -----------------------------------------------------------
+   * Load KB on org/sub-org change
+   * -----------------------------------------------------------*/
   useEffect(() => {
     if (!currentOrganization) return;
     fetchArticles().catch(console.error);
     setSelectedArticle(null);
   }, [currentOrganization?.id, activeSubOrg?.id]);
 
-  // TEXT SUBMIT
-  const handleTextSubmit = async (e: React.FormEvent) => {
+  /* -----------------------------------------------------------
+   * Manual submit
+   * -----------------------------------------------------------*/
+  async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!textTitle.trim() || !textContent.trim()) return;
+    if (!manualTitle.trim() || !manualContent.trim()) return;
 
     await createArticleFromText({
-      title: textTitle.trim(),
-      content: textContent.trim(),
+      title: manualTitle.trim(),
+      content: manualContent.trim(),
     });
 
-    setTextTitle("");
-    setTextContent("");
-  };
+    setManualTitle("");
+    setManualContent("");
+    setShowManualForm(false);
+  }
 
-  // FILE SUBMIT
-  const handleFileSubmit = async (e: React.FormEvent) => {
+  /* -----------------------------------------------------------
+   * File upload submit
+   * -----------------------------------------------------------*/
+  async function handleFileSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) return;
 
-    // 🔹 FRONT-END VALIDATION: Only allow .txt
     if (!file.type.startsWith("text/")) {
-      alert("Only .txt files are supported right now. Please convert your PDF/DOCX to .txt and upload again.");
+      alert("Only .txt files are supported for now.");
       return;
     }
 
@@ -76,155 +155,104 @@ export function KnowledgeBaseModule() {
     });
 
     setFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
+    if (fileRef.current) fileRef.current.value = "";
+  }
 
-  // DELETE
-  const handleDelete = async (article: KnowledgeArticle) => {
-    if (!window.confirm(`Delete KB article "${article.title}"?`)) return;
+  /* -----------------------------------------------------------
+   * Delete article
+   * -----------------------------------------------------------*/
+  async function handleDelete(article: KnowledgeArticle) {
+    if (!confirm(`Delete article "${article.title}"?`)) return;
     await deleteArticle(article.id);
     setSelectedArticle(null);
-  };
+  }
 
+  /* -----------------------------------------------------------
+   * UI
+   * -----------------------------------------------------------*/
   return (
-    <div className="flex h-full flex-col px-6 py-6 text-slate-200">
+    <div className="flex h-full flex-col px-6 py-6 text-slate-900 dark:text-slate-200">
 
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+      {/* HEADER ROW --------------------------------------------------- */}
+      <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-white">Knowledge Base</h1>
-          <p className="text-sm text-slate-400">
-            AI reference library. Upload text or files to train the AI.
+          <h1 className="text-xl font-semibold">Knowledge Base</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Your AI training library — manage articles, upload content, and organize knowledge.
           </p>
         </div>
+
+        <AddNewArticleDropdown
+          onManual={() => setShowManualForm(true)}
+          onUrl={() => alert("URL ingestion coming soon")}
+          onPdf={() => alert("PDF ingestion coming soon")}
+        />
       </div>
 
-      {/* Search + Upload */}
-      <div className="mb-6 flex gap-4">
-        
-        {/* Search */}
-        <div className="flex w-1/2 items-center rounded-md border border-slate-700 bg-slate-900 px-3">
-          <Search size={18} className="text-slate-500" />
-          <input
-            type="text"
-            placeholder="Search knowledge..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyUp={() => fetchArticles().catch(console.error)}
-            className="ml-2 w-full bg-transparent py-2 text-sm text-white outline-none"
-          />
-        </div>
-
-        {/* File Upload */}
-        <form onSubmit={handleFileSubmit} className="flex gap-2">
-          <input
-            type="file"
-            // 🔹 NOW ONLY TEXT FILES
-            accept=".txt"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-            ref={fileInputRef}
-            className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-          />
-
-          <button
-            type="submit"
-            disabled={uploading || !file}
-            className="flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {uploading ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <FileUp size={16} />
-            )}
-            Upload
-          </button>
-        </form>
+      {/* SEARCH BAR --------------------------------------------------- */}
+      <div className="mb-4 flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-800">
+        <Search size={18} className="text-slate-500" />
+        <input
+          type="text"
+          placeholder="Search articles..."
+          value={searchTerm}
+          onChange={(e) => {
+            setSearchTerm(e.target.value);
+            fetchArticles().catch(console.error);
+          }}
+          className="ml-2 w-full bg-transparent text-slate-900 placeholder:text-slate-400 outline-none dark:text-white"
+        />
       </div>
 
-      {/* TEXT INGESTION */}
-      <div className="mb-6 rounded-xl border border-slate-700 bg-slate-900 p-4">
-        <h2 className="mb-3 text-sm font-semibold text-white">Add Knowledge from Text</h2>
+      {/* MAIN SPLIT LAYOUT -------------------------------------------- */}
+      <div className="flex h-full gap-4 overflow-hidden">
 
-        <form onSubmit={handleTextSubmit} className="space-y-4">
-          <input
-            type="text"
-            placeholder="Article title"
-            value={textTitle}
-            onChange={(e) => setTextTitle(e.target.value)}
-            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-          />
-
-          <textarea
-            placeholder="Paste text content here..."
-            value={textContent}
-            onChange={(e) => setTextContent(e.target.value)}
-            rows={4}
-            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-          />
-
-          <button
-            type="submit"
-            disabled={uploading}
-            className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          >
-            {uploading ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <FileText size={16} />
-            )}
-            Ingest Text
-          </button>
-        </form>
-      </div>
-
-      {/* LAYOUT */}
-      <div className="flex flex-1 gap-6 overflow-hidden">
-
-        {/* LEFT PANE: Articles */}
-        <div className="w-1/3 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900 p-4">
-          <h2 className="mb-3 text-sm font-semibold text-white">
+        {/* LEFT PANEL — LIST ---------------------------------------- */}
+        <div className="w-[35%] overflow-y-auto rounded-xl border border-slate-300 bg-white p-4 dark:border-white/10 dark:bg-slate-900/60">
+          <h2 className="mb-3 text-sm font-semibold">
             Articles ({articles.length})
           </h2>
 
           {loading ? (
-            <div className="flex items-center gap-2 py-6 text-slate-400">
-              <Loader2 className="animate-spin" size={16} /> Loading...
+            <div className="flex items-center gap-2 py-6 text-slate-500">
+              <Loader2 size={16} className="animate-spin" />
+              Loading articles...
             </div>
           ) : articles.length === 0 ? (
-            <p className="py-6 text-sm text-slate-500">No knowledge articles yet.</p>
+            <p className="py-6 text-sm text-slate-500">
+              No knowledge articles yet.
+            </p>
           ) : (
             <ul className="space-y-3">
-              {articles.map((article) => {
-                const isSelected = selectedArticle?.id === article.id;
+              {articles.map((a) => {
+                const isSelected = selectedArticle?.id === a.id;
 
                 return (
                   <li
-                    key={article.id}
+                    key={a.id}
                     className={`cursor-pointer rounded-md border px-3 py-2 text-sm transition ${
                       isSelected
                         ? "border-accent bg-accent/20 text-accent"
-                        : "border-slate-700 bg-slate-950 hover:bg-slate-800"
+                        : "border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-white/10 dark:bg-slate-950 dark:hover:bg-slate-800"
                     }`}
-                    onClick={() => setSelectedArticle(article)}
+                    onClick={() => setSelectedArticle(a)}
                   >
                     <div className="flex items-center justify-between">
-                      <p className="font-medium">{article.title}</p>
+                      <p className="font-medium">{a.title}</p>
 
                       <button
-                        className="text-slate-400 hover:text-red-400"
+                        className="text-slate-400 hover:text-red-500"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDelete(article);
+                          handleDelete(a);
                         }}
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={15} />
                       </button>
                     </div>
 
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-400">
-                      {article.content}
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
+                      {a.content}
                     </p>
                   </li>
                 );
@@ -233,44 +261,92 @@ export function KnowledgeBaseModule() {
           )}
         </div>
 
-        {/* RIGHT PANE: Preview */}
-        <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-900 p-4">
-          {!selectedArticle ? (
-            <div className="flex flex-1 items-center justify-center text-slate-500">
-              Select an article to view its summary.
-            </div>
-          ) : (
-            <div className="flex flex-col overflow-y-auto">
-              <div className="flex items-start justify-between">
-                <h2 className="text-lg font-semibold text-white">
-                  {selectedArticle.title}
-                </h2>
+        {/* RIGHT PANEL — EDITOR / VIEWER ----------------------------- */}
+        <div className="flex flex-1 flex-col rounded-xl border border-slate-300 bg-white dark:border-white/10 dark:bg-slate-900/60 overflow-hidden">
 
+          {/* If NO ARTICLE SELECTED */}
+          {!selectedArticle && !showManualForm && (
+            <div className="flex flex-1 items-center justify-center text-slate-500 dark:text-slate-400">
+              Select an article or click **New** to add content.
+            </div>
+          )}
+
+          {/* MANUAL CREATION FORM */}
+          {showManualForm && (
+            <div className="flex flex-col h-full overflow-hidden">
+
+              <div className="sticky top-0 flex items-center justify-between border-b border-slate-300 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900">
+                <h2 className="text-lg font-semibold">New Article</h2>
                 <button
-                  onClick={() => setSelectedArticle(null)}
-                  className="text-slate-400 hover:text-slate-200"
+                  onClick={() => setShowManualForm(false)}
+                  className="text-slate-500 hover:text-slate-300"
                 >
-                  <XCircle size={20} />
+                  <X size={20} />
                 </button>
               </div>
 
-              <div className="mt-4 text-sm text-slate-300 whitespace-pre-wrap">
-                {selectedArticle.content || "No summary available."}
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                <form onSubmit={handleManualSubmit} className="space-y-4 max-w-2xl">
+                  <input
+                    type="text"
+                    placeholder="Article title"
+                    value={manualTitle}
+                    onChange={(e) => setManualTitle(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-800 dark:text-white"
+                  />
+
+                  <textarea
+                    placeholder="Enter content..."
+                    value={manualContent}
+                    onChange={(e) => setManualContent(e.target.value)}
+                    rows={12}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-800 dark:text-white"
+                  />
+
+                  <button
+                    type="submit"
+                    className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-white"
+                  >
+                    Save Article
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* SELECTED ARTICLE VIEW */}
+          {selectedArticle && !showManualForm && (
+            <div className="flex flex-col h-full overflow-hidden">
+
+              {/* Sticky Header */}
+              <div className="sticky top-0 flex items-center justify-between border-b border-slate-300 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900">
+                <h2 className="text-lg font-semibold">{selectedArticle.title}</h2>
+                <button
+                  onClick={() => setSelectedArticle(null)}
+                  className="text-slate-500 hover:text-slate-300"
+                >
+                  <X size={20} />
+                </button>
               </div>
 
-              <p className="mt-6 text-xs text-slate-500">
-                ID: {selectedArticle.id}
-              </p>
-              <p className="text-xs text-slate-500">
-                Created: {new Date(selectedArticle.created_at).toLocaleString()}
-              </p>
+              {/* CONTENT */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 text-sm whitespace-pre-wrap dark:text-slate-200">
+                {selectedArticle.content}
+              </div>
+
+              {/* META */}
+              <div className="border-t border-slate-300 px-6 py-3 text-xs text-slate-500 dark:border-white/10 dark:text-slate-400">
+                ID: {selectedArticle.id} <br />
+                Created:{" "}
+                {new Date(selectedArticle.created_at).toLocaleString()}
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {error && <p className="mt-4 text-sm text-red-400">Error: {error}</p>}
+      {/* ERROR MESSAGE */}
+      {error && <p className="mt-4 text-sm text-red-500">Error: {error}</p>}
     </div>
   );
 }
-
