@@ -3,6 +3,7 @@ import { Sparkles, Languages, MessageSquare, Smile, Save } from 'lucide-react';
 import { useOrganizationStore } from '../../state/useOrganizationStore';
 import { useSubOrganizationStore } from '../../state/useSubOrganizationStore';
 import { supabase } from '../../lib/supabaseClient';
+import toast from "react-hot-toast";
 
 const tones = ['Professional', 'Friendly', 'Enthusiastic', 'Conversational'];
 const languages = ['English', 'Hinglish', 'Hindi'];
@@ -108,52 +109,76 @@ export function BotPersonalityModule() {
   /* ------------------------------------------------------------------ */
   const savePersonality = async () => {
     if (!currentOrganization) return;
-
+  
     setLoading(true);
-
+  
     const organizationId = currentOrganization.id;
     const subOrgId = activeSubOrg?.id ?? null;
-
+  
     try {
-      /* SAVE PERSONALITY */
-      const { error: personalityError } = await supabase.from('bot_personality').upsert(
-        {
-          organization_id: organizationId,
-          sub_organization_id: subOrgId,
-          tone: form.tone,
-          language: form.language,
-          short_responses: form.response_length === 'Short',
-          emoji_usage: form.emoji_usage,
-          gender_voice: form.gender_voice,
-          fallback_message: form.fallback_message
-        },
-        {
-          onConflict: 'organization_id,sub_organization_id'
-        }
-      );
-
-      if (personalityError) throw personalityError;
-
-      /* SAVE CUSTOM INSTRUCTIONS */
-      const parsed = JSON.parse(form.instructions || '{}');
-
-      const { error: instructionsError } = await supabase.from('bot_instructions').upsert(
-        {
-          organization_id: organizationId,
-          sub_organization_id: subOrgId,
-          rules: parsed
-        },
-        {
-          onConflict: 'organization_id,sub_organization_id'
-        }
-      );
-
-      if (instructionsError) throw instructionsError;
+      // -----------------------------
+      // SAVE PERSONALITY
+      // -----------------------------
+      const { error: personalityError } = await supabase
+        .from("bot_personality")
+        .upsert(
+          {
+            organization_id: organizationId,
+            sub_organization_id: subOrgId,
+            tone: form.tone,
+            language: form.language,
+            short_responses: form.response_length === "Short",
+            emoji_usage: form.emoji_usage,
+            gender_voice: form.gender_voice,
+            fallback_message: form.fallback_message,
+          },
+          {
+            onConflict: "organization_id,sub_organization_id",
+          }
+        );
+  
+      if (personalityError) {
+        console.error(personalityError);
+        toast.error("Failed to save bot personality.");
+        throw personalityError;
+      }
+  
+      // -----------------------------
+      // SAVE CUSTOM INSTRUCTIONS
+      // -----------------------------
+      const parsed = JSON.parse(form.instructions || "{}");
+  
+      const { error: instructionsError } = await supabase
+        .from("bot_instructions")
+        .upsert(
+          {
+            organization_id: organizationId,
+            sub_organization_id: subOrgId,
+            rules: parsed,
+          },
+          {
+            onConflict: "organization_id,sub_organization_id",
+          }
+        );
+  
+      if (instructionsError) {
+        console.error(instructionsError);
+        toast.error("Failed to save custom instructions.");
+        throw instructionsError;
+      }
+  
+      // -----------------------------
+      // SUCCESS TOAST 🎉
+      // -----------------------------
+      toast.success("Bot personality saved successfully!");
+  
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
-
+  
   /* ------------------------------------------------------------------ */
   /* UI                                                                 */
   /* ------------------------------------------------------------------ */

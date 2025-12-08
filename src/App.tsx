@@ -20,6 +20,7 @@ import { ResetPasswordPage } from "./modules/auth/ResetPasswordPage";
 import { UpdatePasswordPage } from "./modules/auth/UpdatePasswordPage";
 
 import { useAuthStore } from "./state/useAuthStore";
+import { Toaster } from 'react-hot-toast';
 
 
 function FullScreenLoader() {
@@ -67,13 +68,17 @@ function App() {
 
       {/* ------------------------ Protected application ----------------------- */}
       <Route
-        path="/"
-        element={
-          <RequireAuth>
-            <AppLayout />
-          </RequireAuth>
-        }
+      path="/"
+      element={
+      <RequireAuth>
+        <>
+        <Toaster position="top-right" toastOptions={{ duration: 2500 }} />
+        <AppLayout />
+        </>
+        </RequireAuth>
+      }
       >
+
         {/* Default = Chats Inbox */}
         <Route index element={<ChatsModule />} />
 
