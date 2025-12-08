@@ -51,19 +51,33 @@ export function BotPersonalityModule() {
       const organizationId = currentOrganization.id;
       const subOrgId = activeSubOrg?.id ?? null;
 
-      const { data: personality } = await supabase
+      /* ---------------- FIX: Null-safe query for sub_organization_id --------------- */
+      let personalityQuery = supabase
         .from('bot_personality')
         .select('*')
-        .eq('organization_id', organizationId)
-        .eq('sub_organization_id', subOrgId)
-        .maybeSingle();
+        .eq('organization_id', organizationId);
 
-      const { data: instructions } = await supabase
+      if (subOrgId === null) {
+        personalityQuery = personalityQuery.is('sub_organization_id', null);
+      } else {
+        personalityQuery = personalityQuery.eq('sub_organization_id', subOrgId);
+      }
+
+      const { data: personality } = await personalityQuery.maybeSingle();
+
+      /* ---------------- FIX: Null-safe query for instructions ---------------------- */
+      let instructionsQuery = supabase
         .from('bot_instructions')
         .select('*')
-        .eq('organization_id', organizationId)
-        .eq('sub_organization_id', subOrgId)
-        .maybeSingle();
+        .eq('organization_id', organizationId);
+
+      if (subOrgId === null) {
+        instructionsQuery = instructionsQuery.is('sub_organization_id', null);
+      } else {
+        instructionsQuery = instructionsQuery.eq('sub_organization_id', subOrgId);
+      }
+
+      const { data: instructions } = await instructionsQuery.maybeSingle();
 
       if (personality) {
         setForm((prev) => ({
@@ -291,4 +305,3 @@ export function BotPersonalityModule() {
     </div>
   );
 }
-
