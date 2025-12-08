@@ -1,4 +1,3 @@
-// src/state/useKnowledgeBaseStore.ts
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
@@ -23,6 +22,11 @@ type KnowledgeBaseState = {
     file: File;
     title?: string;
   }) => Promise<void>;
+  updateArticle: (params: {
+    id: string;
+    title: string;
+    content: string;
+  }) => Promise<void>;
   deleteArticle: (articleId: string) => Promise<void>;
   setSelectedArticle: (article: KnowledgeArticle | null) => void;
   setSearchTerm: (term: string) => void;
@@ -39,10 +43,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSelectedArticle: (article) => set({ selectedArticle: article }),
   setSearchTerm: (term) => set({ searchTerm: term }),
 
-  /**
-   * Fetch knowledge articles for the current organization + sub-organization.
-   * We treat `content` as a short abstract/summary for dashboard display.
-   */
+  /* -----------------------------------------------------------
+   * FETCH ARTICLES
+   * -----------------------------------------------------------*/
   fetchArticles: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -66,10 +69,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .order("created_at", { ascending: false });
 
       if (activeSubOrg) {
-        // division-specific KB
         query = query.eq("sub_organization_id", activeSubOrg.id);
       } else {
-        // org-level KB only
         query = query.is("sub_organization_id", null);
       }
 
@@ -87,7 +88,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
 
       let articles = (data ?? []) as KnowledgeArticle[];
 
-      // Optional client-side search filter by title/content
+      // Client-side search
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
         articles = articles.filter((a) => {
@@ -112,10 +113,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     }
   },
 
-  /**
-   * Create a knowledge article from raw text.
-   * Delegates chunking + embeddings to the `ai-generate-kb` edge function.
-   */
+  /* -----------------------------------------------------------
+   * CREATE FROM TEXT
+   * -----------------------------------------------------------*/
   createArticleFromText: async ({ title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -152,13 +152,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         return;
       }
 
-      // Refresh articles list
       await get().fetchArticles();
-
-      set({
-        uploading: false,
-        error: null,
-      });
+      set({ uploading: false, error: null });
     } catch (err: any) {
       console.error("[KB] createArticleFromText exception:", err);
       set({
@@ -168,17 +163,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     }
   },
 
-  /**
-   * Create a knowledge article from a file upload.
-   * Flow:
-   * 1. Upload file to `knowledge-base` storage bucket.
-   * 2. Call `ai-generate-kb` with source_type="file" + file metadata.
-   * 3. Edge function:
-   *    - downloads file
-   *    - extracts text
-   *    - generates abstract -> stores in knowledge_articles.content
-   *    - chunks + embeds -> stores in knowledge_chunks
-   */
+  /* -----------------------------------------------------------
+   * CREATE FROM FILE
+   * -----------------------------------------------------------*/
   createArticleFromFile: async ({ file, title }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -200,7 +187,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const safeName = file.name.replace(/\s+/g, "_");
       const path = `${currentOrganization.id}/${Date.now()}-${safeName}`;
 
-      // 1) Upload file to storage
       const { error: uploadError } = await supabase.storage
         .from(bucket)
         .upload(path, file);
@@ -214,7 +200,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         return;
       }
 
-      // 2) Invoke edge function to process the file
       const { error: invokeError } = await supabase.functions.invoke(
         "ai-generate-kb",
         {
@@ -231,10 +216,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       );
 
       if (invokeError) {
-        console.error(
-          "[KB] createArticleFromFile invoke error:",
-          invokeError,
-        );
+        console.error("[KB] createArticleFromFile invoke error:", invokeError);
         set({
           uploading: false,
           error:
@@ -243,13 +225,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         return;
       }
 
-      // 3) Refresh list
       await get().fetchArticles();
-
-      set({
-        uploading: false,
-        error: null,
-      });
+      set({ uploading: false, error: null });
     } catch (err: any) {
       console.error("[KB] createArticleFromFile exception:", err);
       set({
@@ -261,10 +238,49 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     }
   },
 
-  /**
-   * Delete a knowledge article.
-   * We rely on ON DELETE CASCADE or DB-side cleanup for chunks.
-   */
+  /* -----------------------------------------------------------
+   * UPDATE ARTICLE (NEW)
+   * -----------------------------------------------------------*/
+  updateArticle: async ({ id, title, content }) => {
+    const { currentOrganization } = useOrganizationStore.getState();
+
+    if (!currentOrganization) {
+      set({ error: "Select an organization first." });
+      return;
+    }
+
+    set({ loading: true, error: null });
+
+    try {
+      const { error } = await supabase
+        .from("knowledge_articles")
+        .update({ title, content })
+        .eq("id", id)
+        .eq("organization_id", currentOrganization.id);
+
+      if (error) {
+        console.error("[KB] updateArticle error:", error);
+        set({
+          loading: false,
+          error: error.message ?? "Failed to update article.",
+        });
+        return;
+      }
+
+      await get().fetchArticles();
+      set({ loading: false, error: null });
+    } catch (err: any) {
+      console.error("[KB] updateArticle exception:", err);
+      set({
+        loading: false,
+        error: err?.message ?? "Unexpected error while updating article.",
+      });
+    }
+  },
+
+  /* -----------------------------------------------------------
+   * DELETE ARTICLE
+   * -----------------------------------------------------------*/
   deleteArticle: async (articleId: string) => {
     const { currentOrganization } = useOrganizationStore.getState();
 
@@ -286,12 +302,11 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         console.error("[KB] deleteArticle error:", error);
         set({
           loading: false,
-          error: error.message ?? "Failed to delete knowledge article.",
+          error: error.message ?? "Failed to delete article.",
         });
         return;
       }
 
-      // Refresh list
       await get().fetchArticles();
       set({ loading: false, error: null });
     } catch (err: any) {

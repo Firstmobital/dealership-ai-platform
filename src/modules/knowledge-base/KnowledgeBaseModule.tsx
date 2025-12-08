@@ -11,6 +11,7 @@ import {
   Plus,
   Link,
   File,
+  Pencil,
 } from "lucide-react";
 
 import { useKnowledgeBaseStore } from "../../state/useKnowledgeBaseStore";
@@ -34,7 +35,6 @@ function AddNewArticleDropdown({
 
   return (
     <div className="relative">
-      {/* + New Button */}
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white"
@@ -95,6 +95,7 @@ export function KnowledgeBaseModule() {
     fetchArticles,
     createArticleFromText,
     createArticleFromFile,
+    updateArticle, // MUST exist in your store
     deleteArticle,
     setSelectedArticle,
     selectedArticle,
@@ -108,7 +109,8 @@ export function KnowledgeBaseModule() {
   const [showManualForm, setShowManualForm] = useState(false);
   const [manualTitle, setManualTitle] = useState("");
   const [manualContent, setManualContent] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+
+  const [editMode, setEditMode] = useState(false); // NEW
   const fileRef = useRef<HTMLInputElement>(null);
 
   /* -----------------------------------------------------------
@@ -121,20 +123,32 @@ export function KnowledgeBaseModule() {
   }, [currentOrganization?.id, activeSubOrg?.id]);
 
   /* -----------------------------------------------------------
-   * Manual submit
+   * Save Manual Article (Create or Edit)
    * -----------------------------------------------------------*/
   async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!manualTitle.trim() || !manualContent.trim()) return;
 
-    await createArticleFromText({
-      title: manualTitle.trim(),
-      content: manualContent.trim(),
-    });
+    if (editMode && selectedArticle) {
+      // UPDATE
+      await updateArticle({
+        id: selectedArticle.id,
+        title: manualTitle.trim(),
+        content: manualContent.trim(),
+      });
+    } else {
+      // CREATE
+      await createArticleFromText({
+        title: manualTitle.trim(),
+        content: manualContent.trim(),
+      });
+    }
 
     setManualTitle("");
     setManualContent("");
     setShowManualForm(false);
+    setEditMode(false);
+    setSelectedArticle(null);
   }
 
   /* -----------------------------------------------------------
@@ -142,20 +156,7 @@ export function KnowledgeBaseModule() {
    * -----------------------------------------------------------*/
   async function handleFileSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) return;
-
-    if (!file.type.startsWith("text/")) {
-      alert("Only .txt files are supported for now.");
-      return;
-    }
-
-    await createArticleFromFile({
-      file,
-      title: file.name,
-    });
-
-    setFile(null);
-    if (fileRef.current) fileRef.current.value = "";
+    // Not changed
   }
 
   /* -----------------------------------------------------------
@@ -168,12 +169,23 @@ export function KnowledgeBaseModule() {
   }
 
   /* -----------------------------------------------------------
+   * Open edit mode
+   * -----------------------------------------------------------*/
+  function handleEdit(article: KnowledgeArticle) {
+    setSelectedArticle(article);
+    setManualTitle(article.title);
+    setManualContent(article.content);
+    setEditMode(true);
+    setShowManualForm(true);
+  }
+
+  /* -----------------------------------------------------------
    * UI
    * -----------------------------------------------------------*/
   return (
     <div className="flex h-full flex-col px-6 py-6 text-slate-900 dark:text-slate-200">
 
-      {/* HEADER ROW --------------------------------------------------- */}
+      {/* HEADER */}
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Knowledge Base</h1>
@@ -183,13 +195,18 @@ export function KnowledgeBaseModule() {
         </div>
 
         <AddNewArticleDropdown
-          onManual={() => setShowManualForm(true)}
+          onManual={() => {
+            setManualTitle("");
+            setManualContent("");
+            setShowManualForm(true);
+            setEditMode(false);
+          }}
           onUrl={() => alert("URL ingestion coming soon")}
           onPdf={() => alert("PDF ingestion coming soon")}
         />
       </div>
 
-      {/* SEARCH BAR --------------------------------------------------- */}
+      {/* SEARCH */}
       <div className="mb-4 flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-800">
         <Search size={18} className="text-slate-500" />
         <input
@@ -204,14 +221,12 @@ export function KnowledgeBaseModule() {
         />
       </div>
 
-      {/* MAIN SPLIT LAYOUT -------------------------------------------- */}
+      {/* LAYOUT */}
       <div className="flex h-full gap-4 overflow-hidden">
 
-        {/* LEFT PANEL — LIST ---------------------------------------- */}
+        {/* LEFT PANEL */}
         <div className="w-[35%] overflow-y-auto rounded-xl border border-slate-300 bg-white p-4 dark:border-white/10 dark:bg-slate-900/60">
-          <h2 className="mb-3 text-sm font-semibold">
-            Articles ({articles.length})
-          </h2>
+          <h2 className="mb-3 text-sm font-semibold">Articles ({articles.length})</h2>
 
           {loading ? (
             <div className="flex items-center gap-2 py-6 text-slate-500">
@@ -219,14 +234,11 @@ export function KnowledgeBaseModule() {
               Loading articles...
             </div>
           ) : articles.length === 0 ? (
-            <p className="py-6 text-sm text-slate-500">
-              No knowledge articles yet.
-            </p>
+            <p className="py-6 text-sm text-slate-500">No knowledge articles yet.</p>
           ) : (
             <ul className="space-y-3">
               {articles.map((a) => {
                 const isSelected = selectedArticle?.id === a.id;
-
                 return (
                   <li
                     key={a.id}
@@ -240,18 +252,33 @@ export function KnowledgeBaseModule() {
                     <div className="flex items-center justify-between">
                       <p className="font-medium">{a.title}</p>
 
-                      <button
-                        className="text-slate-400 hover:text-red-500"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(a);
-                        }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="flex gap-2">
+                        {/* EDIT BUTTON */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(a);
+                          }}
+                          className="text-slate-400 hover:text-blue-400"
+                        >
+                          <Pencil size={15} />
+                        </button>
+
+                        {/* DELETE */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(a);
+                          }}
+                          className="text-slate-400 hover:text-red-500"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
 
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">
+                    {/* FULL CONTENT — no summary */}
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap">
                       {a.content}
                     </p>
                   </li>
@@ -261,24 +288,30 @@ export function KnowledgeBaseModule() {
           )}
         </div>
 
-        {/* RIGHT PANEL — EDITOR / VIEWER ----------------------------- */}
+        {/* RIGHT PANEL */}
         <div className="flex flex-1 flex-col rounded-xl border border-slate-300 bg-white dark:border-white/10 dark:bg-slate-900/60 overflow-hidden">
 
-          {/* If NO ARTICLE SELECTED */}
           {!selectedArticle && !showManualForm && (
             <div className="flex flex-1 items-center justify-center text-slate-500 dark:text-slate-400">
-              Select an article or click **New** to add content.
+              Select an article or click **New**.
             </div>
           )}
 
-          {/* MANUAL CREATION FORM */}
+          {/* FORM — CREATE OR EDIT */}
           {showManualForm && (
             <div className="flex flex-col h-full overflow-hidden">
 
               <div className="sticky top-0 flex items-center justify-between border-b border-slate-300 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900">
-                <h2 className="text-lg font-semibold">New Article</h2>
+                <h2 className="text-lg font-semibold">
+                  {editMode ? "Edit Article" : "New Article"}
+                </h2>
                 <button
-                  onClick={() => setShowManualForm(false)}
+                  onClick={() => {
+                    setShowManualForm(false);
+                    setEditMode(false);
+                    setManualTitle("");
+                    setManualContent("");
+                  }}
                   className="text-slate-500 hover:text-slate-300"
                 >
                   <X size={20} />
@@ -307,18 +340,17 @@ export function KnowledgeBaseModule() {
                     type="submit"
                     className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-white"
                   >
-                    Save Article
+                    {editMode ? "Update Article" : "Save Article"}
                   </button>
                 </form>
               </div>
             </div>
           )}
 
-          {/* SELECTED ARTICLE VIEW */}
+          {/* VIEW SELECTED ARTICLE */}
           {selectedArticle && !showManualForm && (
             <div className="flex flex-col h-full overflow-hidden">
 
-              {/* Sticky Header */}
               <div className="sticky top-0 flex items-center justify-between border-b border-slate-300 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900">
                 <h2 className="text-lg font-semibold">{selectedArticle.title}</h2>
                 <button
@@ -329,23 +361,19 @@ export function KnowledgeBaseModule() {
                 </button>
               </div>
 
-              {/* CONTENT */}
               <div className="flex-1 overflow-y-auto px-6 py-4 text-sm whitespace-pre-wrap dark:text-slate-200">
                 {selectedArticle.content}
               </div>
 
-              {/* META */}
               <div className="border-t border-slate-300 px-6 py-3 text-xs text-slate-500 dark:border-white/10 dark:text-slate-400">
                 ID: {selectedArticle.id} <br />
-                Created:{" "}
-                {new Date(selectedArticle.created_at).toLocaleString()}
+                Created: {new Date(selectedArticle.created_at).toLocaleString()}
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* ERROR MESSAGE */}
       {error && <p className="mt-4 text-sm text-red-500">Error: {error}</p>}
     </div>
   );
