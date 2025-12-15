@@ -263,9 +263,9 @@ export function ChatsModule() {
     <div className="flex h-full w-full bg-white">
       <div className="flex h-full w-full gap-4 bg-white">
         {/* LEFT PANEL */}
-        <div className="flex h-full w-80 flex-col border-r border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/80">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-white/10">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+        <div className="flex h-full w-80 flex-col border-r border-slate-200 bg-white">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
               <MessageCircle size={16} />
               Conversations
             </div>
@@ -273,8 +273,7 @@ export function ChatsModule() {
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as any)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800
-                         dark:border-white/10 dark:bg-slate-900 dark:text-slate-300"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800"
             >
               <option value="all">All</option>
               <option value="unassigned">Unassigned</option>
@@ -300,19 +299,19 @@ export function ChatsModule() {
         </div>
 
         {/* RIGHT PANEL */}
-        <div className="flex flex-1 flex-col overflow-hidden bg-white dark:bg-slate-900/70">
+        <div className="flex flex-1 flex-col overflow-hidden bg-white">
           {!activeConversationId ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-slate-700 dark:text-slate-400">
+            <div className="flex flex-1 items-center justify-center text-sm text-slate-700">
               Select a conversation
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/10">
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                  <h2 className="text-base font-semibold text-slate-900">
                     {headerContact?.name || headerContact?.phone}
                   </h2>
-                  <div className="text-xs text-slate-700 dark:text-slate-400">
+                  <div className="text-xs text-slate-700">
                     {headerContact?.phone}
                     {headerLoading ? " (loading…)" : ""}
                   </div>
@@ -328,8 +327,8 @@ export function ChatsModule() {
                   className={`flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold
                     ${
                       aiToggle[activeConversationId]
-                        ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
-                        : "border-slate-200 bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200"
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                        : "border-slate-200 bg-slate-50 text-slate-700"
                     }
                   `}
                 >
@@ -344,10 +343,10 @@ export function ChatsModule() {
 
               <div
                 ref={scrollRef}
-                className="flex-1 overflow-y-auto bg-white p-6 space-y-4 dark:bg-slate-900"
+                className="flex-1 overflow-y-auto bg-white p-6 space-y-4"
               >
                 {isTyping && (
-                  <div className="text-sm text-slate-700 dark:text-slate-400">
+                  <div className="text-sm text-slate-700">
                     Agent is typing…
                   </div>
                 )}
@@ -360,11 +359,10 @@ export function ChatsModule() {
 
               <form
                 onSubmit={handleSend}
-                className="border-t border-slate-200 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900"
+                className="border-t border-slate-200 bg-white px-6 py-4"
               >
                 <div className="flex items-center gap-3">
-                  <label className="flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-700
-                                    dark:border-white/10 dark:bg-slate-800 dark:text-slate-200">
+                  <label className="flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-700">
                     <Paperclip size={18} />
                     <input type="file" name="file" className="hidden" />
                   </label>
@@ -372,8 +370,7 @@ export function ChatsModule() {
                   <input
                     name="message"
                     placeholder="Type your message..."
-                    className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900
-                               placeholder:text-slate-400 dark:border-white/10 dark:bg-slate-800 dark:text-white"
+                    className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400"
                   />
 
                   <button
