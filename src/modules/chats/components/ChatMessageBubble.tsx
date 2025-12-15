@@ -16,7 +16,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
     if (isBot)
       return "bg-blue-50 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100";
 
-    if (isCustomer && message.channel === \"whatsapp\")
+    if (isCustomer && message.channel === "whatsapp")
       return "bg-green-50 text-green-900 dark:bg-green-900/40 dark:text-green-100";
 
     if (isUser)
