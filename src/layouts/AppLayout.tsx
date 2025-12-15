@@ -1,5 +1,3 @@
-// src/layouts/AppLayout.tsx
-
 import { useEffect } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "../components/sidebar/Sidebar";
@@ -20,21 +18,22 @@ export function AppLayout() {
     <div
       className={`
         flex h-screen w-full transition-colors duration-300
-        ${theme === "dark" ? "bg-slate-950 text-white" : "bg-white text-slate-900"}
+        ${
+          theme === "dark"
+            ? "bg-slate-950 text-white"
+            : "bg-white text-slate-900"
+        }
       `}
     >
       {/* --------------------------------------------------------------- */}
-      {/* SIDEBAR (force white in light mode)                            */}
+      {/* SIDEBAR                                                        */}
       {/* --------------------------------------------------------------- */}
-      <Sidebar
-        forceWhite={theme === "light"} // NEW PROP (optional)
-      />
+      <Sidebar forceWhite={theme === "light"} />
 
       {/* --------------------------------------------------------------- */}
       {/* RIGHT SIDE PANEL                                               */}
       {/* --------------------------------------------------------------- */}
       <div className="flex flex-1 flex-col overflow-hidden">
-
         {/* ---------------------------- TOPBAR ---------------------------- */}
         <Topbar />
 
@@ -42,10 +41,14 @@ export function AppLayout() {
         <main
           className={`
             flex-1 overflow-hidden transition-colors duration-300
-            ${theme === "dark" ? "bg-slate-900/40" : "bg-slate-50"}
+            ${
+              theme === "dark"
+                ? "bg-slate-900/40"
+                : "bg-white"
+            }
           `}
         >
-          {/* Allow modules to manage their internal scroll */}
+          {/* Let inner modules control their own layout & scroll */}
           <div className="h-full w-full px-6 py-6">
             <Outlet />
           </div>
