@@ -20,9 +20,15 @@ import { ResetPasswordPage } from "./modules/auth/ResetPasswordPage";
 import { UpdatePasswordPage } from "./modules/auth/UpdatePasswordPage";
 
 import { useAuthStore } from "./state/useAuthStore";
-import { Toaster } from 'react-hot-toast';
+import { useOrganizationStore } from "./state/useOrganizationStore";
+import { useChatStore } from "./state/useChatStore";
+
+import { Toaster } from "react-hot-toast";
 
 
+/* -------------------------------------------------------------------------- */
+/* FULL SCREEN LOADING                                                        */
+/* -------------------------------------------------------------------------- */
 function FullScreenLoader() {
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-slate-200">
@@ -34,6 +40,10 @@ function FullScreenLoader() {
   );
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* AUTH GUARD                                                                  */
+/* -------------------------------------------------------------------------- */
 function RequireAuth({ children }: { children: ReactElement }) {
   const { user, initialized, loading, initialize } = useAuthStore();
   const location = useLocation();
@@ -49,15 +59,47 @@ function RequireAuth({ children }: { children: ReactElement }) {
   }
 
   if (!user) {
-    return (
-      <Navigate to="/auth/login" state={{ from: location }} replace />
-    );
+    return <Navigate to="/auth/login" state={{ from: location }} replace />;
   }
 
   return children;
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* APP ROOT — ADDS REALTIME INIT                                              */
+/* -------------------------------------------------------------------------- */
 function App() {
+  const { user } = useAuthStore();
+  const { activeOrganization, fetchOrganizations } = useOrganizationStore();
+
+  const initRealtime = useChatStore((s) => s.initRealtime);
+  const fetchConversations = useChatStore((s) => s.fetchConversations);
+
+  /** 
+   * 1) Load organization after login
+   */
+  useEffect(() => {
+    if (user) {
+      fetchOrganizations().catch(console.error);
+    }
+  }, [user, fetchOrganizations]);
+
+  /**
+   * 2) Start realtime ONLY after organization is known
+   */
+  useEffect(() => {
+    if (!activeOrganization?.id) return;
+
+    // Start realtime event listeners (conversations + messages)
+    initRealtime(activeOrganization.id);
+
+    // Load initial conversation list
+    fetchConversations(activeOrganization.id);
+
+  }, [activeOrganization?.id, initRealtime, fetchConversations]);
+
+
   return (
     <Routes>
       {/* ----------------------------- Auth routes ---------------------------- */}
@@ -68,17 +110,16 @@ function App() {
 
       {/* ------------------------ Protected application ----------------------- */}
       <Route
-      path="/"
-      element={
-      <RequireAuth>
-        <>
-        <Toaster position="top-right" toastOptions={{ duration: 2500 }} />
-        <AppLayout />
-        </>
-        </RequireAuth>
-      }
+        path="/"
+        element={
+          <RequireAuth>
+            <>
+              <Toaster position="top-right" toastOptions={{ duration: 2500 }} />
+              <AppLayout />
+            </>
+          </RequireAuth>
+        }
       >
-
         {/* Default = Chats Inbox */}
         <Route index element={<ChatsModule />} />
 
@@ -103,7 +144,7 @@ function App() {
         {/* WhatsApp Settings */}
         <Route path="settings/whatsapp" element={<WhatsappSettingsModule />} />
 
-        {/* Sub-Organizations (Divisions Manager) */}
+        {/* Sub-Organizations */}
         <Route path="settings/sub-orgs" element={<SubOrganizationsPanel />} />
 
         {/* Unanswered Questions */}
@@ -117,4 +158,3 @@ function App() {
 }
 
 export default App;
-

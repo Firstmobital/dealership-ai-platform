@@ -32,8 +32,12 @@ type ChatState = {
   aiToggle: Record<string, boolean>;
   unread: Record<string, number>;
 
+  // --- Core actions ---
   fetchConversations: (organizationId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
+
+  // Realtime
+  initRealtime: (organizationId: string) => void;
   subscribeToMessages: (conversationId: string) => void;
 
   setActiveConversation: (conversationId: string | null) => void;
@@ -62,7 +66,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unread: {},
 
   /* -------------------------------------------------------------------------- */
-  /* FETCH CONVERSATIONS (ORG + SUB ORG AWARE)                                 */
+  /* FETCH CONVERSATIONS                                                        */
   /* -------------------------------------------------------------------------- */
   fetchConversations: async (organizationId: string) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -75,7 +79,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .eq("organization_id", organizationId)
       .order("last_message_at", { ascending: false });
 
-    // Filter by department / division
     if (activeSubOrg) {
       query = query.eq("sub_organization_id", activeSubOrg.id);
     } else {
@@ -102,7 +105,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* FETCH MESSAGES (RLS SAFE—FILTERS BY CONVERSATION ID)                      */
+  /* FETCH MESSAGES                                                             */
   /* -------------------------------------------------------------------------- */
   fetchMessages: async (conversationId: string) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -113,7 +116,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
 
-    // Filter by sub-org (should already be enforced at conversation level)
     if (activeSubOrg) {
       query = query.eq("sub_organization_id", activeSubOrg.id);
     } else {
@@ -136,7 +138,81 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* REALTIME SUBSCRIPTION                                                      */
+  /* REALTIME: GLOBAL SUBSCRIPTION FOR NEW CONVERSATIONS + MESSAGES            */
+  /* -------------------------------------------------------------------------- */
+  initRealtime: (organizationId: string) => {
+    const { activeSubOrg } = useSubOrganizationStore.getState();
+
+    // -------- conversations INSERT listener --------
+    supabase
+      .channel("rt-conversations")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "conversations",
+          filter: `organization_id=eq.${organizationId}`,
+        },
+        (payload) => {
+          const conv = payload.new as Conversation;
+          const { conversations } = get();
+
+          // Sub-org filter check
+          if (activeSubOrg && conv.sub_organization_id !== activeSubOrg.id) {
+            return;
+          }
+          if (!activeSubOrg && conv.sub_organization_id !== null) {
+            return;
+          }
+
+          // Add conversation only if not in list already
+          if (!conversations.some((c) => c.id === conv.id)) {
+            set({ conversations: [conv, ...conversations] });
+          }
+        }
+      )
+      .subscribe();
+
+    // -------- messages INSERT listener --------
+    supabase
+      .channel("rt-messages")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+        },
+        (payload) => {
+          const msg = payload.new as Message;
+
+          // Only update if we already loaded this convo
+          const existing = get().messages[msg.conversation_id] ?? [];
+          const isActive =
+            get().activeConversationId === msg.conversation_id;
+
+          const unreadCount = isActive
+            ? 0
+            : (get().unread[msg.conversation_id] ?? 0) + 1;
+
+          set({
+            messages: {
+              ...get().messages,
+              [msg.conversation_id]: [...existing, msg],
+            },
+            unread: {
+              ...get().unread,
+              [msg.conversation_id]: unreadCount,
+            },
+          });
+        }
+      )
+      .subscribe();
+  },
+
+  /* -------------------------------------------------------------------------- */
+  /* REALTIME: PER-CONVERSATION SUBSCRIPTION                                   */
   /* -------------------------------------------------------------------------- */
   subscribeToMessages: (conversationId: string) => {
     supabase
@@ -150,22 +226,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
           filter: `conversation_id=eq.${conversationId}`,
         },
         (payload) => {
-          const message = payload.new as Message;
-          const state = get();
-          const existing = state.messages[conversationId] ?? [];
+          const msg = payload.new as Message;
+          const existing = get().messages[conversationId] ?? [];
+          const isActive =
+            get().activeConversationId === conversationId;
 
-          const isActive = state.activeConversationId === conversationId;
           const unreadCount = isActive
             ? 0
-            : (state.unread[conversationId] ?? 0) + 1;
+            : (get().unread[conversationId] ?? 0) + 1;
 
           set({
             messages: {
-              ...state.messages,
-              [conversationId]: [...existing, message],
+              ...get().messages,
+              [conversationId]: [...existing, msg],
             },
             unread: {
-              ...state.unread,
+              ...get().unread,
               [conversationId]: unreadCount,
             },
           });
@@ -212,7 +288,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* SEND MESSAGE (WEB ONLY — NO WHATSAPP)                                      */
+  /* SEND MESSAGE (WEB ONLY)                                                    */
   /* -------------------------------------------------------------------------- */
   sendMessage: async (conversationId, payload) => {
     const state = get();
@@ -225,22 +301,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const message_type = payload.message_type ?? "text";
     const channel = payload.channel ?? "web";
 
-    // ❌ Prevent frontend sending WhatsApp messages
     if (channel === "whatsapp") {
-      console.warn("[useChatStore] Cannot send WhatsApp messages from frontend");
+      console.warn("[useChatStore] WhatsApp messages cannot be sent from frontend");
       return;
     }
 
-    /* ---------------------------------------------------------------------- */
-    /* 1. INSERT USER MESSAGE                                                 */
-    /* ---------------------------------------------------------------------- */
+    // Insert user message
     const { error: userError } = await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender,
       message_type,
       text,
       media_url: payload.media_url ?? null,
-      channel, // web or internal
+      channel,
       sub_organization_id: activeSubOrg?.id ?? null,
     });
 
@@ -251,15 +324,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     await get().fetchMessages(conversationId);
 
-    /* ---------------------------------------------------------------------- */
-    /* 2. AI DISABLED? THEN EXIT                                              */
-    /* ---------------------------------------------------------------------- */
     const aiEnabled = state.aiToggle[conversationId];
     if (!aiEnabled || sender !== "user") return;
 
-    /* ---------------------------------------------------------------------- */
-    /* 3. CALL AI-HANDLER                                                     */
-    /* ---------------------------------------------------------------------- */
+    // Call AI handler
     (async () => {
       try {
         const { data: aiResp, error: invokeError } =
@@ -282,9 +350,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         if (!aiText) return;
 
-        /* ------------------------------------------------------------------ */
-        /* 4. INSERT BOT REPLY (WEB INTERNAL ONLY)                            */
-        /* ------------------------------------------------------------------ */
         const { error: botError } = await supabase.from("messages").insert({
           conversation_id: conversationId,
           sender: "bot",
@@ -302,14 +367,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         await get().fetchMessages(conversationId);
 
-        /* ------------------------------------------------------------------ */
-        /* 5. BUMP conversation timestamp + REFRESH list                      */
-        /* ------------------------------------------------------------------ */
+        // Update conversation timestamp
         await supabase
           .from("conversations")
           .update({ last_message_at: new Date().toISOString() })
           .eq("id", conversationId);
 
+        // Refresh conversation list
         const conversations = get().conversations;
         const orgId = conversations.find((c) => c.id === conversationId)
           ?.organization_id;
@@ -323,4 +387,3 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })();
   },
 }));
-

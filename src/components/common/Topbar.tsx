@@ -13,22 +13,31 @@ export function Topbar() {
   const displayName = user?.email ?? "Guest Agent";
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm 
-                       dark:border-white/10 dark:bg-slate-900/60 backdrop-blur">
-      {/* LEFT SIDE: ORG + DIVISION */}
+    <header
+      className="
+        flex h-16 items-center justify-between px-6 border-b transition-colors
+        bg-white/90 backdrop-blur shadow-sm border-slate-200 
+        dark:bg-slate-900/60 dark:border-white/10
+      "
+    >
+      {/* LEFT — ORG + SUBORG */}
       <div className="flex items-center gap-6">
         <OrganizationSwitcher />
         <SubOrgSwitcher />
       </div>
 
-      {/* RIGHT SIDE: THEME + USER INFO */}
+      {/* RIGHT — THEME + USER + LOGOUT */}
       <div className="flex items-center gap-4">
 
-        {/* Theme Toggle */}
+        {/* THEME SWITCH */}
         <button
           onClick={toggleTheme}
-          className="flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm 
-                     dark:border-white/10 dark:bg-slate-800 dark:text-slate-200"
+          className="
+            flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium 
+            bg-white text-slate-700 shadow-sm border-slate-300 
+            hover:border-accent hover:text-accent
+            dark:bg-slate-800 dark:text-slate-200 dark:border-white/10
+          "
         >
           {theme === "light" ? (
             <>
@@ -41,7 +50,7 @@ export function Topbar() {
           )}
         </button>
 
-        {/* User Info */}
+        {/* USER INFO */}
         <div className="flex flex-col items-end">
           <p className="text-sm font-medium text-slate-800 dark:text-white">
             {displayName}
@@ -51,12 +60,15 @@ export function Topbar() {
           </p>
         </div>
 
-        {/* Sign Out */}
+        {/* SIGN OUT */}
         <button
           onClick={() => signOut().catch(console.error)}
-          className="flex items-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm 
-                     hover:border-accent hover:text-accent 
-                     dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-accent"
+          className="
+            flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium
+            bg-white text-slate-700 shadow-sm border-slate-300
+            hover:border-accent hover:text-accent
+            dark:bg-slate-800 dark:text-slate-200 dark:border-white/10
+          "
         >
           <LogOut size={14} />
           Logout
