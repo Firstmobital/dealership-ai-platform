@@ -339,7 +339,7 @@ export function ChatsModule() {
         {/* RIGHT PANEL */}
         <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
           {!activeConversationId ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-slate-400 dark:text-slate-400">
+            <div className="flex flex-1 items-center justify-center text-sm text-slate-600 dark:text-slate-400">
               Select a conversation
             </div>
           ) : (
@@ -356,7 +356,7 @@ export function ChatsModule() {
                     <ChannelBadge />
                   </div>
 
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                  <div className="text-xs text-slate-600 dark:text-slate-400">
                     {headerContact?.phone || "No phone"}
                     {headerLoading ? " (loading…)" : ""}
                   </div>
@@ -393,7 +393,7 @@ export function ChatsModule() {
               >
                 {/* TYPING INDICATOR */}
                 {isTyping && (
-                  <div className="flex items-center gap-2 animate-pulse text-sm text-slate-500 dark:text-slate-400">
+                  <div className="flex items-center gap-2 animate-pulse text-sm text-slate-600 dark:text-slate-400">
                     <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-500"></span>
                     <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-500"></span>
                     <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-500"></span>

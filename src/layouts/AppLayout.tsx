@@ -7,9 +7,6 @@ import { useThemeStore } from "../state/useThemeStore";
 export function AppLayout() {
   const { theme, initializeTheme } = useThemeStore();
 
-  /**
-   * Ensure correct <html> theme class is applied
-   */
   useEffect(() => {
     initializeTheme();
   }, [initializeTheme]);
@@ -17,39 +14,20 @@ export function AppLayout() {
   return (
     <div
       className={`
-        flex h-screen w-full transition-colors duration-300
-        ${
-          theme === "dark"
-            ? "bg-slate-950 text-white"
-            : "bg-white text-slate-900"
-        }
+        flex h-screen w-full
+        ${theme === "dark" ? "bg-slate-950 text-white" : "bg-white text-slate-900"}
       `}
     >
-      {/* --------------------------------------------------------------- */}
-      {/* SIDEBAR                                                        */}
-      {/* --------------------------------------------------------------- */}
-      <Sidebar forceWhite={theme === "light"} />
+      {/* SIDEBAR */}
+      <Sidebar forceWhite={theme !== "dark"} />
 
-      {/* --------------------------------------------------------------- */}
-      {/* RIGHT SIDE PANEL                                               */}
-      {/* --------------------------------------------------------------- */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* ---------------------------- TOPBAR ---------------------------- */}
+      {/* MAIN AREA */}
+      <div className="flex flex-1 flex-col overflow-hidden bg-white dark:bg-slate-950">
         <Topbar />
 
-        {/* -------------------------- MAIN CONTENT ------------------------ */}
-        <main
-          className={`
-            flex-1 overflow-hidden transition-colors duration-300
-            ${
-              theme === "dark"
-                ? "bg-slate-900/40"
-                : "bg-white"
-            }
-          `}
-        >
-          {/* Let inner modules control their own layout & scroll */}
-          <div className="h-full w-full px-6 py-6">
+        {/* 👇 THIS IS THE IMPORTANT PART */}
+        <main className="flex-1 overflow-hidden bg-white dark:bg-slate-900">
+          <div className="h-full w-full bg-white px-6 py-6 dark:bg-transparent">
             <Outlet />
           </div>
         </main>

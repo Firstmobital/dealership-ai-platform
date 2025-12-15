@@ -79,7 +79,7 @@ export function ChatSidebarItem({
           {conversation.id.slice(0, 8)}
         </span>
 
-        <span className="text-[11px] text-slate-400 dark:text-slate-400">
+        <span className="text-[11px] text-slate-600 dark:text-slate-400">
           {time}
         </span>
       </div>

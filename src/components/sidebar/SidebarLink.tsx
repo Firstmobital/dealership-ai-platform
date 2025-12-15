@@ -28,7 +28,7 @@ export function SidebarLink({
         size={18}
         className={[
           "transition-colors",
-          "text-slate-400 group-hover:text-slate-600 dark:text-slate-400 dark:group-hover:text-slate-200",
+          "text-slate-600 group-hover:text-slate-600 dark:text-slate-400 dark:group-hover:text-slate-200",
           "group-[.active]:text-slate-700 dark:group-[.active]:text-white",
         ].join(" ")}
       />
