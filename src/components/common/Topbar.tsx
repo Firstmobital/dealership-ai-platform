@@ -35,7 +35,7 @@ export function Topbar() {
           onClick={toggleTheme}
           className="
             flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium
-            text-slate-600 hover:bg-slate-100
+            text-slate-800 hover:bg-slate-100
             dark:text-slate-300 dark:hover:bg-slate-800
           "
         >
@@ -52,10 +52,10 @@ export function Topbar() {
 
         {/* USER INFO */}
         <div className="flex flex-col items-end leading-tight">
-          <p className="text-sm font-medium text-slate-800 dark:text-white">
+          <p className="text-sm font-medium text-slate-900 dark:text-white">
             {displayName}
           </p>
-          <p className="text-xs text-slate-400 dark:text-slate-400">
+          <p className="text-xs text-slate-600 dark:text-slate-400">
             Dealership AI Admin
           </p>
         </div>
@@ -65,7 +65,7 @@ export function Topbar() {
           onClick={() => signOut().catch(console.error)}
           className="
             flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium
-            text-slate-600 hover:bg-slate-100 hover:text-slate-800
+            text-slate-800 hover:bg-slate-100 hover:text-slate-900
             dark:text-slate-300 dark:hover:bg-slate-800
           "
         >

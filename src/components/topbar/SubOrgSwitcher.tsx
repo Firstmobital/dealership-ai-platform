@@ -17,7 +17,7 @@ export function SubOrgSwitcher() {
 
   if (!currentOrganization) {
     return (
-      <div className="text-xs text-slate-500 dark:text-slate-400">
+      <div className="text-xs text-slate-600 dark:text-slate-400">
         Select org
       </div>
     );
@@ -25,7 +25,7 @@ export function SubOrgSwitcher() {
 
   if (loading && !subOrgs.length) {
     return (
-      <div className="text-xs text-slate-500 dark:text-slate-400">
+      <div className="text-xs text-slate-600 dark:text-slate-400">
         Loading…
       </div>
     );
@@ -33,7 +33,7 @@ export function SubOrgSwitcher() {
 
   if (!subOrgs.length) {
     return (
-      <div className="text-xs text-slate-500 dark:text-slate-400">
+      <div className="text-xs text-slate-600 dark:text-slate-400">
         No divisions
       </div>
     );
@@ -41,7 +41,7 @@ export function SubOrgSwitcher() {
 
   return (
     <div className="flex flex-col">
-      <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      <span className="text-xs uppercase tracking-wide text-slate-600 dark:text-slate-400">
         Division
       </span>
 
@@ -52,8 +52,9 @@ export function SubOrgSwitcher() {
           setActive(sub);
         }}
         className="
-          mt-1 rounded-md border bg-white px-2 py-1 text-xs text-slate-700 shadow-sm
-          border-slate-300 focus:border-accent focus:outline-none
+          mt-1 rounded-md border border-slate-200 bg-white px-2 py-1
+          text-xs text-slate-900
+          focus:border-accent focus:outline-none
           dark:bg-slate-800 dark:text-slate-200 dark:border-white/10
         "
       >

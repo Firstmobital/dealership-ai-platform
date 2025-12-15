@@ -16,7 +16,7 @@ export function ChatSidebarItem({
   onClick,
 }: Props) {
   /* -------------------------------------------------------
-   * CHANNEL BADGE — Subtle Joyz-style pills
+   * CHANNEL BADGE — Joyz-style subtle pills
    * ------------------------------------------------------- */
   const channelBadge = (() => {
     if (conversation.channel === "whatsapp") {
@@ -51,14 +51,14 @@ export function ChatSidebarItem({
     : "No messages";
 
   /* -------------------------------------------------------
-   * MAIN UI
+   * UI
    * ------------------------------------------------------- */
   return (
     <button
       type="button"
       onClick={onClick}
       className={`
-        w-full rounded-lg px-3 py-2 text-left transition-colors
+        w-full px-3 py-2 text-left transition-colors
         flex items-center justify-between gap-3
         ${
           isActive
@@ -73,7 +73,7 @@ export function ChatSidebarItem({
           className={`truncate text-sm font-medium ${
             isActive
               ? "text-slate-900 dark:text-white"
-              : "text-slate-700 dark:text-slate-200"
+              : "text-slate-800 dark:text-slate-200"
           }`}
         >
           {conversation.id.slice(0, 8)}

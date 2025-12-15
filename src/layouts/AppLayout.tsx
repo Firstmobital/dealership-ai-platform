@@ -1,3 +1,5 @@
+///src/layouts/AppLayout.tsx
+
 import { useEffect } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "../components/sidebar/Sidebar";

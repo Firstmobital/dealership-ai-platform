@@ -1,6 +1,5 @@
 // src/modules/chats/ChatsModule.tsx
-// JOYZ-STYLE LIGHT MODE – UI ONLY (logic unchanged)
-// FINAL FIXED VERSION – WORKS ON VERCEL
+// JOYZ-STYLE LIGHT MODE – UI ONLY (LOGIC UNCHANGED)
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -19,10 +18,11 @@ import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { ChatSidebarItem } from "./components/ChatSidebarItem";
 
 import type { Conversation } from "../../types/database";
-
 import { supabase } from "../../lib/supabaseClient";
 
-// Contact in header
+/* -------------------------------------------------------
+ * TYPES
+ * ------------------------------------------------------- */
 type HeaderContact = {
   name: string | null;
   phone: string | null;
@@ -30,6 +30,9 @@ type HeaderContact = {
 
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 
+/* -------------------------------------------------------
+ * COMPONENT
+ * ------------------------------------------------------- */
 export function ChatsModule() {
   const {
     conversations,
@@ -54,73 +57,65 @@ export function ChatsModule() {
   const [headerContact, setHeaderContact] =
     useState<HeaderContact | null>(null);
   const [headerLoading, setHeaderLoading] = useState(false);
-
   const [sending, setSending] = useState(false);
-
-  /** FIXED: Timeout type — Vercel-safe */
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isTyping, setIsTyping] = useState(false);
 
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  /* LOAD CONVERSATIONS WHEN ORG/SUBORG CHANGES */
+  /* -------------------------------------------------------
+   * LOAD CONVERSATIONS
+   * ------------------------------------------------------- */
   useEffect(() => {
     if (currentOrganization?.id) {
       fetchConversations(currentOrganization.id).catch(console.error);
     }
   }, [currentOrganization?.id, subOrgKey]);
 
-  /* RESET ACTIVE ON DIVISION SWITCH */
   useEffect(() => {
     setActiveConversation(null);
   }, [subOrgKey]);
 
-  /* LOAD MESSAGES WHEN CONVERSATION CHANGES */
   useEffect(() => {
     if (!activeConversationId) return;
-
     if (!messages[activeConversationId]) {
       fetchMessages(activeConversationId).catch(console.error);
       subscribeToMessages(activeConversationId);
     }
   }, [activeConversationId, messages]);
 
-  /* AUTOMATIC SCROLLING */
+  /* -------------------------------------------------------
+   * SCROLL + TYPING
+   * ------------------------------------------------------- */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-
     const nearBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-
     if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  /* STOP TYPING WHEN BOT MESSAGE ARRIVES */
   useEffect(() => {
     if (!activeConversationId) return;
-
     const msgs = messages[activeConversationId];
     if (!msgs?.length) return;
-
-    const last = msgs[msgs.length - 1];
-    if (last.sender === "bot") {
+    if (msgs[msgs.length - 1].sender === "bot") {
       setIsTyping(false);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     }
   }, [messages, activeConversationId]);
 
-  /* LOAD CONTACT INFO */
+  /* -------------------------------------------------------
+   * LOAD CONTACT
+   * ------------------------------------------------------- */
   useEffect(() => {
     async function load() {
       if (!activeConversationId) return setHeaderContact(null);
-
       const conv = conversations.find((c) => c.id === activeConversationId);
       if (!conv?.contact_id) return setHeaderContact(null);
 
       setHeaderLoading(true);
-
       const { data } = await supabase
         .from("contacts")
         .select("name, phone")
@@ -131,42 +126,14 @@ export function ChatsModule() {
         name: data?.name ?? null,
         phone: data?.phone ?? null,
       });
-
       setHeaderLoading(false);
     }
-
     load();
   }, [activeConversationId, conversations]);
 
-  /* CHANNEL BADGE UI */
-  const ChannelBadge = () => {
-    const conv = conversations.find((c) => c.id === activeConversationId);
-    if (!conv) return null;
-
-    if (conv.channel === "whatsapp")
-      return (
-        <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] text-green-700 dark:bg-green-900/40 dark:text-green-300">
-          WhatsApp
-        </span>
-      );
-
-    if (conv.channel === "web")
-      return (
-        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-          Web
-        </span>
-      );
-
-    return (
-      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-        Internal
-      </span>
-    );
-  };
-
-  /* -----------------------------------------------------------
-   * SEND MESSAGE (TEXT + MEDIA + TYPING INDICATOR)
-   * -----------------------------------------------------------*/
+  /* -------------------------------------------------------
+   * SEND MESSAGE (UNCHANGED)
+   * ------------------------------------------------------- */
   const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!activeConversationId) return;
@@ -181,20 +148,20 @@ export function ChatsModule() {
     if (!text && !file) return;
     setSending(true);
 
-    /** Enable typing indicator visually */
     setIsTyping(true);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000);
 
     try {
-      /* WHATSAPP SEND FLOW */
       if (conv.channel === "whatsapp") {
         let url: string | null = null;
         let msgType = "text";
 
         if (file) {
           const path = `org_${conv.organization_id}/${activeConversationId}/${Date.now()}_${file.name}`;
-          await supabase.storage.from(WHATSAPP_MEDIA_BUCKET).upload(path, file);
+          await supabase.storage
+            .from(WHATSAPP_MEDIA_BUCKET)
+            .upload(path, file);
 
           const { data } = supabase.storage
             .from(WHATSAPP_MEDIA_BUCKET)
@@ -247,9 +214,7 @@ export function ChatsModule() {
 
           await supabase.functions.invoke("whatsapp-send", { body });
         }
-      }
-      /* INTERNAL / WEB SEND FLOW */
-      else {
+      } else {
         await sendMessage(activeConversationId, {
           text,
           sender: "user",
@@ -265,28 +230,22 @@ export function ChatsModule() {
     }
   };
 
-  /* -----------------------------------------------------------
-   * FILTERED CONVERSATIONS
-   * -----------------------------------------------------------*/
-  const filteredConversations: Conversation[] = conversations.filter(
-    (conversation: Conversation) => {
-      if (filter === "unassigned") return !conversation.assigned_to;
-      if (filter === "assigned") return Boolean(conversation.assigned_to);
-      if (filter === "bot") return conversation.ai_enabled;
-      if (filter === "whatsapp") return conversation.channel === "whatsapp";
-      if (filter === "web") return conversation.channel === "web";
-      if (filter === "internal") return conversation.channel === "internal";
-      return true;
-    }
-  );
-
-  /* -----------------------------------------------------------
-   * MAIN UI
-   * -----------------------------------------------------------*/
+  /* -------------------------------------------------------
+   * FILTER
+   * ------------------------------------------------------- */
+  const filteredConversations: Conversation[] = conversations.filter((c) => {
+    if (filter === "unassigned") return !c.assigned_to;
+    if (filter === "assigned") return Boolean(c.assigned_to);
+    if (filter === "bot") return c.ai_enabled;
+    if (filter === "whatsapp") return c.channel === "whatsapp";
+    if (filter === "web") return c.channel === "web";
+    if (filter === "internal") return c.channel === "internal";
+    return true;
+  });
 
   if (!currentOrganization) {
     return (
-      <div className="flex h-full items-center justify-center text-slate-500">
+      <div className="flex h-full items-center justify-center text-slate-700">
         Select an organization to continue.
       </div>
     );
@@ -297,11 +256,14 @@ export function ChatsModule() {
       ? messages[activeConversationId]
       : [];
 
+  /* -------------------------------------------------------
+   * UI
+   * ------------------------------------------------------- */
   return (
-    <div className="flex h-full w-full">
-      <div className="flex h-full w-full gap-4">
+    <div className="flex h-full w-full bg-white">
+      <div className="flex h-full w-full gap-4 bg-white">
         {/* LEFT PANEL */}
-        <div className="flex h-full w-80 flex-col rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/80">
+        <div className="flex h-full w-80 flex-col border-r border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/80">
           <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-white/10">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
               <MessageCircle size={16} />
@@ -311,7 +273,8 @@ export function ChatsModule() {
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as any)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 focus:outline-none dark:border-white/10 dark:bg-slate-900 dark:text-slate-300"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800
+                         dark:border-white/10 dark:bg-slate-900 dark:text-slate-300"
             >
               <option value="all">All</option>
               <option value="unassigned">Unassigned</option>
@@ -324,7 +287,7 @@ export function ChatsModule() {
           </div>
 
           <div className="flex-1 space-y-2 overflow-y-auto p-3">
-            {filteredConversations.map((c: Conversation) => (
+            {filteredConversations.map((c) => (
               <ChatSidebarItem
                 key={c.id}
                 conversation={c}
@@ -337,27 +300,20 @@ export function ChatsModule() {
         </div>
 
         {/* RIGHT PANEL */}
-        <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/70">
+        <div className="flex flex-1 flex-col overflow-hidden bg-white dark:bg-slate-900/70">
           {!activeConversationId ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-slate-600 dark:text-slate-400">
+            <div className="flex flex-1 items-center justify-center text-sm text-slate-700 dark:text-slate-400">
               Select a conversation
             </div>
           ) : (
             <>
-              {/* HEADER */}
               <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-white/10">
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                      {headerContact?.name ||
-                        headerContact?.phone ||
-                        "Conversation"}
-                    </h2>
-                    <ChannelBadge />
-                  </div>
-
-                  <div className="text-xs text-slate-600 dark:text-slate-400">
-                    {headerContact?.phone || "No phone"}
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                    {headerContact?.name || headerContact?.phone}
+                  </h2>
+                  <div className="text-xs text-slate-700 dark:text-slate-400">
+                    {headerContact?.phone}
                     {headerLoading ? " (loading…)" : ""}
                   </div>
                 </div>
@@ -369,7 +325,7 @@ export function ChatsModule() {
                       !aiToggle[activeConversationId]
                     )
                   }
-                  className={`flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition
+                  className={`flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold
                     ${
                       aiToggle[activeConversationId]
                         ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
@@ -386,35 +342,29 @@ export function ChatsModule() {
                 </button>
               </div>
 
-              {/* MESSAGE LIST */}
               <div
                 ref={scrollRef}
                 className="flex-1 overflow-y-auto bg-white p-6 space-y-4 dark:bg-slate-900"
               >
-                {/* TYPING INDICATOR */}
                 {isTyping && (
-                  <div className="flex items-center gap-2 animate-pulse text-sm text-slate-600 dark:text-slate-400">
-                    <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-500"></span>
-                    <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-500"></span>
-                    <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-500"></span>
-                    <span>Agent is typing…</span>
+                  <div className="text-sm text-slate-700 dark:text-slate-400">
+                    Agent is typing…
                   </div>
                 )}
 
                 {currentMessages.map((msg) => (
                   <ChatMessageBubble key={msg.id} message={msg} />
                 ))}
-
                 <div ref={bottomRef} />
               </div>
 
-              {/* INPUT BAR */}
               <form
                 onSubmit={handleSend}
                 className="border-t border-slate-200 bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900"
               >
                 <div className="flex items-center gap-3">
-                  <label className="flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/60">
+                  <label className="flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-700
+                                    dark:border-white/10 dark:bg-slate-800 dark:text-slate-200">
                     <Paperclip size={18} />
                     <input type="file" name="file" className="hidden" />
                   </label>
@@ -422,15 +372,15 @@ export function ChatsModule() {
                   <input
                     name="message"
                     placeholder="Type your message..."
-                    className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-accent focus:outline-none dark:border-white/10 dark:bg-slate-800 dark:text-white"
+                    className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900
+                               placeholder:text-slate-400 dark:border-white/10 dark:bg-slate-800 dark:text-white"
                   />
 
                   <button
                     disabled={sending}
-                    className="flex items-center gap-2 rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-accent/90 disabled:opacity-60"
+                    className="rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
                   >
                     <SendHorizonal size={16} />
-                    Send
                   </button>
                 </div>
               </form>

@@ -9,18 +9,25 @@ export function ChatMessageBubble({ message }: { message: Message }) {
 
   const isInbound = isCustomer;
 
-  /* BUBBLE COLORS */
+  /* -------------------------------------------------------
+   * BUBBLE COLORS — Joyz-style (soft, clean)
+   * ------------------------------------------------------- */
   const bubbleClasses = (() => {
     if (isBot)
-      return "bg-[#e8efff] text-blue-800 dark:bg-blue-900/40 dark:text-blue-100";
-    if (isCustomer && message.channel === "whatsapp")
-      return "bg-[#e6f4ea] text-green-800 dark:bg-green-900/40 dark:text-green-100";
+      return "bg-blue-50 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100";
+
+    if (isCustomer && message.channel === \"whatsapp\")
+      return "bg-green-50 text-green-900 dark:bg-green-900/40 dark:text-green-100";
+
     if (isUser)
-      return "bg-[#ece5fb] text-purple-800 dark:bg-purple-900/40 dark:text-purple-100";
-    return "bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-100";
+      return "bg-purple-50 text-purple-900 dark:bg-purple-900/40 dark:text-purple-100";
+
+    return "bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100";
   })();
 
-  /* MEDIA RENDERING */
+  /* -------------------------------------------------------
+   * MEDIA RENDERING
+   * ------------------------------------------------------- */
   const renderMedia = () => {
     if (!message.media_url) return null;
 
@@ -29,7 +36,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
         <video
           src={message.media_url}
           controls
-          className="mt-2 max-w-xs rounded-lg shadow-sm"
+          className="mt-2 max-w-xs rounded-lg"
         />
       );
 
@@ -56,7 +63,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
         <img
           src={message.media_url}
           alt="image"
-          className="mt-2 max-w-xs rounded-lg border border-slate-200 shadow-sm dark:border-white/10"
+          className="mt-2 max-w-xs rounded-lg border border-slate-200 dark:border-white/10"
         />
       );
 
@@ -66,7 +73,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
           href={message.media_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-2 block text-sm underline text-blue-600 dark:text-blue-300"
+          className="mt-2 block text-sm text-blue-700 underline dark:text-blue-300"
         >
           📄 View document
         </a>
@@ -75,25 +82,31 @@ export function ChatMessageBubble({ message }: { message: Message }) {
     return null;
   };
 
+  /* -------------------------------------------------------
+   * UI
+   * ------------------------------------------------------- */
   return (
     <div
       className={`flex w-full flex-col gap-1 ${
         isInbound ? "items-start" : "items-end"
       } animate-messageAppear`}
     >
-      <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+      {/* Sender */}
+      <div className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-400">
         {message.sender}
       </div>
 
+      {/* Bubble */}
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow-sm ${bubbleClasses}`}
+        className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${bubbleClasses}`}
       >
         {message.text && <span>{message.text}</span>}
         {renderMedia()}
       </div>
 
+      {/* Timestamp */}
       <span
-        className={`text-[10px] text-slate-500 dark:text-slate-400 ${
+        className={`text-[10px] text-slate-600 dark:text-slate-400 ${
           isInbound ? "self-start" : "self-end"
         }`}
       >

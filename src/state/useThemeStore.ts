@@ -24,7 +24,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches;
 
-    const theme: Theme = stored || (prefersDark ? "dark" : "light");
+      const theme: Theme = stored === "dark" ? "dark" : "light";
 
     // Apply to <html>
     if (typeof document !== "undefined") {

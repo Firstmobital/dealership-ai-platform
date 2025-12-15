@@ -33,7 +33,7 @@ export function Sidebar({ forceWhite = false }: { forceWhite?: boolean }) {
             flex h-9 w-9 items-center justify-center rounded-lg
             ${
               isLight
-                ? "bg-slate-100 text-slate-700"
+                ? "bg-slate-100 text-slate-800"
                 : "bg-accent/25 text-accent"
             }
           `}
@@ -45,9 +45,10 @@ export function Sidebar({ forceWhite = false }: { forceWhite?: boolean }) {
           <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
             Techwheels AI
           </p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
+          <p className="text-xs text-slate-600 dark:text-slate-400">
             Dealership cockpit
-          </p>
+            </p>
+
         </div>
       </div>
 
@@ -65,7 +66,7 @@ export function Sidebar({ forceWhite = false }: { forceWhite?: boolean }) {
             mt-4 pt-3 text-xs uppercase tracking-wide
             ${
               isLight
-                ? "border-t border-slate-200 text-slate-400"
+                ? "border-t border-slate-200 text-slate-600"
                 : "border-t border-white/10 text-slate-500"
             }
           `}
