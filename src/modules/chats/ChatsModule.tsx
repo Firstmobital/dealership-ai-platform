@@ -1,5 +1,6 @@
 // src/modules/chats/ChatsModule.tsx
-// JOYZ-STYLE LIGHT MODE – UI ONLY (LOGIC UNCHANGED)
+// JOYZ-STYLE LIGHT MODE + EXISTING DARK MODE
+// LOGIC 100% UNCHANGED
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -13,6 +14,7 @@ import {
 import { useChatStore } from "../../state/useChatStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
+import { useThemeStore } from "../../state/useThemeStore";
 
 import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { ChatSidebarItem } from "./components/ChatSidebarItem";
@@ -52,6 +54,9 @@ export function ChatsModule() {
 
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
+  const { theme } = useThemeStore();
+
+  const isDark = theme === "dark";
   const subOrgKey = activeSubOrg?.id ?? "__no_suborg__";
 
   const [headerContact, setHeaderContact] =
@@ -91,8 +96,10 @@ export function ChatsModule() {
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+
     const nearBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+
     if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -100,6 +107,7 @@ export function ChatsModule() {
     if (!activeConversationId) return;
     const msgs = messages[activeConversationId];
     if (!msgs?.length) return;
+
     if (msgs[msgs.length - 1].sender === "bot") {
       setIsTyping(false);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -126,6 +134,7 @@ export function ChatsModule() {
         name: data?.name ?? null,
         phone: data?.phone ?? null,
       });
+
       setHeaderLoading(false);
     }
     load();
@@ -245,7 +254,7 @@ export function ChatsModule() {
 
   if (!currentOrganization) {
     return (
-      <div className="flex h-full items-center justify-center text-slate-700">
+      <div className="flex h-full items-center justify-center text-slate-600">
         Select an organization to continue.
       </div>
     );
@@ -260,12 +269,26 @@ export function ChatsModule() {
    * UI
    * ------------------------------------------------------- */
   return (
-    <div className="flex h-full w-full bg-white">
-      <div className="flex h-full w-full gap-4 bg-white">
+    <div className={`flex h-full w-full ${isDark ? "bg-slate-900" : "bg-white"}`}>
+      <div className="flex h-full w-full">
         {/* LEFT PANEL */}
-        <div className="flex h-full w-80 flex-col border-r border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+        <div
+          className={`w-80 border-r ${
+            isDark
+              ? "bg-slate-900 border-white/10"
+              : "bg-white border-slate-200"
+          }`}
+        >
+          <div
+            className={`flex items-center justify-between border-b px-4 py-3 ${
+              isDark ? "border-white/10" : "border-slate-200"
+            }`}
+          >
+            <div
+              className={`flex items-center gap-2 text-sm font-semibold ${
+                isDark ? "text-white" : "text-slate-900"
+              }`}
+            >
               <MessageCircle size={16} />
               Conversations
             </div>
@@ -273,7 +296,11 @@ export function ChatsModule() {
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as any)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800"
+              className={`rounded-md border px-2 py-1 text-xs ${
+                isDark
+                  ? "bg-slate-900 border-white/10 text-slate-300"
+                  : "bg-white border-slate-200 text-slate-800"
+              }`}
             >
               <option value="all">All</option>
               <option value="unassigned">Unassigned</option>
@@ -299,19 +326,35 @@ export function ChatsModule() {
         </div>
 
         {/* RIGHT PANEL */}
-        <div className="flex flex-1 flex-col overflow-hidden bg-white">
+        <div
+          className={`flex flex-1 flex-col ${
+            isDark ? "bg-slate-900" : "bg-white"
+          }`}
+        >
           {!activeConversationId ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-slate-700">
+            <div className="flex flex-1 items-center justify-center text-slate-500">
               Select a conversation
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <div
+                className={`flex items-center justify-between border-b px-6 py-4 ${
+                  isDark ? "border-white/10" : "border-slate-200"
+                }`}
+              >
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">
+                  <h2
+                    className={`text-base font-semibold ${
+                      isDark ? "text-white" : "text-slate-900"
+                    }`}
+                  >
                     {headerContact?.name || headerContact?.phone}
                   </h2>
-                  <div className="text-xs text-slate-700">
+                  <div
+                    className={`text-xs ${
+                      isDark ? "text-slate-400" : "text-slate-600"
+                    }`}
+                  >
                     {headerContact?.phone}
                     {headerLoading ? " (loading…)" : ""}
                   </div>
@@ -324,13 +367,13 @@ export function ChatsModule() {
                       !aiToggle[activeConversationId]
                     )
                   }
-                  className={`flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold
-                    ${
-                      aiToggle[activeConversationId]
-                        ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                        : "border-slate-200 bg-slate-50 text-slate-700"
-                    }
-                  `}
+                  className={`flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold ${
+                    aiToggle[activeConversationId]
+                      ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                      : isDark
+                      ? "border-white/10 bg-slate-800 text-slate-200"
+                      : "border-slate-200 bg-slate-50 text-slate-700"
+                  }`}
                 >
                   {aiToggle[activeConversationId] ? (
                     <ToggleRight size={16} />
@@ -343,10 +386,16 @@ export function ChatsModule() {
 
               <div
                 ref={scrollRef}
-                className="flex-1 overflow-y-auto bg-white p-6 space-y-4"
+                className={`flex-1 overflow-y-auto p-6 space-y-4 ${
+                  isDark ? "bg-slate-900" : "bg-white"
+                }`}
               >
                 {isTyping && (
-                  <div className="text-sm text-slate-700">
+                  <div
+                    className={`text-sm ${
+                      isDark ? "text-slate-400" : "text-slate-600"
+                    }`}
+                  >
                     Agent is typing…
                   </div>
                 )}
@@ -354,15 +403,26 @@ export function ChatsModule() {
                 {currentMessages.map((msg) => (
                   <ChatMessageBubble key={msg.id} message={msg} />
                 ))}
+
                 <div ref={bottomRef} />
               </div>
 
               <form
                 onSubmit={handleSend}
-                className="border-t border-slate-200 bg-white px-6 py-4"
+                className={`border-t px-6 py-4 ${
+                  isDark
+                    ? "border-white/10 bg-slate-900"
+                    : "border-slate-200 bg-white"
+                }`}
               >
                 <div className="flex items-center gap-3">
-                  <label className="flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-700">
+                  <label
+                    className={`flex cursor-pointer items-center justify-center rounded-full border p-2 ${
+                      isDark
+                        ? "border-white/10 bg-slate-800 text-slate-200"
+                        : "border-slate-200 bg-white text-slate-700"
+                    }`}
+                  >
                     <Paperclip size={18} />
                     <input type="file" name="file" className="hidden" />
                   </label>
@@ -370,7 +430,11 @@ export function ChatsModule() {
                   <input
                     name="message"
                     placeholder="Type your message..."
-                    className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400"
+                    className={`flex-1 rounded-full border px-4 py-2 text-sm ${
+                      isDark
+                        ? "bg-slate-800 border-white/10 text-white"
+                        : "bg-white border-slate-200 text-slate-900"
+                    }`}
                   />
 
                   <button
