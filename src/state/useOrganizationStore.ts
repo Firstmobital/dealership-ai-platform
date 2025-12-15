@@ -1,8 +1,12 @@
+// src/state/useOrganizationStore.ts
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import type { Organization, SubOrganization } from "../types/database";
 
 export type OrgState = {
+  /* -------------------------------------------------------------------------- */
+  /* DATA                                                                       */
+  /* -------------------------------------------------------------------------- */
   organizations: Organization[];
   subOrganizations: SubOrganization[];
 
@@ -15,18 +19,25 @@ export type OrgState = {
   loading: boolean;
   initialized: boolean;
 
-  // Legacy API — MUST remain for build
+  /* -------------------------------------------------------------------------- */
+  /* LEGACY / PUBLIC API (DO NOT BREAK)                                         */
+  /* -------------------------------------------------------------------------- */
   fetchOrganizations: () => Promise<void>;
   fetchSubOrganizations: (orgId: string) => Promise<void>;
   switchOrganization: (orgId: string | null) => void;
   switchSubOrganization: (subOrgId: string | null) => void;
 
-  // Stage 6E-2 additions
+  /* -------------------------------------------------------------------------- */
+  /* STAGE 6E+                                                                   */
+  /* -------------------------------------------------------------------------- */
   hydrate: () => void;
   loadAll: () => Promise<void>;
 };
 
 export const useOrganizationStore = create<OrgState>((set, get) => ({
+  /* -------------------------------------------------------------------------- */
+  /* INITIAL STATE                                                              */
+  /* -------------------------------------------------------------------------- */
   organizations: [],
   subOrganizations: [],
 
@@ -39,31 +50,40 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
   loading: false,
   initialized: false,
 
+  /* -------------------------------------------------------------------------- */
+  /* HYDRATION                                                                  */
+  /* -------------------------------------------------------------------------- */
   hydrate: () => {
     const orgId = localStorage.getItem("selectedOrgId");
-    const subId = localStorage.getItem("selectedSubOrgId");
+    const subOrgId = localStorage.getItem("selectedSubOrgId");
 
     set({
       selectedOrganizationId: orgId || null,
-      selectedSubOrganizationId: subId || null,
+      selectedSubOrganizationId: subOrgId || null,
     });
   },
 
+  /* -------------------------------------------------------------------------- */
+  /* LOAD ALL (ORG → SUB ORG)                                                    */
+  /* -------------------------------------------------------------------------- */
   loadAll: async () => {
+    get().hydrate();
     await get().fetchOrganizations();
 
     const org = get().currentOrganization;
-    if (org) {
+    if (org?.id) {
       await get().fetchSubOrganizations(org.id);
     }
 
     set({ initialized: true });
   },
 
+  /* -------------------------------------------------------------------------- */
+  /* FETCH ORGANIZATIONS                                                        */
+  /* -------------------------------------------------------------------------- */
   fetchOrganizations: async () => {
     set({ loading: true });
 
-    // Load all orgs
     const { data, error } = await supabase
       .from("organizations")
       .select("*")
@@ -75,29 +95,37 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
       return;
     }
 
-    const orgs = data ?? [];
+    const organizations = data ?? [];
 
-    // Determine selected org
-    const stored = localStorage.getItem("selectedOrgId");
-    let selectedId = get().selectedOrganizationId || stored;
+    // Resolve selected org ID
+    const storedId = localStorage.getItem("selectedOrgId");
+    let selectedId =
+      get().selectedOrganizationId || storedId || null;
 
-    if (!selectedId && orgs.length) selectedId = orgs[0].id;
+    if (!selectedId && organizations.length > 0) {
+      selectedId = organizations[0].id;
+    }
 
-    const activeOrg =
-      selectedId ? orgs.find((o) => o.id === selectedId) ?? null : null;
+    const currentOrganization =
+      selectedId
+        ? organizations.find((o) => o.id === selectedId) ?? null
+        : null;
 
-    if (activeOrg) {
-      localStorage.setItem("selectedOrgId", activeOrg.id);
+    if (currentOrganization) {
+      localStorage.setItem("selectedOrgId", currentOrganization.id);
     }
 
     set({
-      organizations: orgs,
-      currentOrganization: activeOrg,
-      selectedOrganizationId: activeOrg ? activeOrg.id : null,
+      organizations,
+      currentOrganization,
+      selectedOrganizationId: currentOrganization?.id ?? null,
       loading: false,
     });
   },
 
+  /* -------------------------------------------------------------------------- */
+  /* FETCH SUB ORGANIZATIONS                                                     */
+  /* -------------------------------------------------------------------------- */
   fetchSubOrganizations: async (orgId: string) => {
     if (!orgId) return;
 
@@ -115,26 +143,40 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
       return;
     }
 
-    const subs = data ?? [];
+    const subOrganizations = data ?? [];
 
-    const stored = localStorage.getItem("selectedSubOrgId");
-    let selectedId = get().selectedSubOrganizationId || stored;
+    const storedId = localStorage.getItem("selectedSubOrgId");
+    let selectedId =
+      get().selectedSubOrganizationId || storedId || null;
 
-    if (!selectedId && subs.length) selectedId = subs[0].id;
+    if (!selectedId && subOrganizations.length > 0) {
+      selectedId = subOrganizations[0].id;
+    }
 
-    const active =
-      selectedId ? subs.find((s) => s.id === selectedId) ?? null : null;
+    const currentSubOrganization =
+      selectedId
+        ? subOrganizations.find((s) => s.id === selectedId) ?? null
+        : null;
 
-    if (active) localStorage.setItem("selectedSubOrgId", active.id);
+    if (currentSubOrganization) {
+      localStorage.setItem(
+        "selectedSubOrgId",
+        currentSubOrganization.id
+      );
+    }
 
     set({
-      subOrganizations: subs,
-      currentSubOrganization: active,
-      selectedSubOrganizationId: active ? active.id : null,
+      subOrganizations,
+      currentSubOrganization,
+      selectedSubOrganizationId:
+        currentSubOrganization?.id ?? null,
       loading: false,
     });
   },
 
+  /* -------------------------------------------------------------------------- */
+  /* SWITCH ORGANIZATION                                                        */
+  /* -------------------------------------------------------------------------- */
   switchOrganization: (orgId: string | null) => {
     if (!orgId) {
       localStorage.removeItem("selectedOrgId");
@@ -158,20 +200,26 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
     set({
       currentOrganization: org,
       selectedOrganizationId: org?.id ?? null,
-      selectedSubOrganizationId: null,
       currentSubOrganization: null,
+      selectedSubOrganizationId: null,
       subOrganizations: [],
     });
 
-    if (org) {
+    if (org?.id) {
       get().fetchSubOrganizations(org.id);
     }
   },
 
+  /* -------------------------------------------------------------------------- */
+  /* SWITCH SUB ORGANIZATION                                                     */
+  /* -------------------------------------------------------------------------- */
   switchSubOrganization: (subOrgId: string | null) => {
     if (!subOrgId) {
       localStorage.removeItem("selectedSubOrgId");
-      set({ currentSubOrganization: null, selectedSubOrganizationId: null });
+      set({
+        currentSubOrganization: null,
+        selectedSubOrganizationId: null,
+      });
       return;
     }
 
@@ -186,4 +234,3 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
     });
   },
 }));
-

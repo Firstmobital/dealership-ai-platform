@@ -25,21 +25,21 @@ import { useChatStore } from "./state/useChatStore";
 
 import { Toaster } from "react-hot-toast";
 
-
 /* -------------------------------------------------------------------------- */
-/* FULL SCREEN LOADING                                                        */
+/* FULL SCREEN LOADING                                                         */
 /* -------------------------------------------------------------------------- */
 function FullScreenLoader() {
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-slate-200">
       <div className="flex flex-col items-center gap-3">
         <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-        <p className="text-sm text-slate-400">Preparing your dealership workspace…</p>
+        <p className="text-sm text-slate-400">
+          Preparing your dealership workspace…
+        </p>
       </div>
     </div>
   );
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* AUTH GUARD                                                                  */
@@ -65,19 +65,22 @@ function RequireAuth({ children }: { children: ReactElement }) {
   return children;
 }
 
-
 /* -------------------------------------------------------------------------- */
-/* APP ROOT — ADDS REALTIME INIT                                              */
+/* APP ROOT                                                                    */
 /* -------------------------------------------------------------------------- */
 function App() {
   const { user } = useAuthStore();
-  const { activeOrganization, fetchOrganizations } = useOrganizationStore();
+
+  const {
+    currentOrganization,
+    fetchOrganizations,
+  } = useOrganizationStore();
 
   const initRealtime = useChatStore((s) => s.initRealtime);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
 
-  /** 
-   * 1) Load organization after login
+  /**
+   * 1) Load organizations after login
    */
   useEffect(() => {
     if (user) {
@@ -89,16 +92,15 @@ function App() {
    * 2) Start realtime ONLY after organization is known
    */
   useEffect(() => {
-    if (!activeOrganization?.id) return;
+    if (!currentOrganization?.id) return;
 
-    // Start realtime event listeners (conversations + messages)
-    initRealtime(activeOrganization.id);
-
-    // Load initial conversation list
-    fetchConversations(activeOrganization.id);
-
-  }, [activeOrganization?.id, initRealtime, fetchConversations]);
-
+    initRealtime(currentOrganization.id);
+    fetchConversations(currentOrganization.id);
+  }, [
+    currentOrganization?.id,
+    initRealtime,
+    fetchConversations,
+  ]);
 
   return (
     <Routes>
@@ -114,44 +116,37 @@ function App() {
         element={
           <RequireAuth>
             <>
-              <Toaster position="top-right" toastOptions={{ duration: 2500 }} />
+              <Toaster
+                position="top-right"
+                toastOptions={{ duration: 2500 }}
+              />
               <AppLayout />
             </>
           </RequireAuth>
         }
       >
-        {/* Default = Chats Inbox */}
         <Route index element={<ChatsModule />} />
-
-        {/* Chats explicitly */}
         <Route path="chats" element={<ChatsModule />} />
-
-        {/* Knowledge Base */}
         <Route path="knowledge" element={<KnowledgeBaseModule />} />
-
-        {/* Bot Personality */}
         <Route path="bot" element={<BotPersonalityModule />} />
-
-        {/* Workflows */}
         <Route path="workflows" element={<WorkflowModule />} />
-
-        {/* Campaigns */}
         <Route path="campaigns" element={<CampaignsModule />} />
-
-        {/* Settings Home */}
         <Route path="settings" element={<SettingsModule />} />
-
-        {/* WhatsApp Settings */}
-        <Route path="settings/whatsapp" element={<WhatsappSettingsModule />} />
-
-        {/* Sub-Organizations */}
-        <Route path="settings/sub-orgs" element={<SubOrganizationsPanel />} />
-
-        {/* Unanswered Questions */}
-        <Route path="unanswered" element={<UnansweredQuestionsModule />} />
+        <Route
+          path="settings/whatsapp"
+          element={<WhatsappSettingsModule />}
+        />
+        <Route
+          path="settings/sub-orgs"
+          element={<SubOrganizationsPanel />}
+        />
+        <Route
+          path="unanswered"
+          element={<UnansweredQuestionsModule />}
+        />
       </Route>
 
-      {/* ---------------------------- Fallback 404 ---------------------------- */}
+      {/* ---------------------------- Fallback ------------------------------- */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
