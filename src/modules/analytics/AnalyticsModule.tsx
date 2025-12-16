@@ -10,42 +10,12 @@ import { TemplateAnalyticsTable } from "./TemplateAnalyticsTable";
 import { ModelAnalyticsTable } from "./ModelAnalyticsTable";
 import { FailureAnalyticsTable } from "./FailureAnalyticsTable";
 
-/* ------------------------------------------------------------------ */
-/* TYPES — aligned with Supabase views                                 */
-/* ------------------------------------------------------------------ */
-
-type CampaignAnalyticsRow = {
-  campaign_id: string;
-  campaign_name: string;
-  template_name: string;
-  total_recipients: number | null;
-  delivered_count: number | null;
-  failed_count: number | null;
-  delivery_percent: number | null;
-};
-
-type TemplateAnalyticsRow = {
-  template_name: string;
-  total_messages: number | null;
-  delivered_count: number | null;
-  failed_count: number | null;
-  delivery_percent: number | null;
-};
-
-type ModelAnalyticsRow = {
-  model: string;
-  total_messages: number | null;
-  delivered_count: number | null;
-  failed_count: number | null;
-  delivery_percent: number | null;
-};
-
-type FailureAnalyticsRow = {
-  failure_reason: string;
-  failure_count: number | null;
-};
-
-/* ------------------------------------------------------------------ */
+import type {
+  CampaignAnalyticsRow,
+  TemplateAnalyticsRow,
+  ModelAnalyticsRow,
+  FailureAnalyticsRow,
+} from "./analytics.types";
 
 export function AnalyticsModule() {
   const { currentOrganization } = useOrganizationStore();
@@ -62,12 +32,7 @@ export function AnalyticsModule() {
     const fetchAll = async () => {
       setLoading(true);
 
-      const [
-        campaignsRes,
-        templatesRes,
-        modelsRes,
-        failuresRes,
-      ] = await Promise.all([
+      const [c, t, m, f] = await Promise.all([
         supabase
           .from("campaign_analytics_summary")
           .select("*")
@@ -89,10 +54,42 @@ export function AnalyticsModule() {
           .eq("organization_id", currentOrganization.id),
       ]);
 
-      setCampaigns((campaignsRes.data ?? []) as CampaignAnalyticsRow[]);
-      setTemplates((templatesRes.data ?? []) as TemplateAnalyticsRow[]);
-      setModels((modelsRes.data ?? []) as ModelAnalyticsRow[]);
-      setFailures((failuresRes.data ?? []) as FailureAnalyticsRow[]);
+      setCampaigns(
+        (c.data ?? []).map((r) => ({
+          ...r,
+          total_recipients: r.total_recipients ?? 0,
+          delivered_count: r.delivered_count ?? 0,
+          failed_count: r.failed_count ?? 0,
+          delivery_percent: r.delivery_percent ?? 0,
+        }))
+      );
+
+      setTemplates(
+        (t.data ?? []).map((r) => ({
+          ...r,
+          total_messages: r.total_messages ?? 0,
+          delivered_count: r.delivered_count ?? 0,
+          failed_count: r.failed_count ?? 0,
+          delivery_percent: r.delivery_percent ?? 0,
+        }))
+      );
+
+      setModels(
+        (m.data ?? []).map((r) => ({
+          ...r,
+          total_messages: r.total_messages ?? 0,
+          delivered_count: r.delivered_count ?? 0,
+          failed_count: r.failed_count ?? 0,
+          delivery_percent: r.delivery_percent ?? 0,
+        }))
+      );
+
+      setFailures(
+        (f.data ?? []).map((r) => ({
+          ...r,
+          failure_count: r.failure_count ?? 0,
+        }))
+      );
 
       setLoading(false);
     };

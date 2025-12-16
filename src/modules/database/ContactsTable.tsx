@@ -1,19 +1,46 @@
-export function ContactsTable({ rows, filters, loading }) {
+// src/modules/database/ContactsTable.tsx
+
+type ContactRow = {
+    first_name: string | null;
+    last_name: string | null;
+    phone: string;
+    model: string | null;
+    delivered_campaigns: string[];
+    failed_campaigns: string[];
+  };
+  
+  type Filters = {
+    phone: string;
+    model: string;
+    campaign: string;
+    status: string;
+  };
+  
+  type Props = {
+    rows: ContactRow[];
+    filters: Filters;
+    loading: boolean;
+  };
+  
+  export function ContactsTable({ rows, filters, loading }: Props) {
     const filtered = rows.filter((r) => {
       if (filters.phone && !r.phone.includes(filters.phone)) return false;
       if (filters.model && r.model !== filters.model) return false;
   
       if (filters.campaign) {
-        const all = [
-          ...r.delivered_campaigns,
-          ...r.failed_campaigns,
-        ];
-        if (!all.some((c) =>
-          c.toLowerCase().includes(filters.campaign.toLowerCase())
-        )) return false;
+        const all = [...r.delivered_campaigns, ...r.failed_campaigns];
+        if (
+          !all.some((c) =>
+            c.toLowerCase().includes(filters.campaign.toLowerCase())
+          )
+        )
+          return false;
       }
   
-      if (filters.status === "delivered" && r.delivered_campaigns.length === 0)
+      if (
+        filters.status === "delivered" &&
+        r.delivered_campaigns.length === 0
+      )
         return false;
   
       if (filters.status === "failed" && r.failed_campaigns.length === 0)
@@ -48,10 +75,10 @@ export function ContactsTable({ rows, filters, loading }) {
         <tbody>
           {filtered.map((r) => (
             <tr key={r.phone}>
-              <td>{r.first_name || "-"}</td>
-              <td>{r.last_name || "-"}</td>
+              <td>{r.first_name ?? "-"}</td>
+              <td>{r.last_name ?? "-"}</td>
               <td>{r.phone}</td>
-              <td>{r.model || "-"}</td>
+              <td>{r.model ?? "-"}</td>
   
               <td className="text-green-400">
                 {r.delivered_campaigns.join(", ")}
@@ -63,9 +90,7 @@ export function ContactsTable({ rows, filters, loading }) {
   
               <td>
                 {r.failed_campaigns.length > 0 && (
-                  <button className="text-accent text-xs">
-                    Retry
-                  </button>
+                  <button className="text-accent text-xs">Retry</button>
                 )}
               </td>
             </tr>

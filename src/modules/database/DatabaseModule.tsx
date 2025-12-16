@@ -1,3 +1,5 @@
+// src/modules/database/DatabaseModule.tsx
+
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import type { ContactCampaignSummary } from "../../types/database";
@@ -7,6 +9,17 @@ import { DatabaseUpload } from "./DatabaseUpload";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { Upload } from "lucide-react";
 
+/* ------------------------------------------------------------------ */
+/* SHARED FILTER TYPE (single source of truth)                         */
+/* ------------------------------------------------------------------ */
+
+export type DatabaseFiltersState = {
+  phone: string;
+  model: string;
+  campaign: string;
+  status: "all" | "delivered" | "failed" | "never";
+};
+
 export function DatabaseModule() {
   const { currentOrganization } = useOrganizationStore();
 
@@ -14,11 +27,11 @@ export function DatabaseModule() {
   const [loading, setLoading] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
 
-  const [filters, setFilters] = useState({
-    campaign: "",
-    status: "all" as "all" | "delivered" | "failed" | "never",
-    model: "",
+  const [filters, setFilters] = useState<DatabaseFiltersState>({
     phone: "",
+    model: "",
+    campaign: "",
+    status: "all",
   });
 
   /* -------------------------------------------------------------- */
@@ -28,6 +41,7 @@ export function DatabaseModule() {
     if (!currentOrganization?.id) return;
 
     setLoading(true);
+
     const { data, error } = await supabase
       .from("contact_campaign_summary")
       .select("*")
@@ -51,14 +65,11 @@ export function DatabaseModule() {
   /* -------------------------------------------------------------- */
   return (
     <div className="h-full w-full p-4 flex flex-col overflow-hidden">
-
       {/* ========================================================= */}
       {/* HEADER + ACTIONS                                         */}
       {/* ========================================================= */}
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-sm font-semibold text-white">
-          Database
-        </h1>
+        <h1 className="text-sm font-semibold text-white">Database</h1>
 
         <button
           onClick={() => setShowUpload(true)}

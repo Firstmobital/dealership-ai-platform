@@ -1,4 +1,18 @@
-export function DatabaseFilters({ filters, setFilters }) {
+// src/modules/database/DatabaseFilters.tsx
+
+type Filters = {
+    phone: string;
+    model: string;
+    campaign: string;
+    status: string;
+  };
+  
+  type Props = {
+    filters: Filters;
+    setFilters: (updater: (f: Filters) => Filters) => void;
+  };
+  
+  export function DatabaseFilters({ filters, setFilters }: Props) {
     return (
       <div className="flex gap-3 mb-4">
         <input
