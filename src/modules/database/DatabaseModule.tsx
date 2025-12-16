@@ -10,7 +10,7 @@ import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { Upload } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
-/* SHARED FILTER TYPE (single source of truth)                         */
+/* SHARED FILTER TYPE (SINGLE SOURCE OF TRUTH)                         */
 /* ------------------------------------------------------------------ */
 
 export type DatabaseFiltersState = {
@@ -107,7 +107,7 @@ export function DatabaseModule() {
           onClose={() => setShowUpload(false)}
           onDone={async () => {
             setShowUpload(false);
-            await fetchData(); // 🔥 refresh after upload
+            await fetchData(); // refresh after upload
           }}
         />
       )}
