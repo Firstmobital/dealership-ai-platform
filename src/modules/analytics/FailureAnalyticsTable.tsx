@@ -1,19 +1,37 @@
-export function FailureAnalyticsTable({ rows }) {
+// src/modules/analytics/FailureAnalyticsTable.tsx
+
+type FailureAnalyticsRow = {
+    failure_reason: string;
+    failure_count: number;
+  };
+  
+  type Props = {
+    rows: FailureAnalyticsRow[];
+  };
+  
+  export function FailureAnalyticsTable({ rows }: Props) {
     return (
       <Section title="Failure Reasons">
-        <Table>
+        <Table headers={["Reason", "Count"]}>
           {rows.map((r, i) => (
             <tr key={i}>
               <td>{r.failure_reason}</td>
-              <td>{r.failure_count}</td>
+              <td className="text-red-400">{r.failure_count}</td>
             </tr>
           ))}
         </Table>
       </Section>
     );
   }
-
-  function Section({ title, children }) {
+  
+  /* ------------------------------------------------------------------ */
+  
+  type SectionProps = {
+    title: string;
+    children: React.ReactNode;
+  };
+  
+  function Section({ title, children }: SectionProps) {
     return (
       <div className="mb-8">
         <h2 className="text-sm font-semibold mb-2">{title}</h2>
@@ -24,13 +42,20 @@ export function FailureAnalyticsTable({ rows }) {
     );
   }
   
-  function Table({ children }) {
+  type TableProps = {
+    headers: string[];
+    children: React.ReactNode;
+  };
+  
+  function Table({ headers, children }: TableProps) {
     return (
       <table className="w-full text-xs">
         <thead className="bg-slate-800 text-slate-400">
           <tr>
-            {Array.from({ length: 6 }).map((_, i) => (
-              <th key={i} className="p-2 text-left" />
+            {headers.map((h) => (
+              <th key={h} className="p-2 text-left">
+                {h}
+              </th>
             ))}
           </tr>
         </thead>

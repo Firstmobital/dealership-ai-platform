@@ -1,16 +1,29 @@
-export function OverviewCards({ campaigns, loading }) {
+// src/modules/analytics/OverviewCards.tsx
+
+type CampaignAnalyticsRow = {
+    total_recipients: number | null;
+    delivered_count: number | null;
+    failed_count: number | null;
+  };
+  
+  type OverviewCardsProps = {
+    campaigns: CampaignAnalyticsRow[];
+    loading: boolean;
+  };
+  
+  export function OverviewCards({ campaigns, loading }: OverviewCardsProps) {
     const total = campaigns.reduce(
-      (acc, c) => acc + (c.total_recipients || 0),
+      (acc: number, c) => acc + (c.total_recipients ?? 0),
       0
     );
   
     const delivered = campaigns.reduce(
-      (acc, c) => acc + (c.delivered_count || 0),
+      (acc: number, c) => acc + (c.delivered_count ?? 0),
       0
     );
   
     const failed = campaigns.reduce(
-      (acc, c) => acc + (c.failed_count || 0),
+      (acc: number, c) => acc + (c.failed_count ?? 0),
       0
     );
   
@@ -31,7 +44,12 @@ export function OverviewCards({ campaigns, loading }) {
     );
   }
   
-  function Card({ title, value }) {
+  type CardProps = {
+    title: string;
+    value: number | string;
+  };
+  
+  function Card({ title, value }: CardProps) {
     return (
       <div className="bg-slate-900/60 border border-white/10 rounded-xl p-4">
         <div className="text-xs text-slate-400">{title}</div>
