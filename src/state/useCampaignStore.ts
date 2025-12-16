@@ -21,13 +21,17 @@ type CampaignState = {
     organizationId: string;
     sub_organization_id?: string | null;
     name: string;
+  
+    // ✅ PHASE 2B
+    template_name: string;
+  
     description?: string;
     templateBody: string;
     templateVariables: string[];
     scheduledAt: string | null;
     rows: CsvRow[];
   }) => Promise<string>;
-
+  
   launchCampaign: (
     campaignId: string,
     scheduledAt?: string | null
@@ -114,12 +118,17 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     organizationId,
     sub_organization_id,
     name,
+  
+    // ✅ PHASE 2B
+    template_name,
+  
     description,
     templateBody,
     templateVariables,
     scheduledAt,
     rows,
   }) => {
+  
     const { activeSubOrg } = useSubOrganizationStore.getState();
     const finalSubOrg = sub_organization_id ?? activeSubOrg?.id ?? null;
 
@@ -133,6 +142,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         organization_id: organizationId,
         sub_organization_id: finalSubOrg, // ← REQUIRED
         name,
+        template_name,
         description: description ?? null,
         channel: "whatsapp",
         status,

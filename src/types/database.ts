@@ -43,14 +43,23 @@ export type OrganizationUser = {
 };
 
 // -------------------------------------------------------------
-// CONTACTS
+// CONTACTS  ✅ UPDATED (PHASE 1)
 // -------------------------------------------------------------
 export type Contact = {
   id: UUID;
   organization_id: UUID;
+
   phone: string;
+
+  // Structured fields for Database UI
+  first_name: string | null;
+  last_name: string | null;
+  model: string | null;
+
+  // Legacy / backward compatibility
   name: string | null;
   labels: Record<string, unknown> | null;
+
   created_at?: string;
 };
 
@@ -152,7 +161,6 @@ export type Workflow = {
   description: string | null;
   trigger: any;
 
-  // Expanded modes
   mode: "auto" | "manual" | "smart" | "strict";
 
   is_active: boolean;
@@ -160,7 +168,6 @@ export type Workflow = {
   created_at: string;
   updated_at: string;
 };
-
 
 export type WorkflowStep = {
   id: UUID;
@@ -180,7 +187,7 @@ export type WorkflowLog = {
 };
 
 // -------------------------------------------------------------
-// CAMPAIGNS (NEW BULK MESSAGING SYSTEM)
+// CAMPAIGNS (BULK MESSAGING SYSTEM) ✅ UPDATED
 // -------------------------------------------------------------
 export type CampaignStatus =
   | "draft"
@@ -194,9 +201,14 @@ export type Campaign = {
   id: UUID;
   organization_id: UUID;
   sub_organization_id: UUID | null;
-  name: string;
-  description: string | null;
 
+  // Internal batch name (eg: "Dec 16 Batch 1")
+  name: string;
+
+  // ✅ Template / use-case name (eg: "Zawl Altroz")
+  template_name: string | null;
+
+  description: string | null;
   channel: "whatsapp";
 
   status: CampaignStatus;
@@ -231,6 +243,7 @@ export type CampaignMessage = {
   id: UUID;
   organization_id: UUID;
   sub_organization_id: UUID | null;
+
   campaign_id: UUID;
   contact_id: UUID | null;
 
@@ -247,7 +260,23 @@ export type CampaignMessage = {
 };
 
 // -------------------------------------------------------------
-// WHATSAPP SETTINGS (FINAL SCHEMA)
+// DATABASE VIEW: CONTACT → CAMPAIGN SUMMARY (PHASE 1)
+// -------------------------------------------------------------
+export type ContactCampaignSummary = {
+  contact_id: UUID;
+  organization_id: UUID;
+
+  first_name: string | null;
+  last_name: string | null;
+  phone: string;
+  model: string | null;
+
+  delivered_campaigns: string[];
+  failed_campaigns: string[];
+};
+
+// -------------------------------------------------------------
+// WHATSAPP SETTINGS
 // -------------------------------------------------------------
 export type WhatsappSettings = {
   id: UUID;
@@ -265,4 +294,3 @@ export type WhatsappSettings = {
   created_at?: string;
   updated_at?: string;
 };
-

@@ -1,7 +1,6 @@
 // supabase/functions/ai-handler/index.ts
 // deno-lint-ignore-file no-explicit-any
-// FORCE_DEPLOY_2025_12_15
-
+// FORCE_DEPLOY_2025_12_16_FINAL
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
@@ -13,6 +12,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const AI_NO_REPLY_TOKEN = "<NO_REPLY>";
 
 if (!OPENAI_API_KEY || !PROJECT_URL || !SERVICE_ROLE_KEY) {
   console.error("[ai-handler] Missing required environment variables", {
@@ -26,6 +26,7 @@ if (!OPENAI_API_KEY || !PROJECT_URL || !SERVICE_ROLE_KEY) {
    CLIENTS
 ============================================================================ */
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
@@ -156,7 +157,124 @@ async function safeChatCompletion(
 }
 
 /* ============================================================================
-   UNANSWERED QUESTION LOGGER  ✅ OPTION A
+   PHASE 7A — CAMPAIGN CONTEXT HELPERS
+============================================================================ */
+async function fetchCampaignContextForContact(
+  organizationId: string,
+  contactId: string,
+  logger: ReturnType<typeof createLogger>,
+) {
+  const contact = await safeSupabase<{
+    id: string;
+    first_name: string | null;
+    last_name: string | null;
+    model: string | null;
+    phone: string | null;
+  }>(
+    "load_contact_for_campaign_context",
+    logger,
+    () =>
+      supabase
+        .from("contacts")
+        .select("id, first_name, last_name, model, phone")
+        .eq("id", contactId)
+        .maybeSingle(),
+  );
+
+  if (!contact || !contact.phone) return null;
+
+  const summary = await safeSupabase<{
+    delivered_campaigns: string[] | null;
+    failed_campaigns: string[] | null;
+    last_delivered_at: string | null;
+  }>(
+    "load_contact_campaign_summary",
+    logger,
+    () =>
+      supabase
+        .from("contact_campaign_summary")
+        .select("delivered_campaigns, failed_campaigns, last_delivered_at")
+        .eq("organization_id", organizationId)
+        .eq("phone", contact.phone)
+        .maybeSingle(),
+  );
+
+  return {
+    contact,
+    delivered: summary?.delivered_campaigns ?? [],
+    failed: summary?.failed_campaigns ?? [],
+    lastDeliveredAt: summary?.last_delivered_at ?? null,
+  };
+}
+
+function buildCampaignContextText(ctx: any): string {
+  if (!ctx) return "";
+
+  const { contact, delivered, failed, lastDeliveredAt } = ctx;
+
+  const daysAgo =
+    lastDeliveredAt
+      ? Math.floor(
+          (Date.now() - new Date(lastDeliveredAt).getTime()) /
+            (1000 * 60 * 60 * 24),
+        )
+      : null;
+
+  return `
+CAMPAIGN HISTORY CONTEXT (IMPORTANT):
+
+Customer:
+- Name: ${contact.first_name ?? "Customer"}
+- Vehicle model: ${contact.model ?? "Unknown"}
+
+Campaign delivery history:
+- Delivered templates: ${delivered.length ? delivered.join(", ") : "None"}
+- Failed templates: ${failed.length ? failed.join(", ") : "None"}
+- Last campaign delivered: ${daysAgo !== null ? `${daysAgo} days ago` : "Never"}
+
+Rules you MUST follow:
+- Do NOT repeat offers/templates already delivered.
+- If the last campaign was delivered within 14 days, use a soft follow-up tone.
+- If multiple failures exist, acknowledge difficulty reaching the customer.
+`.trim();
+}
+
+/* ============================================================================
+   PHASE 7C — FOLLOW-UP SUGGESTION PROMPT (NO AUTO-SEND)
+============================================================================ */
+function buildFollowupSuggestionPrompt(params: {
+  campaignContextText: string;
+  personalityBlock: string;
+}) {
+  return `
+You are an automotive dealership assistant.
+
+Your task:
+- Suggest ONE short WhatsApp follow-up message.
+- This message will be reviewed by a human before sending.
+- DO NOT repeat offers already delivered.
+- DO NOT sound pushy or salesy.
+- Keep it friendly, human, and helpful.
+- 1–2 sentences maximum.
+
+------------------------
+CAMPAIGN HISTORY CONTEXT
+------------------------
+${params.campaignContextText || "No campaign history available."}
+
+------------------------
+STYLE RULES
+------------------------
+${params.personalityBlock || "- Neutral, polite tone"}
+
+Return ONLY the suggested message text.
+Do NOT include explanations.
+Do NOT ask multiple questions.
+`.trim();
+}
+
+/* ============================================================================
+   UNANSWERED QUESTION LOGGER
 ============================================================================ */
 async function logUnansweredQuestion(
   organizationId: string,
@@ -185,9 +303,7 @@ async function logUnansweredQuestion(
         .update({ occurrences: (existing.occurrences ?? 0) + 1 })
         .eq("id", existing.id);
 
-      if (updateError) {
-        logger.error("[unanswered] update error", { error: updateError });
-      }
+      if (updateError) logger.error("[unanswered] update error", { error: updateError });
     } else {
       const { error: insertError } = await supabase
         .from("unanswered_questions")
@@ -197,18 +313,15 @@ async function logUnansweredQuestion(
           occurrences: 1,
         });
 
-      if (insertError) {
-        logger.error("[unanswered] insert error", { error: insertError });
-      }
+      if (insertError) logger.error("[unanswered] insert error", { error: insertError });
     }
   } catch (err) {
     logger.error("[unanswered] fatal error", { error: err });
   }
 }
 
-
 /* ============================================================================
-   🔥 NEW: RAG HELPER — SUB-ORG → ORG → GLOBAL
+   RAG HELPER — SUB-ORG SCOPED + SEMANTIC FALLBACK
 ============================================================================ */
 async function resolveKnowledgeContext(params: {
   embedding: number[];
@@ -216,7 +329,7 @@ async function resolveKnowledgeContext(params: {
   organizationId: string;
   subOrganizationId: string | null;
   logger: ReturnType<typeof createLogger>;
-}): Promise<{ context: string; forced: boolean } | null>{
+}): Promise<{ context: string; forced: boolean } | null> {
   const {
     embedding,
     userMessage,
@@ -225,69 +338,66 @@ async function resolveKnowledgeContext(params: {
     logger,
   } = params;
 
-  /* --------------------------------------------------
-     OPTION 3 — FORCE TITLE MATCH (FIRST PASS)
-  -------------------------------------------------- */
+  // PASS 1 — TITLE MATCH (HIGH PRECISION)
   const keywords = userMessage
-  .toLowerCase()
-  .replace(/[^a-z0-9\s]/g, "")
-  .split(" ")
-  .filter(w => w.length >= 3 && !["who", "what", "is", "are", "the"].includes(w));
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(" ")
+    .filter(
+      (w) =>
+        w.length >= 3 &&
+        !["who", "what", "is", "are", "the", "this", "that"].includes(w),
+    );
 
-logger.debug("[rag] title keywords", { keywords });
+  logger.debug("[rag] title keywords", { keywords });
 
-let titleMatches: any[] = [];
+  let titleMatches: any[] = [];
 
-if (!keywords.length) {
-  logger.debug("[rag] no usable title keywords");
-} else {
   for (const word of keywords) {
     const { data, error } = await supabase
       .from("knowledge_articles")
-      .select("id, organization_id, title")
+      .select("id, title, organization_id, sub_organization_id")
       .eq("organization_id", organizationId)
       .ilike("title", `%${word}%`)
       .limit(3);
 
     if (error) {
-      logger.error("[rag] title match query error", { error, word });
+      logger.error("[rag] title query error", { error, word });
       continue;
     }
 
     if (data?.length) {
-      titleMatches = data;
-      break;
+      titleMatches = data.filter((a) => {
+        if (!subOrganizationId) return true;
+        return a.sub_organization_id === null || a.sub_organization_id === subOrganizationId;
+      });
+      if (titleMatches.length) break;
     }
   }
-}
 
-if (titleMatches.length) {
-  const article = titleMatches[0];
+  if (titleMatches.length) {
+    const article = titleMatches[0];
 
-  const { data: chunks } = await supabase
-    .from("knowledge_chunks")
-    .select("chunk")
-    .eq("article_id", article.id)
-    .order("id", { ascending: true });
+    const { data: chunks } = await supabase
+      .from("knowledge_chunks")
+      .select("chunk")
+      .eq("article_id", article.id)
+      .order("id", { ascending: true });
 
-  if (chunks?.length) {
-    logger.info("[rag] title match used", {
-      article_id: article.id,
-      title: article.title,
-    });
+    if (chunks?.length) {
+      logger.info("[rag] FORCED title match used", {
+        article_id: article.id,
+        title: article.title,
+      });
 
-    return {
-      context: chunks.map((c: any) => c.chunk).join("\n\n"),
-      forced: true, // 🔥 IMPORTANT
-    };
-    
+      return {
+        context: chunks.map((c: any) => c.chunk).join("\n\n"),
+        forced: true,
+      };
+    }
   }
-}
 
-
-  /* --------------------------------------------------
-     SEMANTIC SEARCH (FALLBACK)
-  -------------------------------------------------- */
+  // PASS 2 — SEMANTIC SEARCH (VECTOR)
   const { data: matches, error: matchErr } = await supabase.rpc(
     "match_knowledge_chunks",
     {
@@ -311,24 +421,22 @@ if (titleMatches.length) {
 
   if (!articles?.length) return null;
 
-  const allowed = new Set(
+  const allowedIds = new Set(
     articles
       .filter((a: any) => {
         if (a.organization_id !== organizationId) return false;
         if (!subOrganizationId) return true;
-        return (
-          a.sub_organization_id === null ||
-          a.sub_organization_id === subOrganizationId
-        );
+        return a.sub_organization_id === null || a.sub_organization_id === subOrganizationId;
       })
       .map((a: any) => a.id),
   );
 
-  const filtered = matches.filter((m: any) =>
-    allowed.has(m.article_id),
-  );
+  const filtered = matches.filter((m: any) => allowedIds.has(m.article_id));
 
-  if (!filtered.length) return null;
+  if (!filtered.length) {
+    logger.debug("[rag] semantic matches filtered out by scope");
+    return null;
+  }
 
   logger.info("[rag] semantic KB used", {
     matches: filtered.map((m: any) => ({
@@ -346,7 +454,6 @@ if (titleMatches.length) {
     forced: false,
   };
 }
-
 
 /* ============================================================================
    WORKFLOW ENGINE — Types
@@ -391,9 +498,7 @@ async function detectWorkflowTrigger(
     () =>
       supabase
         .from("workflows")
-        .select(
-          "id, organization_id, sub_organization_id, trigger, mode, is_active",
-        )
+        .select("id, organization_id, sub_organization_id, trigger, mode, is_active")
         .eq("organization_id", organizationId)
         .eq("is_active", true),
   );
@@ -409,17 +514,13 @@ async function detectWorkflowTrigger(
     const trigger = wf.trigger ?? {};
     const triggerType = trigger.type ?? "always";
 
-    // Sub-Org scoping
+    // Sub-org scoping
     if (wf.sub_organization_id && wf.sub_organization_id !== subOrgId) continue;
 
     // Keyword match
     if (triggerType === "keyword") {
       const keywords: string[] = trigger.keywords ?? [];
-      if (
-        keywords.some((k) =>
-          lowerMsg.includes((k ?? "").toString().toLowerCase()),
-        )
-      ) {
+      if (keywords.some((k) => lowerMsg.includes((k ?? "").toString().toLowerCase()))) {
         logger.info("[workflow] keyword trigger matched", {
           workflow_id: wf.id,
           trigger_keywords: keywords,
@@ -440,28 +541,20 @@ async function detectWorkflowTrigger(
           messages: [
             {
               role: "system",
-              content:
-                `Classify user intent into EXACTLY one of: ${intents.join(
-                  ", ",
-                )}. Return only that word.`,
+              content: `Classify user intent into EXACTLY one of: ${intents.join(
+                ", ",
+              )}. Return only that word.`,
             },
             { role: "user", content: user_message },
           ],
         });
 
-        const intent =
-          resp.choices?.[0]?.message?.content?.trim().toLowerCase() ?? "";
+        const intent = resp.choices?.[0]?.message?.content?.trim().toLowerCase() ?? "";
 
-        logger.debug("[workflow] intent classification result", {
-          intent,
-          intents,
-        });
+        logger.debug("[workflow] intent classification result", { intent, intents });
 
         if (intents.map((i) => i.toLowerCase()).includes(intent)) {
-          logger.info("[workflow] intent trigger matched", {
-            workflow_id: wf.id,
-            intent,
-          });
+          logger.info("[workflow] intent trigger matched", { workflow_id: wf.id, intent });
           return wf;
         }
       } catch (err) {
@@ -469,6 +562,7 @@ async function detectWorkflowTrigger(
       }
     }
 
+    // Always
     if (triggerType === "always") {
       logger.info("[workflow] always trigger matched", { workflow_id: wf.id });
       return wf;
@@ -492,9 +586,7 @@ async function loadActiveWorkflow(
     () =>
       supabase
         .from("workflow_logs")
-        .select(
-          "id, workflow_id, conversation_id, current_step_number, variables, completed",
-        )
+        .select("id, workflow_id, conversation_id, current_step_number, variables, completed")
         .eq("conversation_id", conversationId)
         .eq("completed", false)
         .maybeSingle(),
@@ -528,9 +620,7 @@ async function startWorkflow(
           variables: {},
           completed: false,
         })
-        .select(
-          "id, workflow_id, conversation_id, current_step_number, variables, completed",
-        )
+        .select("id, workflow_id, conversation_id, current_step_number, variables, completed")
         .single(),
   );
 
@@ -583,16 +673,12 @@ async function saveWorkflowProgress(
   if (error) {
     logger.error("[workflow] save progress error", { error, log_id: logId });
   } else {
-    logger.debug("[workflow] progress saved", {
-      log_id: logId,
-      nextStep,
-      completed,
-    });
+    logger.debug("[workflow] progress saved", { log_id: logId, nextStep, completed });
   }
 }
 
 /* ============================================================================
-   STEP EXECUTION ENGINE (Smart + Strict Compatible)
+   STEP EXECUTION ENGINE
 ============================================================================ */
 type StepResult = {
   output: string;
@@ -616,27 +702,18 @@ async function executeStep(
   const expectedKey = safeText(action.expected_user_input);
   const metadata = action.metadata ?? {};
 
-  logger.debug("[workflow] execute step", {
-    step_order: step.step_order,
-    aiAction,
-  });
+  logger.debug("[workflow] execute step", { step_order: step.step_order, aiAction });
 
   switch (aiAction) {
     case "ask_question":
     case "give_information":
     case "use_knowledge_base":
-      return {
-        output: instructionText,
-        end: false,
-      };
+      return { output: instructionText, end: false };
 
     case "save_user_response": {
       const key = expectedKey || "value";
       log.variables[key] = user_message;
-      return {
-        output: instructionText || "Noted.",
-        end: false,
-      };
+      return { output: instructionText || "Noted.", end: false };
     }
 
     case "branch": {
@@ -653,10 +730,7 @@ async function executeStep(
         };
       }
 
-      return {
-        output: instructionText || "Continuing…",
-        end: false,
-      };
+      return { output: instructionText || "Continuing…", end: false };
     }
 
     case "end":
@@ -668,10 +742,7 @@ async function executeStep(
 
     default:
       logger.warn("[workflow] unknown ai_action, falling back", { aiAction });
-      return {
-        output: instructionText || "Okay.",
-        end: false,
-      };
+      return { output: instructionText || "Okay.", end: false };
   }
 }
 
@@ -685,10 +756,7 @@ async function runStrictMode(
   const expected = action.expected_user_input ?? "";
 
   if (expected && (!user_message || !user_message.trim())) {
-    return {
-      output: "Please provide the required information to continue.",
-      end: false,
-    } as StepResult;
+    return { output: "Please provide the required information to continue.", end: false } as StepResult;
   }
 
   return executeStep(step, log, user_message, logger);
@@ -706,7 +774,6 @@ async function runSmartMode(
 /* ============================================================================
    MAIN HANDLER
 ============================================================================ */
-
 serve(async (req: Request): Promise<Response> => {
   const request_id = crypto.randomUUID();
   const logger = createLogger({ request_id });
@@ -714,16 +781,16 @@ serve(async (req: Request): Promise<Response> => {
   logger.info("[ai-handler] request received");
 
   try {
-    /* --------------------------------------------------------------
-       0) Parse Body
-    -------------------------------------------------------------- */
+    // 0) Parse body
     const body = (await req.json()) as {
       conversation_id?: string;
       user_message?: string;
+      mode?: "reply" | "suggest_followup";
     };
 
     const conversation_id = body.conversation_id;
     const raw_message = body.user_message;
+    const mode = body.mode ?? "reply";
 
     if (!conversation_id || !raw_message) {
       logger.warn("[validation] Missing conversation_id or user_message");
@@ -731,13 +798,9 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     const user_message = raw_message.trim();
-    if (!user_message) {
-      return new Response("Empty message", { status: 400 });
-    }
+    if (!user_message) return new Response("Empty message", { status: 400 });
 
-    /* --------------------------------------------------------------
-       1) Load Conversation
-    -------------------------------------------------------------- */
+    // 1) Load conversation
     const conv = await safeSupabase<{
       id: string;
       organization_id: string;
@@ -751,20 +814,13 @@ serve(async (req: Request): Promise<Response> => {
       () =>
         supabase
           .from("conversations")
-          .select(
-            "id, organization_id, channel, contact_id, sub_organization_id, ai_enabled",
-          )
+          .select("id, organization_id, channel, contact_id, sub_organization_id, ai_enabled")
           .eq("id", conversation_id)
           .maybeSingle(),
     );
 
-    if (!conv) {
-      return new Response("Conversation not found", { status: 404 });
-    }
-
-    if (conv.ai_enabled === false) {
-      return new Response("AI disabled", { status: 200 });
-    }
+    if (!conv) return new Response("Conversation not found", { status: 404 });
+    if (conv.ai_enabled === false) return new Response("AI disabled", { status: 200 });
 
     const organizationId = conv.organization_id;
     const subOrganizationId = conv.sub_organization_id ?? null;
@@ -779,11 +835,8 @@ serve(async (req: Request): Promise<Response> => {
       channel,
     });
 
-    /* --------------------------------------------------------------
-       2) Fetch Contact Phone (WhatsApp)
-    -------------------------------------------------------------- */
+    // 2) Fetch contact phone once (needed for greeting/workflow/typing/send)
     let contactPhone: string | null = null;
-
     if (channel === "whatsapp" && contactId) {
       const contact = await safeSupabase<{ phone: string | null }>(
         "load_contact_phone",
@@ -798,9 +851,25 @@ serve(async (req: Request): Promise<Response> => {
       contactPhone = contact?.phone ?? null;
     }
 
-    /* --------------------------------------------------------------
-       3) Load Bot Personality + Instructions
-    -------------------------------------------------------------- */
+    // 3) Phase 7A — Campaign context
+    let campaignContextText = "";
+    if (contactId) {
+      const campaignCtx = await fetchCampaignContextForContact(
+        organizationId,
+        contactId,
+        scopedLogger,
+      );
+
+      if (campaignCtx) {
+        campaignContextText = buildCampaignContextText(campaignCtx);
+        scopedLogger.debug("[ai-handler] campaign context injected", {
+          delivered: campaignCtx.delivered,
+          failed: campaignCtx.failed,
+        });
+      }
+    }
+
+    // 4) Load personality + instructions
     async function loadBotPersonality() {
       let q = supabase
         .from("bot_personality")
@@ -812,10 +881,10 @@ serve(async (req: Request): Promise<Response> => {
         : q.is("sub_organization_id", null);
 
       const { data } = await q.maybeSingle();
+
       return (
         data ?? {
-          fallback_message:
-            "I'm sorry, I don’t have enough information to answer that.",
+          fallback_message: "I'm sorry, I don’t have enough information to answer that.",
           short_responses: true,
         }
       );
@@ -837,13 +906,196 @@ serve(async (req: Request): Promise<Response> => {
 
     const personality = await loadBotPersonality();
     const extraInstructions = await loadBotInstructions();
+
     const fallbackMessage =
-      personality.fallback_message ??
+      personality?.fallback_message ??
       "I'm sorry, I don’t have enough information to answer that.";
 
-    /* --------------------------------------------------------------
-       4) Load Conversation History
-    -------------------------------------------------------------- */
+    const personaBlock = [
+      subOrganizationId && `- Division ID: ${subOrganizationId}`,
+      personality?.tone && `- Tone: ${personality.tone}`,
+      personality?.language && `- Language: ${personality.language}`,
+      personality?.short_responses ? "- Responses must be concise." : "- Normal-length responses allowed.",
+      personality?.emoji_usage ? "- Emojis allowed." : "- No emojis.",
+      personality?.gender_voice && `- Voice: ${personality.gender_voice}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    // 5) Phase 7C — Suggest follow-up (NO SEND, NO DB WRITE)
+    if (mode === "suggest_followup") {
+      scopedLogger.info("[ai-handler] follow-up suggestion requested");
+
+      const prompt = buildFollowupSuggestionPrompt({
+        campaignContextText,
+        personalityBlock: personaBlock,
+      });
+
+      const suggestion = await safeChatCompletion(scopedLogger, {
+        systemPrompt: prompt,
+        userMessage: "Suggest a follow-up message.",
+      });
+
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          suggestion: suggestion?.trim() || "",
+          request_id,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 6) Greeting short-circuit (save + send)
+    if (["hi", "hello", "hey", "namaste"].includes(user_message.toLowerCase())) {
+      const reply = "Hello 👋 Welcome to Techwheels Motors. How can I help you today?";
+
+      await supabase.from("messages").insert({
+        conversation_id,
+        sender: "bot",
+        message_type: "text",
+        text: reply,
+        channel,
+        sub_organization_id: subOrganizationId,
+      });
+
+      await supabase
+        .from("conversations")
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", conversation_id);
+
+      if (channel === "whatsapp" && contactPhone) {
+        await safeWhatsAppSend(scopedLogger, {
+          organization_id: organizationId,
+          sub_organization_id: subOrganizationId,
+          to: contactPhone,
+          type: "text",
+          text: reply,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({ conversation_id, ai_response: reply, request_id }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 7) Workflow engine
+    let activeWorkflow = await loadActiveWorkflow(conversation_id, scopedLogger);
+
+    if (!activeWorkflow) {
+      const wf = await detectWorkflowTrigger(
+        user_message,
+        organizationId,
+        subOrganizationId,
+        scopedLogger,
+      );
+      if (wf) activeWorkflow = await startWorkflow(wf.id, conversation_id, scopedLogger);
+    }
+
+    if (activeWorkflow) {
+      const wfRow = await safeSupabase<WorkflowRow>(
+        "load_workflow_by_id",
+        scopedLogger,
+        () =>
+          supabase
+            .from("workflows")
+            .select("id, organization_id, sub_organization_id, trigger, mode, is_active")
+            .eq("id", activeWorkflow!.workflow_id)
+            .maybeSingle(),
+      );
+
+      if (wfRow) {
+        const steps = await getWorkflowSteps(wfRow.id, scopedLogger);
+
+        if (steps.length) {
+          const stepNum = Math.max(
+            1,
+            Math.min(activeWorkflow.current_step_number ?? 1, steps.length),
+          );
+
+          const step = steps[stepNum - 1];
+          if (step) {
+            const run = (wfRow.mode ?? "smart") === "strict" ? runStrictMode : runSmartMode;
+
+            const result = await run(step, activeWorkflow, user_message, scopedLogger);
+
+            const nextStep =
+              result.nextStepNumber ?? (activeWorkflow.current_step_number ?? 1) + 1;
+
+            const finished = result.end || nextStep > steps.length;
+
+            await saveWorkflowProgress(
+              activeWorkflow.id,
+              nextStep,
+              activeWorkflow.variables,
+              finished,
+              scopedLogger,
+            );
+
+            const reply = result.output || fallbackMessage;
+
+            await supabase.from("messages").insert({
+              conversation_id,
+              sender: "bot",
+              message_type: "text",
+              text: reply,
+              channel,
+              sub_organization_id: subOrganizationId,
+            });
+
+            await supabase
+              .from("conversations")
+              .update({ last_message_at: new Date().toISOString() })
+              .eq("id", conversation_id);
+
+            // ✅ FIX: send workflow reply to WhatsApp
+            if (channel === "whatsapp" && contactPhone) {
+              await safeWhatsAppSend(scopedLogger, {
+                organization_id: organizationId,
+                sub_organization_id: subOrganizationId,
+                to: contactPhone,
+                type: "text",
+                text: reply,
+              });
+            }
+
+            return new Response(
+              JSON.stringify({
+                conversation_id,
+                ai_response: reply,
+                workflow_active: true,
+                request_id,
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+          }
+        }
+      }
+
+      // SAFETY: workflow active but no step response → no RAG
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          skipped: true,
+          reason: "Workflow active",
+          request_id,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 8) WhatsApp typing (only now, before expensive work)
+    if (channel === "whatsapp" && contactPhone) {
+      await safeWhatsAppSend(scopedLogger, {
+        organization_id: organizationId,
+        sub_organization_id: subOrganizationId,
+        to: contactPhone,
+        type: "typing_on",
+      });
+    }
+
+    // 9) Load conversation history
     const recentMessages = await safeSupabase<
       { sender: string; text: string | null; created_at: string }[]
     >(
@@ -862,305 +1114,66 @@ serve(async (req: Request): Promise<Response> => {
       recentMessages
         ?.map(
           (m) =>
-            `${new Date(m.created_at).toISOString()} - ${m.sender}: ${
-              m.text ?? ""
-            }`,
+            `${new Date(m.created_at).toISOString()} - ${m.sender}: ${m.text ?? ""}`,
         )
         .join("\n") ?? "";
 
-    /* --------------------------------------------------------------
-       5) WhatsApp Typing Indicator
-    -------------------------------------------------------------- */
-    if (channel === "whatsapp" && contactPhone) {
-      await safeWhatsAppSend(scopedLogger, {
-        organization_id: organizationId,
-        sub_organization_id: subOrganizationId,
-        to: contactPhone,
-        type: "typing_on",
-      });
-    }
-
-    /* --------------------------------------------------------------
-       🔥 GREETING SHORT-CIRCUIT
-    -------------------------------------------------------------- */
-    if (["hi", "hello", "hey", "namaste"].includes(user_message.toLowerCase())) {
-      const reply =
-        "Hello 👋 Welcome to Techwheels Motors. How can I help you today?";
-
-      await supabase.from("messages").insert({
-        conversation_id,
-        sender: "bot",
-        message_type: "text",
-        text: reply,
-        channel,
-        sub_organization_id: subOrganizationId,
-      });
-
-      if (channel === "whatsapp" && contactPhone) {
-        await safeWhatsAppSend(scopedLogger, {
-          organization_id: organizationId,
-          sub_organization_id: subOrganizationId,
-          to: contactPhone,
-          type: "text",
-          text: reply,
-        });
-      }
-
-      return new Response("ok");
-    }
-
-    /* --------------------------------------------------------------
-       5.5) WORKFLOW ENGINE (UNCHANGED)
-    -------------------------------------------------------------- */
-    let activeWorkflow = await loadActiveWorkflow(
-      conversation_id,
-      scopedLogger,
-    );
-
-    if (!activeWorkflow) {
-      const wf = await detectWorkflowTrigger(
-        user_message,
-        organizationId,
-        subOrganizationId,
-        scopedLogger,
-      );
-      if (wf) {
-        activeWorkflow = await startWorkflow(
-          wf.id,
-          conversation_id,
-          scopedLogger,
-        );
-      }
-    }
-
-    /* --------------------------------------------------------------
-       WORKFLOW HANDLING
-    -------------------------------------------------------------- */
-    if (activeWorkflow) {
-      scopedLogger.info("[workflow] active workflow detected", {
-        log_id: activeWorkflow.id,
-        workflow_id: activeWorkflow.workflow_id,
-        current_step: activeWorkflow.current_step_number,
-      });
-
-      const wfRow = await safeSupabase<WorkflowRow>(
-        "load_workflow_by_id",
-        scopedLogger,
-        () =>
-          supabase
-            .from("workflows")
-            .select(
-              "id, organization_id, sub_organization_id, trigger, mode, is_active",
-            )
-            .eq("id", activeWorkflow!.workflow_id)
-            .maybeSingle(),
-      );
-
-      if (wfRow) {
-        const workflow = wfRow as WorkflowRow;
-        const steps = await getWorkflowSteps(workflow.id, scopedLogger);
-
-        if (!steps.length) {
-          scopedLogger.warn("[workflow] no steps for workflow, ignoring", {
-            workflow_id: workflow.id,
-          });
-        } else {
-          let stepNum = activeWorkflow.current_step_number ?? 1;
-          if (stepNum < 1) stepNum = 1;
-          if (stepNum > steps.length) stepNum = steps.length;
-
-          const step = steps[stepNum - 1];
-
-          if (step) {
-            const run =
-              (workflow.mode ?? "smart") === "strict"
-                ? runStrictMode
-                : runSmartMode;
-
-            const result = await run(
-              step,
-              activeWorkflow,
-              user_message,
-              scopedLogger,
-            );
-
-            const nextStep =
-              result.nextStepNumber ?? (activeWorkflow.current_step_number ?? 1) +
-                1;
-
-            const isFinished = result.end || nextStep > steps.length;
-
-            await saveWorkflowProgress(
-              activeWorkflow.id,
-              nextStep,
-              activeWorkflow.variables,
-              isFinished,
-              scopedLogger,
-            );
-
-            const reply = result.output || fallbackMessage;
-
-            /* ------------------------------------------
-               Save + Send Bot Reply
-            -------------------------------------------- */
-            const { error: insertErr } = await supabase.from("messages")
-              .insert({
-                conversation_id,
-                sender: "bot",
-                message_type: "text",
-                text: reply,
-                channel,
-                sub_organization_id: subOrganizationId,
-              });
-
-            if (insertErr) {
-              scopedLogger.error("[messages] insert workflow reply error", {
-                error: insertErr,
-              });
-            }
-
-            const { error: convUpdateErr } = await supabase
-              .from("conversations")
-              .update({ last_message_at: new Date().toISOString() })
-              .eq("id", conversation_id);
-
-            if (convUpdateErr) {
-              scopedLogger.error("[conversations] update last_message_at error", {
-                error: convUpdateErr,
-              });
-            }
-
-            if (channel === "whatsapp" && contactPhone) {
-              await safeWhatsAppSend(scopedLogger, {
-                organization_id: organizationId,
-                sub_organization_id: subOrganizationId,
-                to: contactPhone,
-                type: "text",
-                text: reply,
-              });
-            }
-
-            scopedLogger.info("[ai-handler] workflow reply sent", { reply });
-
-            return new Response(
-              JSON.stringify({
-                conversation_id,
-                ai_response: reply,
-                workflow_active: true,
-                request_id,
-              }),
-              { headers: { "Content-Type": "application/json" } },
-            );
-          }
-        }
-      }
-    }
-    // ------------------------------------------------------------------
-// SAFETY GUARD: If a workflow was active but did not return a response,
-// do NOT allow RAG to execute.
-// ------------------------------------------------------------------
-if (activeWorkflow) {
-  scopedLogger.debug(
-    "[workflow] active workflow detected but no response sent — skipping RAG",
-  );
-
-  return new Response(
-    JSON.stringify({
-      conversation_id,
-      skipped: true,
-      reason: "Workflow active",
-      request_id,
-    }),
-    { headers: { "Content-Type": "application/json" } },
-  );
-}
-
-
-    /* --------------------------------------------------------------
-   6) RAG PIPELINE (SUBORG → ORG → GLOBAL FALLBACK)
--------------------------------------------------------------- */
-
+    // 10) RAG
     let contextText = "No relevant dealership knowledge found.";
-
     const embedding = await safeEmbedding(scopedLogger, user_message);
 
     if (embedding) {
-      try {
-        const resolved = await resolveKnowledgeContext({
-          embedding,
-          userMessage: user_message,
-          organizationId,
-          subOrganizationId,
-          logger: scopedLogger,
+      const resolved = await resolveKnowledgeContext({
+        embedding,
+        userMessage: user_message,
+        organizationId,
+        subOrganizationId,
+        logger: scopedLogger,
+      });
+
+      if (resolved?.forced) {
+        const reply = resolved.context;
+
+        await supabase.from("messages").insert({
+          conversation_id,
+          sender: "bot",
+          message_type: "text",
+          text: reply,
+          channel,
+          sub_organization_id: subOrganizationId,
         });
-        
-        if (resolved?.forced) {
-          // 🔥 BYPASS OPENAI COMPLETELY
-          const reply = resolved.context;
-        
-          await supabase.from("messages").insert({
-            conversation_id,
-            sender: "bot",
-            message_type: "text",
-            text: reply,
-            channel,
+
+        await supabase
+          .from("conversations")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", conversation_id);
+
+        if (channel === "whatsapp" && contactPhone) {
+          await safeWhatsAppSend(scopedLogger, {
+            organization_id: organizationId,
             sub_organization_id: subOrganizationId,
+            to: contactPhone,
+            type: "text",
+            text: reply,
           });
-        
-          if (channel === "whatsapp" && contactPhone) {
-            await safeWhatsAppSend(scopedLogger, {
-              organization_id: organizationId,
-              sub_organization_id: subOrganizationId,
-              to: contactPhone,
-              type: "text",
-              text: reply,
-            });
-          }
-        
-          scopedLogger.info("[ai-handler] forced KB reply sent");
-        
-          return new Response(
-            JSON.stringify({
-              conversation_id,
-              ai_response: reply,
-              request_id,
-              forced_kb: true,
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          );
         }
-        
-        if (resolved) {
-          contextText = resolved.context;
-        }
-         else {
-          scopedLogger.debug("[rag] no KB context resolved");
-        }
-      } catch (err) {
-        scopedLogger.error("[rag] fatal error", { error: err });
+
+        return new Response(
+          JSON.stringify({
+            conversation_id,
+            ai_response: reply,
+            request_id,
+            forced_kb: true,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
       }
+
+      if (resolved?.context) contextText = resolved.context;
     }
 
-    /* --------------------------------------------------------------
-       7) Build System Prompt (same as your original, tiny wording tweak)
-       Change: fallback only if NO knowledge context is provided.
-    -------------------------------------------------------------- */
-    const personaBlock = [
-      subOrganizationId && `- Division ID: ${subOrganizationId}`,
-      personality?.tone && `- Tone: ${personality.tone}`,
-      personality?.language && `- Language: ${personality.language}`,
-      personality?.short_responses
-        ? "- Responses must be concise."
-        : "- Normal-length responses allowed.",
-      personality?.emoji_usage ? "- Emojis allowed." : "- No emojis.",
-      personality?.gender_voice && `- Voice: ${personality.gender_voice}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const extraRules = extraInstructions?.rules
-      ? JSON.stringify(extraInstructions.rules)
-      : "{}";
+    // 11) Build system prompt (includes Phase 7A + 7B)
+    const extraRules = extraInstructions?.rules ? JSON.stringify(extraInstructions.rules) : "{}";
 
     const systemPrompt = `
 You are Techwheels AI — a professional automotive dealership assistant.
@@ -1194,13 +1207,10 @@ KNOWLEDGE CONTEXT (MOST IMPORTANT)
 ------------------------
 ${contextText}
 
-Use this context as the primary source of truth about:
-- Models, pricing, variants, and offers
-- Dealership timings, location, and services
-- Policies, financing, and processes
-- Any dealership-specific instructions
-
-If multiple KB chunks are relevant, combine them into a single clear answer.
+------------------------
+CAMPAIGN HISTORY CONTEXT
+------------------------
+${campaignContextText || "No prior campaign history available."}
 
 ------------------------
 CONVERSATION HISTORY
@@ -1208,43 +1218,75 @@ CONVERSATION HISTORY
 ${historyText || "No previous messages."}
 
 ------------------------
+RESPONSE DECISION RULES (CRITICAL)
+------------------------
+You are allowed to intentionally NOT reply.
+
+If replying would add no value, you MUST respond with exactly:
+${AI_NO_REPLY_TOKEN}
+
+DO NOT explain why.
+DO NOT add any text.
+ONLY return ${AI_NO_REPLY_TOKEN}.
+
+Examples when you MUST return ${AI_NO_REPLY_TOKEN}:
+- User says: "ok", "thanks", "👍", "fine", "noted"
+- User has not asked a question
+- User is only acknowledging the message
+- A campaign was delivered recently and the user is silent or neutral
+
+You MUST reply normally if:
+- The user asks a question
+- The user shows interest
+- The user requests clarification
+- The user re-engages after a gap
+
+This rule overrides all other response rules.
+
+------------------------
 FORMATTING & STYLE
 ------------------------
 - Always answer the latest customer message.
-- If answering with dealership info (timing, offers, etc.), use short bullet points where helpful.
 - Keep WhatsApp replies short & simple (1–3 sentences max).
-- If the user asks for next steps, suggest clear actions (Call, Visit, Test drive, Book service).
 - If the knowledge context above does not contain the answer, say exactly: "${fallbackMessage}".
 
 Respond now to the customer's latest message only.
 `.trim();
 
-    scopedLogger.debug("[ai-handler] system prompt built");
-
-    /* --------------------------------------------------------------
-       8) OpenAI Response
-    -------------------------------------------------------------- */
+    // 12) OpenAI response
     let aiResponseText = await safeChatCompletion(scopedLogger, {
       systemPrompt,
       userMessage: user_message,
     });
 
-    if (!aiResponseText) {
-      aiResponseText = fallbackMessage;
+    if (!aiResponseText) aiResponseText = fallbackMessage;
+
+    // 13) Phase 7B — NO-REPLY handling (do NOT save message / do NOT send)
+    if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
+      scopedLogger.info("[ai-handler] AI chose not to reply");
+
+      await supabase
+        .from("conversations")
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", conversation_id);
+
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          no_reply: true,
+          request_id,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
     }
 
-    /* --------------------------------------------------------------
-       9) Log unanswered fallback
-    -------------------------------------------------------------- */
-    if (aiResponseText === fallbackMessage) {
-      scopedLogger.info("[ai-handler] using fallback message");
+    // 14) Log unanswered fallback (NOT for NO_REPLY)
+    if (aiResponseText === fallbackMessage && aiResponseText !== AI_NO_REPLY_TOKEN) {
       await logUnansweredQuestion(organizationId, user_message, scopedLogger);
     }
 
-    /* --------------------------------------------------------------
-       10) Save bot response
-    -------------------------------------------------------------- */
-    const { error: insertErr } = await supabase.from("messages").insert({
+    // 15) Save bot response + update conversation
+    await supabase.from("messages").insert({
       conversation_id,
       sender: "bot",
       message_type: "text",
@@ -1253,24 +1295,12 @@ Respond now to the customer's latest message only.
       sub_organization_id: subOrganizationId,
     });
 
-    if (insertErr) {
-      scopedLogger.error("[messages] insert ai reply error", { error: insertErr });
-    }
-
-    const { error: convUpdateErr } = await supabase
+    await supabase
       .from("conversations")
       .update({ last_message_at: new Date().toISOString() })
       .eq("id", conversation_id);
 
-    if (convUpdateErr) {
-      scopedLogger.error("[conversations] update last_message_at error", {
-        error: convUpdateErr,
-      });
-    }
-
-    /* --------------------------------------------------------------
-       11) WhatsApp Send
-    -------------------------------------------------------------- */
+    // 16) WhatsApp send
     if (channel === "whatsapp" && contactPhone) {
       await safeWhatsAppSend(scopedLogger, {
         organization_id: organizationId,
@@ -1281,10 +1311,6 @@ Respond now to the customer's latest message only.
       });
     }
 
-    scopedLogger.info("[ai-handler] reply sent", {
-      ai_response_preview: aiResponseText.slice(0, 200),
-    });
-
     return new Response(
       JSON.stringify({
         conversation_id,
@@ -1294,7 +1320,8 @@ Respond now to the customer's latest message only.
       { headers: { "Content-Type": "application/json" } },
     );
   } catch (err: any) {
-    logger.error("[ai-handler] Fatal error", { error: err });
+    console.error("[ai-handler] Fatal error", err);
+
     return new Response(
       JSON.stringify({
         error: err?.message ?? "Internal Server Error",

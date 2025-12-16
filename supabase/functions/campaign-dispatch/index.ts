@@ -20,14 +20,13 @@ const supabaseAdmin = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
 // ------------------------------------------------------------
 // DISPATCH CONFIG
 // ------------------------------------------------------------
-
 const GLOBAL_MAX_MESSAGES_PER_RUN = 100;
 const MAX_MESSAGES_PER_CAMPAIGN_PER_RUN = 50;
 const ORG_RATE_LIMIT_PER_RUN = 30;
 const MAX_CAMPAIGNS_PER_RUN = 20;
 
 // ------------------------------------------------------------
-// TYPES (UPDATED FOR SUB-ORG SUPPORT)
+// TYPES (UPDATED FOR SUB-ORG SUPPORT + CONTACT LINKING)
 // ------------------------------------------------------------
 type Campaign = {
   id: string;
@@ -51,6 +50,8 @@ type CampaignMessage = {
   campaign_id: string;
   sub_organization_id: string | null;
 
+  contact_id: string | null;
+
   phone: string;
   variables: Record<string, unknown> | null;
 
@@ -64,9 +65,44 @@ type CampaignMessage = {
 };
 
 // ------------------------------------------------------------
+// PHONE NORMALIZATION (DB wants +91XXXXXXXXXX)
+// ------------------------------------------------------------
+function normalizePhoneToE164India(raw: string): string | null {
+  if (!raw) return null;
+
+  const trimmed = String(raw).trim();
+
+  // Already in +91XXXXXXXXXX format
+  if (/^\+91\d{10}$/.test(trimmed)) return trimmed;
+
+  // If stored like 91XXXXXXXXXX (12 digits)
+  const digitsOnly = trimmed.replace(/\D/g, "");
+
+  if (/^91\d{10}$/.test(digitsOnly)) {
+    return `+${digitsOnly}`;
+  }
+
+  // If stored like XXXXXXXXXX (10 digits)
+  if (/^\d{10}$/.test(digitsOnly)) {
+    return `+91${digitsOnly}`;
+  }
+
+  return null;
+}
+
+// WhatsApp Cloud API commonly expects "to" without "+".
+// We keep DB in +E164, but send without "+".
+function waToFromE164(phoneE164: string): string {
+  return phoneE164.replace(/^\+/, "");
+}
+
+// ------------------------------------------------------------
 // TEMPLATE RENDERING
 // ------------------------------------------------------------
-function renderTemplate(template: string, variables: Record<string, unknown> | null): string {
+function renderTemplate(
+  template: string,
+  variables: Record<string, unknown> | null,
+): string {
   if (!variables) return template;
   let output = template;
   for (const [key, value] of Object.entries(variables)) {
@@ -77,12 +113,79 @@ function renderTemplate(template: string, variables: Record<string, unknown> | n
 }
 
 // ------------------------------------------------------------
-// SEND WHATSAPP MESSAGE (UPDATED FOR SUB-ORG)
+// ENSURE CONTACT EXISTS + BACKFILL contact_id (PHASE 2B)
+// ------------------------------------------------------------
+async function ensureContactForMessage(params: {
+  organizationId: string;
+  phoneE164: string;
+  campaignMessageId: string;
+  existingContactId: string | null;
+}) {
+  const { organizationId, phoneE164, campaignMessageId, existingContactId } = params;
+
+  // If already linked, nothing to do
+  if (existingContactId) return;
+
+  // Look up contact by org+phone
+  const { data: existingContact, error: findErr } = await supabaseAdmin
+    .from("contacts")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("phone", phoneE164)
+    .maybeSingle();
+
+  if (findErr) {
+    console.error("contacts lookup error", { findErr, organizationId, phoneE164 });
+    return;
+  }
+
+  let contactId = existingContact?.id ?? null;
+
+  // Create if missing (names/model null for now)
+  if (!contactId) {
+    const { data: inserted, error: insErr } = await supabaseAdmin
+      .from("contacts")
+      .insert({
+        organization_id: organizationId,
+        phone: phoneE164,
+        first_name: null,
+        last_name: null,
+        model: null,
+      })
+      .select("id")
+      .single();
+
+    if (insErr) {
+      console.error("contacts insert error", { insErr, organizationId, phoneE164 });
+      return;
+    }
+    contactId = inserted?.id ?? null;
+  }
+
+  if (!contactId) return;
+
+  // Backfill campaign_messages.contact_id
+  const { error: upErr } = await supabaseAdmin
+    .from("campaign_messages")
+    .update({ contact_id: contactId })
+    .eq("id", campaignMessageId);
+
+  if (upErr) {
+    console.error("campaign_messages contact_id update error", {
+      upErr,
+      campaignMessageId,
+      contactId,
+    });
+  }
+}
+
+// ------------------------------------------------------------
+// SEND WHATSAPP MESSAGE (UPDATED FOR SUB-ORG + PHONE FORMAT)
 // ------------------------------------------------------------
 async function sendWhatsappMessage(
   organizationId: string,
   subOrganizationId: string | null,
-  phone: string,
+  phoneE164: string, // +91XXXXXXXXXX
   text: string,
 ): Promise<{ ok: boolean; messageId?: string; raw?: unknown; errorText?: string }> {
   const url = `${PROJECT_URL}/functions/v1/whatsapp-send`;
@@ -90,7 +193,7 @@ async function sendWhatsappMessage(
   const payload = {
     organization_id: organizationId,
     sub_organization_id: subOrganizationId,
-    to: phone,
+    to: waToFromE164(phoneE164), // send without '+'
     type: "text",
     text,
   };
@@ -123,7 +226,9 @@ async function sendWhatsappMessage(
 async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
-    .select("id, organization_id, sub_organization_id, status, scheduled_at, started_at, template_body")
+    .select(
+      "id, organization_id, sub_organization_id, status, scheduled_at, started_at, template_body",
+    )
     .in("status", ["scheduled", "sending"])
     .lte("scheduled_at", nowIso)
     .order("scheduled_at", { ascending: true })
@@ -139,7 +244,7 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
 async function fetchMessagesForCampaign(campaignId: string): Promise<CampaignMessage[]> {
   const { data, error } = await supabaseAdmin
     .from("campaign_messages")
-    .select("id, organization_id, campaign_id, sub_organization_id, phone, variables, status")
+    .select("id, organization_id, campaign_id, sub_organization_id, contact_id, phone, variables, status")
     .eq("campaign_id", campaignId)
     .in("status", ["pending", "queued"])
     .order("created_at", { ascending: true })
@@ -245,7 +350,7 @@ async function recomputeCampaignCountersForCampaign(campaignId: string) {
 }
 
 // ------------------------------------------------------------
-// MAIN HANDLER (UPDATED)
+// MAIN HANDLER (UPDATED FOR PHONE NORMALIZATION + CONTACT BACKFILL)
 // ------------------------------------------------------------
 serve(async () => {
   try {
@@ -270,6 +375,8 @@ serve(async () => {
       sent: number;
       failed: number;
       skipped_due_to_rate_limit: number;
+      normalized_phones: number;
+      contacts_backfilled: number;
     }> = [];
 
     for (const campaign of campaigns) {
@@ -281,6 +388,8 @@ serve(async () => {
       let sent = 0;
       let failed = 0;
       let skipped = 0;
+      let normalizedPhones = 0;
+      let contactsBackfilled = 0;
 
       for (const msg of messages) {
         if (globalSentCount >= GLOBAL_MAX_MESSAGES_PER_RUN) {
@@ -296,6 +405,36 @@ serve(async () => {
           continue;
         }
 
+        // 1) Normalize phone into DB format +91XXXXXXXXXX
+        const normalized = normalizePhoneToE164India(msg.phone);
+        if (!normalized) {
+          // invalid phone → mark failed (keeps retry meaningful)
+          await updateMessageStatusFailed(msg.id, `Invalid phone: ${msg.phone}`);
+          failed += 1;
+          continue;
+        }
+
+        // If stored phone is not normalized, update it once
+        if (normalized !== msg.phone) {
+          const { error } = await supabaseAdmin
+            .from("campaign_messages")
+            .update({ phone: normalized })
+            .eq("id", msg.id);
+
+          if (!error) normalizedPhones += 1;
+        }
+
+        // 2) Ensure contact exists + backfill campaign_messages.contact_id
+        if (!msg.contact_id) {
+          await ensureContactForMessage({
+            organizationId: msg.organization_id,
+            phoneE164: normalized,
+            campaignMessageId: msg.id,
+            existingContactId: msg.contact_id,
+          });
+          contactsBackfilled += 1;
+        }
+
         attempted += 1;
 
         const text = renderTemplate(campaign.template_body, msg.variables);
@@ -304,7 +443,7 @@ serve(async () => {
           const res = await sendWhatsappMessage(
             msg.organization_id,
             msg.sub_organization_id ?? null,
-            msg.phone,
+            normalized, // send uses waToFromE164 internally
             text,
           );
 
@@ -338,6 +477,8 @@ serve(async () => {
         sent,
         failed,
         skipped_due_to_rate_limit: skipped,
+        normalized_phones: normalizedPhones,
+        contacts_backfilled: contactsBackfilled,
       });
     }
 
@@ -358,4 +499,3 @@ serve(async () => {
     );
   }
 });
-

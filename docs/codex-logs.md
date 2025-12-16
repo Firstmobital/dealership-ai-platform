@@ -238,3 +238,56 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 - Result:
   - Knowledge Base text ingestion works end-to-end in production.
   - Chat AI can now use KB articles for answers.
+
+## 2025-12-16 — Phase 1: Database Foundation for Bulk Messaging Tracker
+
+- Added structured contact fields: first_name, last_name, model.
+- Added campaigns.template_name to separate “template/use-case” from campaign batch name.
+- Added sub_organization_id to campaigns and campaign_messages to align DB with TS types and multi-tenant design.
+- Added contact_campaign_summary view to power the Database screen with Delivered vs Failed campaign lists per phone number.
+
+## 2025-12-16 — Phase 2A: Database Contact Bulk Upload
+
+- Implemented contact-only bulk upload via Edge Function.
+- Backend normalizes Indian phone numbers (+91).
+- Safe upsert logic: enrich missing fields, never overwrite.
+- Optional tag/label support for legacy imports.
+- Campaigns and WhatsApp messaging intentionally excluded.
+
+## 2025-12-16 — Phase 2B: Campaign Upload & Dispatch
+
+- Campaign uploads now upsert contacts before sending.
+- Indian phone numbers normalized (+91) at backend.
+- campaign_messages linked to contacts via contact_id.
+- Added template_name to campaigns for Database aggregation.
+- Existing Retry Failed logic preserved.
+
+## 2025-12-16 — Phase 6A: Analytics DB Views
+
+- Added campaign_analytics_summary view for campaign-level metrics.
+- Added template_analytics_summary view for template performance.
+- Added model_analytics_summary view for model-wise delivery analytics.
+- Added failure_reason_summary view for WhatsApp failure diagnostics.
+- All analytics computed at DB level for fast, safe UI rendering.
+
+## 2025-12-16 — Phase 7A: AI Campaign History Context Injection
+
+- Injected per-contact campaign delivery history into ai-handler system prompt.
+- AI now aware of delivered and failed campaign templates.
+- Prevents offer repetition and improves follow-up tone.
+- Uses contact_campaign_summary view (no schema changes).
+
+## 2025-12-16 — Phase 7B: AI Controlled Silence (No-Reply Logic)
+
+- Introduced <NO_REPLY> token allowing AI to intentionally stay silent.
+- AI now avoids replying to acknowledgements or low-value messages.
+- Prevents spammy or pushy behavior after campaign delivery.
+- Backend safely detects and suppresses message send.
+
+
+## 2025-12-16 — Phase 7C: AI Follow-up Suggestions (Human-in-the-loop)
+
+- Added suggest_followup mode to ai-handler.
+- AI generates short WhatsApp follow-up suggestions using campaign history.
+- Suggestions are never auto-sent or saved.
+- Enables human-reviewed, intelligent follow-ups.

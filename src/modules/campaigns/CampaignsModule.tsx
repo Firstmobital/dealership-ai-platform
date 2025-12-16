@@ -1,3 +1,4 @@
+// /Users/air/dealership-ai-platform/src/modules/campaigns/CampaignsModule.tsx
 // — SAME IMPORTS —
 import {
   Megaphone,
@@ -27,8 +28,10 @@ type BuilderState = {
   name: string;
   description: string;
   templateBody: string;
+  templateName: string;
   scheduledAt: string;
 };
+
 
 function parseSimpleCsv(raw: string) {
   const rows = raw.trim().split("\n").map((r) => r.split(","));
@@ -78,9 +81,10 @@ export function CampaignsModule() {
     name: "",
     description: "",
     templateBody: "",
+    templateName: "", // ✅
     scheduledAt: "",
   });
-
+  
   const [csvState, setCsvState] = useState({
     rawText: "",
     headers: [] as string[],
@@ -169,14 +173,19 @@ export function CampaignsModule() {
     try {
       const newId = await createCampaignWithMessages({
         organizationId: currentOrganization.id,
-        sub_organization_id: activeSubOrg?.id ?? null,      // ✅ ADD HERE
+        sub_organization_id: activeSubOrg?.id ?? null,
         name: builderState.name,
+      
+        // ✅ PHASE 2B CRITICAL
+        template_name: builderState.templateName,
+      
         description: builderState.description,
         templateBody: builderState.templateBody,
         templateVariables,
         scheduledAt: builderState.scheduledAt || null,
         rows: csvState.parsedRows,
       });
+      
       
       if (newId) {
         setSelectedCampaignId(newId);
@@ -189,8 +198,9 @@ export function CampaignsModule() {
         name: "",
         description: "",
         templateBody: "",
+        templateName: "", // ✅
         scheduledAt: "",
-      });
+      });      
 
       setCsvState({
         rawText: "",
@@ -284,6 +294,20 @@ export function CampaignsModule() {
                 setBuilderState((p) => ({ ...p, name: e.target.value }))
               }
             />
+            
+            {/* ✅ PHASE 2B — TEMPLATE SELECTOR (ADD HERE) */}
+            <select
+            className="w-full mb-2 rounded bg-slate-800 px-3 py-2 text-sm"
+            value={builderState.templateName}
+            onChange={(e) =>
+              setBuilderState((p) => ({ ...p, templateName: e.target.value }))
+              }
+              >
+                <option value="">Select Template</option>
+                <option value="Zawl Altroz">Zawl Altroz</option>
+                <option value="Clearance">Clearance</option>
+                <option value="Followup">Followup</option>
+                </select>
   
             <textarea
               className="w-full mb-2 rounded bg-slate-800 px-3 py-2 text-sm"
