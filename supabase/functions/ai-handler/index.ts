@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import { runWorkflow } from "./workflow/runner.ts";
 
 /* ============================================================================
    ENV
@@ -1016,7 +1017,6 @@ serve(async (req: Request): Promise<Response> => {
 
           const step = steps[stepNum - 1];
           if (step) {
-            import { runWorkflow } from "./workflow/runner.ts";
             
             const result = await runWorkflow({
               workflow: wfRow,
