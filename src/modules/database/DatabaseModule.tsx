@@ -1,4 +1,7 @@
 // src/modules/database/DatabaseModule.tsx
+// FULL + FINAL — Tier 5 (Phase 6)
+// Enterprise CRM Database UI
+// Logic untouched
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
@@ -12,7 +15,6 @@ import { Upload } from "lucide-react";
 /* ------------------------------------------------------------------ */
 /* SHARED FILTER TYPE (SINGLE SOURCE OF TRUTH)                         */
 /* ------------------------------------------------------------------ */
-
 export type DatabaseFiltersState = {
   phone: string;
   model: string;
@@ -64,18 +66,23 @@ export function DatabaseModule() {
   /* UI                                                           */
   /* -------------------------------------------------------------- */
   return (
-    <div className="h-full w-full p-4 flex flex-col overflow-hidden">
+    <div className="flex h-full w-full flex-col overflow-hidden px-6 py-6 text-slate-900">
       {/* ========================================================= */}
-      {/* HEADER + ACTIONS                                         */}
+      {/* HEADER                                                   */}
       {/* ========================================================= */}
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-sm font-semibold text-white">Database</h1>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Database</h1>
+          <p className="text-sm text-slate-500">
+            Unified contact & campaign performance view
+          </p>
+        </div>
 
         <button
           onClick={() => setShowUpload(true)}
-          className="flex items-center gap-2 bg-accent px-3 py-1.5 rounded-lg text-sm text-white hover:bg-accent/90"
+          className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >
-          <Upload size={14} />
+          <Upload size={16} />
           Upload Contacts
         </button>
       </div>
@@ -83,15 +90,17 @@ export function DatabaseModule() {
       {/* ========================================================= */}
       {/* FILTERS                                                  */}
       {/* ========================================================= */}
-      <DatabaseFilters
-        filters={filters}
-        setFilters={setFilters}
-      />
+      <div className="mb-3 rounded-lg border border-slate-200 bg-white p-4">
+        <DatabaseFilters
+          filters={filters}
+          setFilters={setFilters}
+        />
+      </div>
 
       {/* ========================================================= */}
       {/* TABLE                                                    */}
       {/* ========================================================= */}
-      <div className="flex-1 overflow-hidden mt-3">
+      <div className="flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white">
         <ContactsTable
           rows={rows}
           filters={filters}
@@ -107,7 +116,7 @@ export function DatabaseModule() {
           onClose={() => setShowUpload(false)}
           onDone={async () => {
             setShowUpload(false);
-            await fetchData(); // refresh after upload
+            await fetchData();
           }}
         />
       )}

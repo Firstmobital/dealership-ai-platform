@@ -1,6 +1,9 @@
 // src/modules/knowledge-base/KnowledgeBaseModule.tsx
+// FULL + FINAL — Tier 4
+// Bright CRM Knowledge Base UI
+// Logic untouched
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   FileText,
   Loader2,
@@ -36,20 +39,20 @@ function AddNewArticleDropdown({
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white"
+        className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
       >
         <Plus size={16} />
         New
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-40 rounded-md border border-slate-200 bg-white shadow-lg dark:border-white/10 dark:bg-slate-800">
+        <div className="absolute right-0 mt-2 w-40 rounded-md border border-slate-200 bg-white shadow-lg">
           <button
             onClick={() => {
               setOpen(false);
               onManual();
             }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100"
           >
             <FileText size={16} />
             Manual
@@ -60,7 +63,7 @@ function AddNewArticleDropdown({
               setOpen(false);
               onUrl();
             }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100"
           >
             <Link size={16} />
             URL
@@ -71,7 +74,7 @@ function AddNewArticleDropdown({
               setOpen(false);
               onPdf();
             }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100"
           >
             <File size={16} />
             PDF
@@ -106,11 +109,10 @@ export function KnowledgeBaseModule() {
   const [showManualForm, setShowManualForm] = useState(false);
   const [manualTitle, setManualTitle] = useState("");
   const [manualContent, setManualContent] = useState("");
-
   const [editMode, setEditMode] = useState(false);
 
   /* -----------------------------------------------------------
-   * Load on organization / division change
+   * Load on org / sub-org change
    * -----------------------------------------------------------*/
   useEffect(() => {
     if (!currentOrganization) return;
@@ -119,7 +121,7 @@ export function KnowledgeBaseModule() {
   }, [currentOrganization?.id, activeSubOrg?.id]);
 
   /* -----------------------------------------------------------
-   * Handle CREATE or UPDATE
+   * Create / Update
    * -----------------------------------------------------------*/
   async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -146,7 +148,7 @@ export function KnowledgeBaseModule() {
   }
 
   /* -----------------------------------------------------------
-   * Delete Article
+   * Delete
    * -----------------------------------------------------------*/
   async function handleDelete(article: KnowledgeArticle) {
     if (!confirm(`Delete article "${article.title}"?`)) return;
@@ -155,7 +157,7 @@ export function KnowledgeBaseModule() {
   }
 
   /* -----------------------------------------------------------
-   * Edit Article
+   * Edit
    * -----------------------------------------------------------*/
   function handleEdit(article: KnowledgeArticle) {
     setManualTitle(article.title);
@@ -169,14 +171,13 @@ export function KnowledgeBaseModule() {
    * UI
    * -----------------------------------------------------------*/
   return (
-    <div className="flex h-full flex-col px-6 py-6 text-slate-900 dark:text-slate-200">
-
+    <div className="flex h-full flex-col px-6 py-6 text-slate-900">
       {/* HEADER */}
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Knowledge Base</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Your AI training library — manage articles, upload content, and organize knowledge.
+          <p className="text-sm text-slate-500">
+            Your AI training library — manage articles and knowledge.
           </p>
         </div>
 
@@ -192,9 +193,9 @@ export function KnowledgeBaseModule() {
         />
       </div>
 
-      {/* SEARCH BAR */}
-      <div className="mb-4 flex items-center rounded-md border bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-800">
-        <Search size={18} className="text-slate-500" />
+      {/* SEARCH */}
+      <div className="mb-4 flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm">
+        <Search size={18} className="text-slate-400" />
         <input
           type="text"
           placeholder="Search articles..."
@@ -203,15 +204,14 @@ export function KnowledgeBaseModule() {
             setSearchTerm(e.target.value);
             fetchArticles();
           }}
-          className="ml-2 w-full bg-transparent outline-none dark:text-white"
+          className="ml-2 w-full bg-transparent outline-none"
         />
       </div>
 
-      {/* MAIN LAYOUT */}
+      {/* MAIN */}
       <div className="flex h-full gap-4 overflow-hidden">
-
-        {/* LEFT PANEL */}
-        <div className="w-[35%] overflow-y-auto rounded-xl border bg-white p-4 dark:border-white/10 dark:bg-slate-900/60">
+        {/* LEFT — ARTICLES */}
+        <div className="w-[35%] overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold">
             Articles ({articles.length})
           </h2>
@@ -222,21 +222,24 @@ export function KnowledgeBaseModule() {
               Loading articles...
             </div>
           ) : articles.length === 0 ? (
-            <p className="py-6 text-sm text-slate-500">No knowledge articles yet.</p>
+            <p className="py-6 text-sm text-slate-500">
+              No knowledge articles yet.
+            </p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-2">
               {articles.map((a) => {
                 const isSelected = selectedArticle?.id === a.id;
 
                 return (
                   <li
                     key={a.id}
-                    className={`cursor-pointer rounded-md border px-3 py-2 text-sm transition ${
-                      isSelected
-                        ? "border-accent bg-accent/20 text-accent"
-                        : "border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-white/10 dark:bg-slate-950 dark:hover:bg-slate-800"
-                    }`}
                     onClick={() => setSelectedArticle(a)}
+                    className={[
+                      "cursor-pointer rounded-md border px-3 py-2 text-sm transition",
+                      isSelected
+                        ? "border-blue-600 bg-blue-50 text-blue-700"
+                        : "border-slate-200 bg-slate-50 hover:bg-slate-100",
+                    ].join(" ")}
                   >
                     <div className="flex items-center justify-between">
                       <p className="font-medium">{a.title}</p>
@@ -247,7 +250,7 @@ export function KnowledgeBaseModule() {
                             e.stopPropagation();
                             handleEdit(a);
                           }}
-                          className="text-slate-400 hover:text-blue-400"
+                          className="text-slate-400 hover:text-blue-600"
                         >
                           <Pencil size={15} />
                         </button>
@@ -257,7 +260,7 @@ export function KnowledgeBaseModule() {
                             e.stopPropagation();
                             handleDelete(a);
                           }}
-                          className="text-slate-400 hover:text-red-500"
+                          className="text-slate-400 hover:text-red-600"
                         >
                           <Trash2 size={15} />
                         </button>
@@ -270,21 +273,18 @@ export function KnowledgeBaseModule() {
           )}
         </div>
 
-        {/* RIGHT PANEL */}
-        <div className="flex flex-1 flex-col rounded-xl border bg-white dark:border-white/10 dark:bg-slate-900/60 overflow-hidden">
-
-          {/* EMPTY STATE */}
+        {/* RIGHT — CONTENT */}
+        <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
           {!selectedArticle && !showManualForm && (
             <div className="flex flex-1 items-center justify-center text-slate-500">
               Select an article or click “New”
             </div>
           )}
 
-          {/* CREATE / EDIT FORM */}
+          {/* CREATE / EDIT */}
           {showManualForm && (
-            <div className="flex flex-col h-full overflow-hidden">
-
-              <div className="sticky top-0 border-b bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900">
+            <div className="flex h-full flex-col overflow-hidden">
+              <div className="border-b border-slate-200 bg-white px-6 py-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-semibold">
                     {editMode ? "Edit Article" : "New Article"}
@@ -296,7 +296,7 @@ export function KnowledgeBaseModule() {
                       setManualTitle("");
                       setManualContent("");
                     }}
-                    className="text-slate-500 hover:text-slate-300"
+                    className="text-slate-400 hover:text-slate-600"
                   >
                     <X size={20} />
                   </button>
@@ -304,13 +304,16 @@ export function KnowledgeBaseModule() {
               </div>
 
               <div className="flex-1 overflow-y-auto px-6 py-4">
-                <form onSubmit={handleManualSubmit} className="space-y-4 max-w-2xl">
+                <form
+                  onSubmit={handleManualSubmit}
+                  className="max-w-2xl space-y-4"
+                >
                   <input
                     type="text"
                     placeholder="Article title"
                     value={manualTitle}
                     onChange={(e) => setManualTitle(e.target.value)}
-                    className="w-full rounded-md border bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                   />
 
                   <textarea
@@ -318,12 +321,12 @@ export function KnowledgeBaseModule() {
                     value={manualContent}
                     onChange={(e) => setManualContent(e.target.value)}
                     rows={12}
-                    className="w-full rounded-md border bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-800 dark:text-white"
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                   />
 
                   <button
                     type="submit"
-                    className="rounded-md bg-accent px-6 py-2 text-sm font-medium text-white"
+                    className="rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700"
                   >
                     {editMode ? "Update Article" : "Save Article"}
                   </button>
@@ -332,37 +335,41 @@ export function KnowledgeBaseModule() {
             </div>
           )}
 
-          {/* SELECTED ARTICLE VIEW */}
+          {/* VIEW */}
           {selectedArticle && !showManualForm && (
-            <div className="flex flex-col h-full overflow-hidden">
-
-              <div className="sticky top-0 border-b bg-white px-6 py-4 dark:border-white/10 dark:bg-slate-900">
+            <div className="flex h-full flex-col overflow-hidden">
+              <div className="border-b border-slate-200 bg-white px-6 py-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold">{selectedArticle.title}</h2>
+                  <h2 className="text-lg font-semibold">
+                    {selectedArticle.title}
+                  </h2>
                   <button
                     onClick={() => setSelectedArticle(null)}
-                    className="text-slate-500 hover:text-slate-300"
+                    className="text-slate-400 hover:text-slate-600"
                   >
                     <X size={20} />
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-6 py-4 text-sm whitespace-pre-wrap dark:text-slate-200">
+              <div className="flex-1 overflow-y-auto px-6 py-4 text-sm whitespace-pre-wrap">
                 {selectedArticle.content}
               </div>
 
-              <div className="border-t px-6 py-3 text-xs text-slate-500 dark:border-white/10 dark:text-slate-400">
-                ID: {selectedArticle.id} <br />
-                Created: {new Date(selectedArticle.created_at).toLocaleString()}
+              <div className="border-t border-slate-200 px-6 py-3 text-xs text-slate-500">
+                ID: {selectedArticle.id}
+                <br />
+                Created:{" "}
+                {new Date(selectedArticle.created_at).toLocaleString()}
               </div>
             </div>
           )}
-
         </div>
       </div>
 
-      {error && <p className="mt-4 text-sm text-red-500">Error: {error}</p>}
+      {error && (
+        <p className="mt-4 text-sm text-red-600">Error: {error}</p>
+      )}
     </div>
   );
 }

@@ -1,4 +1,7 @@
 // src/modules/database/DatabaseFilters.tsx
+// FULL + FINAL — Tier 5
+// Clean CRM-style filter bar
+// Logic untouched
 
 import type { Dispatch, SetStateAction } from "react";
 import type { DatabaseFiltersState } from "./DatabaseModule";
@@ -9,35 +12,42 @@ type Props = {
 };
 
 export function DatabaseFilters({ filters, setFilters }: Props) {
+  const inputClass =
+    "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500";
+
   return (
-    <div className="flex gap-3 mb-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Phone */}
       <input
         placeholder="Search phone"
         value={filters.phone}
         onChange={(e) =>
           setFilters((prev) => ({ ...prev, phone: e.target.value }))
         }
-        className="input"
+        className={inputClass}
       />
 
+      {/* Model */}
       <input
         placeholder="Model"
         value={filters.model}
         onChange={(e) =>
           setFilters((prev) => ({ ...prev, model: e.target.value }))
         }
-        className="input"
+        className={inputClass}
       />
 
+      {/* Campaign */}
       <input
         placeholder="Campaign"
         value={filters.campaign}
         onChange={(e) =>
           setFilters((prev) => ({ ...prev, campaign: e.target.value }))
         }
-        className="input"
+        className={inputClass}
       />
 
+      {/* Status */}
       <select
         value={filters.status}
         onChange={(e) =>
@@ -46,12 +56,12 @@ export function DatabaseFilters({ filters, setFilters }: Props) {
             status: e.target.value as DatabaseFiltersState["status"],
           }))
         }
-        className="input"
+        className={inputClass}
       >
-        <option value="all">All</option>
+        <option value="all">All statuses</option>
         <option value="delivered">Delivered</option>
         <option value="failed">Failed</option>
-        <option value="never">Never Sent</option>
+        <option value="never">Never sent</option>
       </select>
     </div>
   );

@@ -1,7 +1,7 @@
 // src/modules/chats/components/ChatMessageBubble.tsx
-// FULL + FINAL
+// FULL + FINAL — Tier 3
+// Joyz-style bright CRM bubbles
 // Phase 7A–7C UI clarity
-// Joyz-style bubbles + explicit sender tags
 
 import type { Message } from "../../../types/database";
 
@@ -17,15 +17,15 @@ function getSenderLabel(message: Message) {
 
 function getSenderBadgeClass(message: Message) {
   if (message.sender === "bot")
-    return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200";
+    return "bg-blue-100 text-blue-700";
 
   if (message.sender === "customer")
-    return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200";
+    return "bg-green-100 text-green-700";
 
   if (message.sender === "user")
-    return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-200";
+    return "bg-purple-100 text-purple-700";
 
-  return "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  return "bg-slate-200 text-slate-700";
 }
 
 /* -------------------------------------------------------
@@ -39,19 +39,19 @@ export function ChatMessageBubble({ message }: { message: Message }) {
   const isInbound = isCustomer;
 
   /* -------------------------------------------------------
-   * BUBBLE COLORS — Joyz-style
+   * BUBBLE COLORS — Bright CRM
    * ------------------------------------------------------- */
   const bubbleClasses = (() => {
     if (isBot)
-      return "bg-blue-50 text-blue-900 dark:bg-blue-900/40 dark:text-blue-100";
+      return "bg-blue-50 text-blue-900";
 
     if (isCustomer && message.channel === "whatsapp")
-      return "bg-green-50 text-green-900 dark:bg-green-900/40 dark:text-green-100";
+      return "bg-green-50 text-green-900";
 
     if (isUser)
-      return "bg-purple-50 text-purple-900 dark:bg-purple-900/40 dark:text-purple-100";
+      return "bg-purple-50 text-purple-900";
 
-    return "bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100";
+    return "bg-slate-100 text-slate-900";
   })();
 
   /* -------------------------------------------------------
@@ -92,7 +92,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
         <img
           src={message.media_url}
           alt="image"
-          className="mt-2 max-w-xs rounded-lg border border-slate-200 dark:border-white/10"
+          className="mt-2 max-w-xs rounded-lg border border-slate-200"
         />
       );
 
@@ -102,7 +102,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
           href={message.media_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-2 block text-sm text-blue-700 underline dark:text-blue-300"
+          className="mt-2 block text-sm text-blue-700 underline"
         >
           📄 View document
         </a>
@@ -118,7 +118,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
     <div
       className={`flex w-full flex-col gap-1 ${
         isInbound ? "items-start" : "items-end"
-      } animate-messageAppear`}
+      }`}
     >
       {/* Sender badge */}
       <div
@@ -140,7 +140,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
 
       {/* Timestamp */}
       <span
-        className={`text-[10px] text-slate-600 dark:text-slate-400 ${
+        className={`text-[10px] text-slate-500 ${
           isInbound ? "self-start" : "self-end"
         }`}
       >
