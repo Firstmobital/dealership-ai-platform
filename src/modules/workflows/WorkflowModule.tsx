@@ -1,4 +1,7 @@
 // src/modules/workflows/WorkflowModule.tsx
+// FULL + FINAL — Tier 7 (UI only)
+// Logic preserved 100%
+// White, clean, CRM-style layout
 
 import { useEffect, useState } from "react";
 import {
@@ -9,7 +12,6 @@ import {
   Play,
   Copy,
   Wand2,
-  RefreshCcw,
   AlertTriangle,
 } from "lucide-react";
 
@@ -221,7 +223,7 @@ export function WorkflowModule() {
             organization_id: currentOrganization.id,
             description: aiDescription.trim(),
           },
-        }
+        },
       );
 
       if (error) return;
@@ -314,7 +316,7 @@ export function WorkflowModule() {
 
     await reorderSteps(
       selectedWorkflow.id,
-      list.map((s) => s.id as string)
+      list.map((s) => s.id as string),
     );
 
     setDraggingStepId(null);
@@ -379,57 +381,162 @@ export function WorkflowModule() {
     }));
   };
 
+  function renderStepSummary(step: WorkflowStep) {
+    const action: any = step.action ?? {};
+    const type = action.ai_action;
+  
+    switch (type) {
+      case "ask_question":
+        return (
+          <>
+            <div className="font-medium text-slate-800">Ask Question</div>
+            <div className="text-sm text-slate-600 mt-1">
+              {action.instruction_text || "—"}
+            </div>
+          </>
+        );
+  
+      case "give_information":
+        return (
+          <>
+            <div className="font-medium text-slate-800">Give Information</div>
+            <div className="text-sm text-slate-600 mt-1">
+              {action.instruction_text || "—"}
+            </div>
+          </>
+        );
+  
+      case "save_user_response":
+        return (
+          <>
+            <div className="font-medium text-slate-800">Save User Response</div>
+            <div className="text-sm text-slate-600 mt-1">
+              Save reply as <span className="font-mono">{action.expected_user_input}</span>
+            </div>
+            {action.instruction_text && (
+              <div className="text-xs text-slate-500 mt-1">
+                Reply: {action.instruction_text}
+              </div>
+            )}
+          </>
+        );
+  
+      case "use_knowledge_base":
+        return (
+          <>
+            <div className="font-medium text-slate-800">Search Knowledge Base</div>
+            <div className="text-sm text-slate-600 mt-1">
+              {action.instruction_text || "—"}
+            </div>
+          </>
+        );
+  
+      case "branch":
+        return (
+          <>
+            <div className="font-medium text-slate-800">Branch Logic</div>
+            <div className="text-sm text-slate-600 mt-1">
+              If{" "}
+              <span className="font-mono">{action.metadata?.rule?.field}</span>{" "}
+              ={" "}
+              <span className="font-mono">{action.metadata?.rule?.value}</span>{" "}
+              → go to{" "}
+              <span className="font-semibold">
+                Step {action.metadata?.rule?.goto_step}
+              </span>
+            </div>
+          </>
+        );
+  
+      case "end":
+        return (
+          <>
+            <div className="font-medium text-slate-800">End Workflow</div>
+            <div className="text-sm text-slate-600 mt-1">
+              {action.instruction_text || "Conversation ends"}
+            </div>
+          </>
+        );
+  
+      default:
+        return (
+          <div className="text-sm text-slate-500">
+            Unknown step type
+          </div>
+        );
+    }
+  }
+  
   /* ----------------------------------------------------------------------------
     UI
   ---------------------------------------------------------------------------- */
+  const inputClass =
+    "mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500";
+  const labelClass = "text-xs font-medium text-slate-600";
+  const cardClass = "rounded-lg border border-slate-200 bg-white";
+
   return (
-    <div className="grid grid-cols-[260px,1fr,320px] gap-6 p-4">
+    <div className="grid h-full grid-cols-[260px,1fr,320px] gap-6 px-6 py-6 text-slate-900">
       {/* ──────────────────────────────────────────────
          LEFT — WORKFLOW LIST
       ────────────────────────────────────────────── */}
-      <aside className="rounded-xl border border-slate-700 bg-slate-900 flex flex-col">
-        <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
-          <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
-            <WorkflowIcon size={14} /> Workflows
+      <aside className={`${cardClass} flex flex-col overflow-hidden`}>
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <WorkflowIcon size={16} />
+            Workflows
           </h2>
 
           <button
             onClick={resetForm}
-            className="flex items-center gap-1 rounded bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+            className="flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100"
           >
-            <PlusCircle size={14} /> New
+            <PlusCircle size={14} />
+            New
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {workflows.map((wf) => (
-            <button
-              key={wf.id}
-              onClick={() => handleSelectWorkflow(wf)}
-              className={`flex w-full flex-col border-b border-slate-800 px-4 py-3 text-left text-slate-100 hover:bg-slate-800 ${
-                selectedWorkflow?.id === wf.id ? "bg-slate-800" : ""
-              }`}
-            >
-              <span className="text-sm font-medium">{wf.name}</span>
-              <span className="text-xs text-slate-400">
-                {wf.description || "No description"}
-              </span>
-              <span className="mt-1 text-[10px] uppercase text-slate-500">
-                {wf.mode === "strict" ? "STRICT" : "SMART"} •{" "}
-                {wf.is_active ? "Active" : "Inactive"}
-              </span>
-            </button>
-          ))}
+          {workflows.map((wf) => {
+            const active = selectedWorkflow?.id === wf.id;
+            return (
+              <button
+                key={wf.id}
+                onClick={() => handleSelectWorkflow(wf)}
+                className={`flex w-full flex-col border-b px-4 py-3 text-left transition ${
+                  active
+                    ? "border-blue-600 bg-blue-50"
+                    : "border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                <span className="text-sm font-medium">{wf.name}</span>
+                <span className="text-xs text-slate-500">
+                  {wf.description || "No description"}
+                </span>
+
+                <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-500">
+                  {wf.mode === "strict" ? "STRICT" : "SMART"} •{" "}
+                  {wf.is_active ? "Active" : "Inactive"}
+                </span>
+              </button>
+            );
+          })}
+
+          {workflows.length === 0 && (
+            <div className="px-4 py-6 text-sm text-slate-500">
+              No workflows yet.
+            </div>
+          )}
         </div>
       </aside>
 
       {/* ──────────────────────────────────────────────
          CENTER — FORM + STEPS
       ────────────────────────────────────────────── */}
-      <main className="rounded-xl border border-slate-700 bg-slate-900 p-6 space-y-6">
+      <main className={`${cardClass} p-6 space-y-6 overflow-hidden`}>
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">
+          <h2 className="text-lg font-semibold">
             {selectedWorkflow ? "Edit Workflow" : "New Workflow"}
           </h2>
 
@@ -438,7 +545,7 @@ export function WorkflowModule() {
               <>
                 <button
                   onClick={handleCloneWorkflow}
-                  className="flex items-center gap-1 rounded-md bg-slate-800 px-3 py-1 text-xs text-slate-100 hover:bg-slate-700"
+                  className="flex items-center gap-1 rounded-md border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100"
                 >
                   <Copy size={14} /> Clone
                 </button>
@@ -448,14 +555,14 @@ export function WorkflowModule() {
                     if (
                       selectedWorkflow &&
                       window.confirm(
-                        `Delete workflow "${selectedWorkflow.name}"?`
+                        `Delete workflow "${selectedWorkflow.name}"?`,
                       )
                     ) {
                       await deleteWorkflow(selectedWorkflow.id);
                       resetForm();
                     }
                   }}
-                  className="flex items-center gap-1 rounded-md bg-red-900/60 px-3 py-1 text-xs text-red-100 hover:bg-red-800"
+                  className="flex items-center gap-1 rounded-md border border-red-300 px-3 py-1 text-xs text-red-600 hover:bg-red-50"
                 >
                   <Trash size={14} /> Delete
                 </button>
@@ -465,7 +572,7 @@ export function WorkflowModule() {
             <button
               onClick={handleSaveWorkflowClick}
               disabled={saving}
-              className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm text-white disabled:opacity-50"
+              className="flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               <Save size={16} /> Save
             </button>
@@ -476,19 +583,20 @@ export function WorkflowModule() {
         <section className="grid grid-cols-2 gap-4">
           {/* Name */}
           <div>
-            <label className="text-xs text-slate-400">Name</label>
+            <label className={labelClass}>Name</label>
             <input
               value={form.name}
               onChange={(e) =>
                 setForm((prev) => ({ ...prev, name: e.target.value }))
               }
-              className="mt-1 w-full rounded bg-slate-800 px-3 py-2 text-sm text-white"
+              className={inputClass}
+              placeholder="e.g. Service follow-up workflow"
             />
           </div>
 
           {/* Mode */}
           <div>
-            <label className="text-xs text-slate-400">Mode</label>
+            <label className={labelClass}>Mode</label>
             <select
               value={form.mode}
               onChange={(e) =>
@@ -497,7 +605,7 @@ export function WorkflowModule() {
                   mode: e.target.value as ModeType,
                 }))
               }
-              className="mt-1 w-full rounded bg-slate-800 px-3 py-2 text-sm text-white"
+              className={inputClass}
             >
               <option value="smart">Smart (AI flexible)</option>
               <option value="strict">Strict (step-by-step)</option>
@@ -506,19 +614,20 @@ export function WorkflowModule() {
 
           {/* Description */}
           <div className="col-span-2">
-            <label className="text-xs text-slate-400">Description</label>
+            <label className={labelClass}>Description</label>
             <textarea
               value={form.description}
               onChange={(e) =>
                 setForm((prev) => ({ ...prev, description: e.target.value }))
               }
-              className="mt-1 w-full rounded bg-slate-800 px-3 py-2 text-sm text-white h-20"
+              className={`${inputClass} h-20`}
+              placeholder="What should the agent do in this workflow?"
             />
           </div>
 
           {/* Trigger Type */}
           <div>
-            <label className="text-xs text-slate-400">Trigger Type</label>
+            <label className={labelClass}>Trigger Type</label>
             <select
               value={form.trigger_type}
               onChange={(e) =>
@@ -527,7 +636,7 @@ export function WorkflowModule() {
                   trigger_type: e.target.value as TriggerType,
                 }))
               }
-              className="mt-1 w-full rounded bg-slate-800 px-3 py-2 text-sm text-white"
+              className={inputClass}
             >
               <option value="keyword">Keyword</option>
               <option value="intent">Intent</option>
@@ -537,46 +646,44 @@ export function WorkflowModule() {
 
           {form.trigger_type === "keyword" && (
             <div>
-              <label className="text-xs text-slate-400">
-                Keywords (comma-separated)
-              </label>
+              <label className={labelClass}>Keywords (comma-separated)</label>
               <input
                 value={form.keywords}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, keywords: e.target.value }))
                 }
-                className="mt-1 w-full rounded bg-slate-800 px-3 py-2 text-sm text-white"
+                className={inputClass}
+                placeholder="e.g. price, emi, discount"
               />
             </div>
           )}
 
           {form.trigger_type === "intent" && (
             <div>
-              <label className="text-xs text-slate-400">
-                Intents (comma-separated)
-              </label>
+              <label className={labelClass}>Intents (comma-separated)</label>
               <input
                 value={form.intents}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, intents: e.target.value }))
                 }
-                className="mt-1 w-full rounded bg-slate-800 px-3 py-2 text-sm text-white"
+                className={inputClass}
+                placeholder="e.g. book_test_drive, service_booking"
               />
             </div>
           )}
         </section>
 
         {/* AI GENERATOR SECTION */}
-        <section className="rounded-lg border border-slate-700 bg-slate-800/60 p-4 space-y-3">
+        <section className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm text-slate-100">
-              <Wand2 size={16} className="text-accent" />
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <Wand2 size={16} className="text-blue-600" />
               <span>Generate workflow with AI</span>
             </div>
             <button
               onClick={handleGenerateWithAI}
               disabled={aiGenerating || !aiDescription.trim()}
-              className="flex items-center gap-2 rounded-md bg-accent px-3 py-1 text-xs text-white disabled:opacity-50"
+              className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               <Play size={14} />
               {aiGenerating ? "Generating..." : "Generate"}
@@ -586,21 +693,26 @@ export function WorkflowModule() {
           <textarea
             value={aiDescription}
             onChange={(e) => setAiDescription(e.target.value)}
-            className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white h-20"
+            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 h-20"
             placeholder="Describe what you want the agent to do..."
           />
         </section>
 
         {/* Steps Section */}
-        <div className="border-t border-slate-700 pt-4" />
+        <div className="border-t border-slate-200 pt-4" />
 
-        <section className="space-y-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">
-            Steps ({workflowSteps.length})
-          </h3>
+        <section className="space-y-4 overflow-hidden">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+              Steps ({workflowSteps.length})
+            </h3>
+            {loading && (
+              <span className="text-xs text-slate-500">Loading…</span>
+            )}
+          </div>
 
           {/* EXISTING STEPS */}
-          <div className="space-y-3">
+          <div className="space-y-3 overflow-y-auto pr-1">
             {workflowSteps.map((step, idx) => {
               const action: any = step.action ?? {};
               const type = action.ai_action;
@@ -613,16 +725,16 @@ export function WorkflowModule() {
                   onDragStart={() => handleDragStart(step.id)}
                   onDragOver={handleDragOver}
                   onDrop={() => handleDrop(step.id)}
-                  className={`rounded-lg border border-slate-800 bg-slate-900 p-4 transition ${
-                    draggingStepId === step.id ? "opacity-40" : ""
+                  className={`rounded-lg border border-slate-200 bg-white p-4 transition ${
+                    draggingStepId === step.id ? "opacity-50" : ""
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-300">
+                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
                         {idx + 1}
                       </span>
-                      <span className="text-xs uppercase text-slate-400">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         {type}
                       </span>
                     </div>
@@ -632,18 +744,20 @@ export function WorkflowModule() {
                         selectedWorkflow &&
                         deleteStep(selectedWorkflow.id, step.id)
                       }
-                      className="p-1 text-red-400 hover:text-red-300"
+                      className="rounded-md p-1 text-red-500 hover:bg-red-50 hover:text-red-700"
+                      title="Delete step"
                     >
                       <Trash size={14} />
                     </button>
                   </div>
 
-                  <pre className="mt-2 text-xs text-slate-200 overflow-x-auto whitespace-pre-wrap break-all">
-                    {JSON.stringify(action, null, 2)}
-                  </pre>
+                  <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                    {renderStepSummary(step)}
+                    </div>
+
 
                   {issue && (
-                    <div className="mt-2 flex items-center gap-2 rounded bg-amber-900/30 px-2 py-1 text-[11px] text-amber-200">
+                    <div className="mt-2 flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-2 py-1 text-[11px] text-amber-800">
                       <AlertTriangle size={12} />
                       {issue}
                     </div>
@@ -653,18 +767,20 @@ export function WorkflowModule() {
             })}
 
             {!workflowSteps.length && (
-              <p className="text-xs text-slate-500">No steps yet. Add below.</p>
+              <p className="text-sm text-slate-500">
+                No steps yet. Add below.
+              </p>
             )}
           </div>
 
           {/* ADD STEP BUILDER */}
           {selectedWorkflow && (
-            <div className="rounded-xl border border-slate-700 bg-slate-800 p-4 space-y-4">
-              <h3 className="text-sm font-semibold text-white">Add New Step</h3>
+            <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+              <h3 className="text-sm font-semibold">Add New Step</h3>
 
               {/* Action Type */}
               <div>
-                <label className="text-xs text-slate-300">Action Type</label>
+                <label className={labelClass}>Action Type</label>
                 <select
                   value={form.newActionType}
                   onChange={(e) =>
@@ -673,15 +789,13 @@ export function WorkflowModule() {
                       newActionType: e.target.value,
                     }))
                   }
-                  className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white"
+                  className={inputClass}
                 >
                   <option value="">Select Action</option>
                   <option value="ask_question">Ask Question</option>
                   <option value="give_information">Give Information</option>
                   <option value="save_user_response">Save User Response</option>
-                  <option value="use_knowledge_base">
-                    Search Knowledge Base
-                  </option>
+                  <option value="use_knowledge_base">Search Knowledge Base</option>
                   <option value="branch">Branch Logic</option>
                   <option value="end">End Workflow</option>
                 </select>
@@ -693,7 +807,7 @@ export function WorkflowModule() {
                 form.newActionType === "use_knowledge_base" ||
                 form.newActionType === "end") && (
                 <div>
-                  <label className="text-xs text-slate-400">
+                  <label className={labelClass}>
                     {form.newActionType === "ask_question"
                       ? "Question to ask"
                       : form.newActionType === "give_information"
@@ -704,7 +818,7 @@ export function WorkflowModule() {
                   </label>
 
                   <textarea
-                    className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white"
+                    className={`${inputClass} h-24`}
                     value={form.newActionText}
                     onChange={(e) =>
                       setForm((prev) => ({
@@ -720,7 +834,7 @@ export function WorkflowModule() {
               {form.newActionType === "save_user_response" && (
                 <>
                   <div>
-                    <label className="text-xs text-slate-400">Variable Key</label>
+                    <label className={labelClass}>Variable Key</label>
                     <input
                       value={form.newSaveKey}
                       onChange={(e) =>
@@ -729,12 +843,13 @@ export function WorkflowModule() {
                           newSaveKey: e.target.value,
                         }))
                       }
-                      className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white"
+                      className={inputClass}
+                      placeholder="e.g. preferred_model"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs text-slate-400">
+                    <label className={labelClass}>
                       Reply text after saving
                     </label>
                     <textarea
@@ -745,7 +860,7 @@ export function WorkflowModule() {
                           newActionText: e.target.value,
                         }))
                       }
-                      className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white"
+                      className={`${inputClass} h-24`}
                     />
                   </div>
                 </>
@@ -755,9 +870,7 @@ export function WorkflowModule() {
               {form.newActionType === "branch" && (
                 <>
                   <div>
-                    <label className="text-xs text-slate-400">
-                      Variable to check
-                    </label>
+                    <label className={labelClass}>Variable to check</label>
                     <input
                       value={form.branchField}
                       onChange={(e) =>
@@ -766,14 +879,13 @@ export function WorkflowModule() {
                           branchField: e.target.value,
                         }))
                       }
-                      className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white"
+                      className={inputClass}
+                      placeholder="e.g. interested_in"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs text-slate-400">
-                      Expected value
-                    </label>
+                    <label className={labelClass}>Expected value</label>
                     <input
                       value={form.branchValue}
                       onChange={(e) =>
@@ -782,12 +894,13 @@ export function WorkflowModule() {
                           branchValue: e.target.value,
                         }))
                       }
-                      className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white"
+                      className={inputClass}
+                      placeholder="e.g. Safari"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs text-slate-400">Go to step #</label>
+                    <label className={labelClass}>Go to step #</label>
                     <input
                       type="number"
                       min={1}
@@ -798,7 +911,7 @@ export function WorkflowModule() {
                           branchGoto: e.target.value,
                         }))
                       }
-                      className="mt-1 w-full rounded bg-slate-900 px-3 py-2 text-sm text-white"
+                      className={inputClass}
                     />
                   </div>
                 </>
@@ -807,7 +920,7 @@ export function WorkflowModule() {
               <button
                 onClick={handleSaveStep}
                 disabled={!form.newActionType}
-                className="w-full rounded bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 Save Step
               </button>
@@ -815,7 +928,7 @@ export function WorkflowModule() {
           )}
 
           {error && (
-            <p className="text-xs text-red-400 mt-2">Error: {error}</p>
+            <p className="text-xs text-red-600 mt-2">Error: {error}</p>
           )}
         </section>
       </main>
@@ -823,9 +936,9 @@ export function WorkflowModule() {
       {/* ──────────────────────────────────────────────
          RIGHT — LOGS
       ────────────────────────────────────────────── */}
-      <aside className="rounded-xl border border-slate-700 bg-slate-900 flex flex-col">
-        <div className="flex items-center gap-2 border-b border-slate-700 px-5 py-3">
-          <span className="text-sm font-semibold uppercase tracking-wide text-slate-300">
+      <aside className={`${cardClass} flex flex-col overflow-hidden`}>
+        <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-3">
+          <span className="text-sm font-semibold uppercase tracking-wide text-slate-700">
             Logs
           </span>
         </div>
@@ -837,26 +950,26 @@ export function WorkflowModule() {
               logs[selectedWorkflow.id].map((log) => (
                 <div
                   key={log.id}
-                  className="rounded-xl border border-slate-700 bg-slate-800 p-3"
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-3"
                 >
-                  <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">
                     {log.created_at
                       ? new Date(log.created_at).toLocaleString()
                       : ""}
                   </div>
 
-                  <div className="mt-1 text-[11px] text-slate-400">
+                  <div className="mt-1 text-[11px] text-slate-600">
                     Conversation:{" "}
-                    <span className="text-slate-200 font-medium">
+                    <span className="text-slate-900 font-medium">
                       {log.conversation_id}
                     </span>
                   </div>
 
-                  <pre className="mt-2 whitespace-pre-wrap break-all text-[11px] text-slate-200">
+                  <pre className="mt-2 whitespace-pre-wrap break-all text-[11px] text-slate-700 rounded-md border border-slate-200 bg-white p-2">
                     {JSON.stringify(
                       (log as any).data ?? (log as any).variables ?? {},
                       null,
-                      2
+                      2,
                     )}
                   </pre>
                 </div>
@@ -872,5 +985,3 @@ export function WorkflowModule() {
     </div>
   );
 }
-
-

@@ -8,6 +8,7 @@ import {
   PhoneCall,
   HelpCircle,
 } from "lucide-react";
+import { Database } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
 
@@ -33,6 +34,7 @@ export function Sidebar() {
       {/* ----------------------------- Navigation ----------------------------- */}
       <nav className="flex flex-1 flex-col gap-1 text-sm">
         <SidebarLink to="/" icon={MessageCircle} label="Chats" />
+        <SidebarLink to="/database" icon={Database} label="Database" />
         <SidebarLink to="/knowledge" icon={BookOpen} label="Knowledge Base" />
         <SidebarLink to="/bot" icon={Bot} label="Bot Personality" />
         <SidebarLink to="/workflows" icon={Workflow} label="Workflows" />
