@@ -1016,7 +1016,20 @@ serve(async (req: Request): Promise<Response> => {
 
           const step = steps[stepNum - 1];
           if (step) {
-            const run = (wfRow.mode ?? "smart") === "strict" ? runStrictMode : runSmartMode;
+            import { runWorkflow } from "./workflow/runner.ts";
+            
+            const result = await runWorkflow({
+              workflow: wfRow,
+              steps,
+              conversationId: conversation_id,
+              userMessage: user_message,
+              openai,
+              supabase,
+            });
+
+            if (result?.reply) {
+              // save + send message
+            }
 
             const result = await run(step, activeWorkflow, user_message, scopedLogger);
 
