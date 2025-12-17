@@ -1,37 +1,20 @@
-///src/layouts/AppLayout.tsx
-
-import { useEffect } from "react";
 import { Outlet } from "react-router-dom";
-import { Sidebar } from "../components/sidebar/Sidebar";
-import { Topbar } from "../components/common/Topbar";
-import { useThemeStore } from "../state/useThemeStore";
+import { Sidebar } from "./components/sidebar/Sidebar";
+import { Topbar } from "./components/common/Topbar";
 
 export function AppLayout() {
-  const { theme, initializeTheme } = useThemeStore();
-
-  useEffect(() => {
-    initializeTheme();
-  }, [initializeTheme]);
-
   return (
-    <div
-      className={`
-        flex h-screen w-full
-        ${theme === "dark" ? "bg-slate-950 text-white" : "bg-white text-slate-900"}
-      `}
-    >
-      {/* SIDEBAR */}
-      <Sidebar forceWhite={theme !== "dark"} />
+    <div className="flex h-screen w-full bg-slate-50 text-slate-900">
+      {/* Sidebar */}
+      <Sidebar />
 
-      {/* MAIN AREA */}
-      <div className="flex flex-1 flex-col overflow-hidden bg-white dark:bg-slate-950">
+      {/* Main content */}
+      <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar />
 
-        {/* 👇 THIS IS THE IMPORTANT PART */}
-        <main className="flex-1 overflow-hidden bg-white dark:bg-slate-900">
-          <div className="h-full w-full bg-white px-6 py-6 dark:bg-transparent">
-            <Outlet />
-          </div>
+        {/* Modules handle their own scroll */}
+        <main className="flex-1 overflow-auto px-6 py-6">
+          <Outlet />
         </main>
       </div>
     </div>

@@ -4,7 +4,6 @@ import { Sun, Moon, LogOut } from "lucide-react";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { SubOrgSwitcher } from "../topbar/SubOrgSwitcher";
 import { useAuthStore } from "../../state/useAuthStore";
-import { useThemeStore } from "../../state/useThemeStore";
 
 export function Topbar() {
   const { user, signOut } = useAuthStore();
