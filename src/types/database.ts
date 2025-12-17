@@ -260,6 +260,35 @@ export type CampaignMessage = {
 };
 
 // -------------------------------------------------------------
+// AI HANDLER RESPONSES (PHASE 7B / 7C)
+// -------------------------------------------------------------
+
+export type AIReplyResponse = {
+  conversation_id: UUID;
+  ai_response?: string;
+  no_reply?: boolean;
+  forced_kb?: boolean;
+  request_id: string;
+};
+
+export type AIFollowupSuggestionResponse = {
+  conversation_id: UUID;
+  suggestion: string;
+  request_id: string;
+};
+
+// -------------------------------------------------------------
+// CONVERSATION AI META (FUTURE SAFE)
+// -------------------------------------------------------------
+
+export type ConversationHeat =
+  | "hot"
+  | "warm"
+  | "cold"
+  | "neutral";
+
+
+// -------------------------------------------------------------
 // DATABASE VIEW: CONTACT → CAMPAIGN SUMMARY (PHASE 1)
 // -------------------------------------------------------------
 export type ContactCampaignSummary = {

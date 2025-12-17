@@ -44,10 +44,15 @@ type ChatState = {
   setFilter: (filter: ConversationFilter) => void;
 
   toggleAI: (conversationId: string, enabled: boolean) => Promise<void>;
+
+  // 🔵 UPDATED
   sendMessage: (
     conversationId: string,
     payload: Partial<Message>
-  ) => Promise<void>;
+  ) => Promise<{ noReply: boolean }>;
+
+  // 🟢 Phase 7C
+  suggestFollowup: (conversationId: string) => Promise<string>;
 };
 
 /* ========================================================================== */
@@ -79,11 +84,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .eq("organization_id", organizationId)
       .order("last_message_at", { ascending: false });
 
-    if (activeSubOrg) {
-      query = query.eq("sub_organization_id", activeSubOrg.id);
-    } else {
-      query = query.is("sub_organization_id", null);
-    }
+    if (activeSubOrg) query = query.eq("sub_organization_id", activeSubOrg.id);
+    else query = query.is("sub_organization_id", null);
 
     const { data, error } = await query;
 
@@ -94,7 +96,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const aiToggle = Object.fromEntries(
-      (data ?? []).map((c) => [c.id, c.ai_enabled])
+      (data ?? []).map((c) => [c.id, c.ai_enabled !== false])
     );
 
     set({
@@ -116,11 +118,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
 
-    if (activeSubOrg) {
-      query = query.eq("sub_organization_id", activeSubOrg.id);
-    } else {
-      query = query.is("sub_organization_id", null);
-    }
+    if (activeSubOrg) query = query.eq("sub_organization_id", activeSubOrg.id);
+    else query = query.is("sub_organization_id", null);
 
     const { data, error } = await query;
 
@@ -138,12 +137,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* REALTIME: GLOBAL SUBSCRIPTION FOR NEW CONVERSATIONS + MESSAGES            */
+  /* REALTIME: GLOBAL SUBSCRIPTION                                              */
   /* -------------------------------------------------------------------------- */
   initRealtime: (organizationId: string) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
-    // -------- conversations INSERT listener --------
     supabase
       .channel("rt-conversations")
       .on(
@@ -156,45 +154,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         (payload) => {
           const conv = payload.new as Conversation;
-          const { conversations } = get();
 
-          // Sub-org filter check
-          if (activeSubOrg && conv.sub_organization_id !== activeSubOrg.id) {
-            return;
-          }
-          if (!activeSubOrg && conv.sub_organization_id !== null) {
-            return;
-          }
+          if (activeSubOrg && conv.sub_organization_id !== activeSubOrg.id) return;
+          if (!activeSubOrg && conv.sub_organization_id !== null) return;
 
-          // Add conversation only if not in list already
-          if (!conversations.some((c) => c.id === conv.id)) {
-            set({ conversations: [conv, ...conversations] });
+          const existing = get().conversations;
+          if (!existing.some((c) => c.id === conv.id)) {
+            set({ conversations: [conv, ...existing] });
           }
         }
       )
       .subscribe();
 
-    // -------- messages INSERT listener --------
     supabase
       .channel("rt-messages")
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-        },
+        { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           const msg = payload.new as Message;
-
-          // Only update if we already loaded this convo
           const existing = get().messages[msg.conversation_id] ?? [];
-          const isActive =
-            get().activeConversationId === msg.conversation_id;
-
-          const unreadCount = isActive
-            ? 0
-            : (get().unread[msg.conversation_id] ?? 0) + 1;
+          const isActive = get().activeConversationId === msg.conversation_id;
 
           set({
             messages: {
@@ -203,7 +183,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             },
             unread: {
               ...get().unread,
-              [msg.conversation_id]: unreadCount,
+              [msg.conversation_id]: isActive
+                ? 0
+                : (get().unread[msg.conversation_id] ?? 0) + 1,
             },
           });
         }
@@ -212,7 +194,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* REALTIME: PER-CONVERSATION SUBSCRIPTION                                   */
+  /* PER CONVERSATION REALTIME                                                  */
   /* -------------------------------------------------------------------------- */
   subscribeToMessages: (conversationId: string) => {
     supabase
@@ -228,12 +210,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         (payload) => {
           const msg = payload.new as Message;
           const existing = get().messages[conversationId] ?? [];
-          const isActive =
-            get().activeConversationId === conversationId;
-
-          const unreadCount = isActive
-            ? 0
-            : (get().unread[conversationId] ?? 0) + 1;
+          const isActive = get().activeConversationId === conversationId;
 
           set({
             messages: {
@@ -242,7 +219,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             },
             unread: {
               ...get().unread,
-              [conversationId]: unreadCount,
+              [conversationId]: isActive
+                ? 0
+                : (get().unread[conversationId] ?? 0) + 1,
             },
           });
         }
@@ -263,13 +242,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  /* -------------------------------------------------------------------------- */
-  /* SET FILTER                                                                  */
-  /* -------------------------------------------------------------------------- */
   setFilter: (filter) => set({ filter }),
 
   /* -------------------------------------------------------------------------- */
-  /* TOGGLE AI                                                                   */
+  /* TOGGLE AI                                                                 */
   /* -------------------------------------------------------------------------- */
   toggleAI: async (conversationId, enabled) => {
     const { error } = await supabase
@@ -288,102 +264,85 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* SEND MESSAGE (WEB ONLY)                                                    */
+  /* SEND MESSAGE (AI HANDLER IS SOURCE OF TRUTH)                               */
   /* -------------------------------------------------------------------------- */
   sendMessage: async (conversationId, payload) => {
-    const state = get();
     const { activeSubOrg } = useSubOrganizationStore.getState();
-
     const text = payload.text?.trim() ?? "";
-    if (!text) return;
+
+    if (!text) return { noReply: false };
 
     const sender = payload.sender ?? "user";
-    const message_type = payload.message_type ?? "text";
     const channel = payload.channel ?? "web";
 
     if (channel === "whatsapp") {
-      console.warn("[useChatStore] WhatsApp messages cannot be sent from frontend");
-      return;
+      console.warn("WhatsApp messages cannot be sent from frontend");
+      return { noReply: false };
     }
 
-    // Insert user message
-    const { error: userError } = await supabase.from("messages").insert({
+    // 1️⃣ Insert user message
+    await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender,
-      message_type,
+      message_type: payload.message_type ?? "text",
       text,
-      media_url: payload.media_url ?? null,
       channel,
       sub_organization_id: activeSubOrg?.id ?? null,
     });
 
-    if (userError) {
-      console.error("❌ Error inserting user message:", userError);
-      throw userError;
-    }
-
     await get().fetchMessages(conversationId);
 
-    const aiEnabled = state.aiToggle[conversationId];
-    if (!aiEnabled || sender !== "user") return;
+    // 2️⃣ AI disabled?
+    const aiEnabled = get().aiToggle[conversationId];
+    if (!aiEnabled || sender !== "user") return { noReply: false };
 
-    // Call AI handler
-    (async () => {
-      try {
-        const { data: aiResp, error: invokeError } =
-          await supabase.functions.invoke("ai-handler", {
-            body: {
-              conversation_id: conversationId,
-              user_message: text,
-            },
-          });
+    // 3️⃣ Call ai-handler (AI HANDLER inserts bot reply)
+    const { data, error } = await supabase.functions.invoke("ai-handler", {
+      body: {
+        conversation_id: conversationId,
+        user_message: text,
+        mode: "reply",
+      },
+    });
 
-        if (invokeError) {
-          console.error("❌ AI handler failed:", invokeError);
-          return;
-        }
+    if (error) {
+      console.error("ai-handler error", error);
+      return { noReply: false };
+    }
 
-        const aiText =
-          (aiResp as any)?.ai_response ??
-          (aiResp as any)?.response ??
-          null;
+    // 4️⃣ Phase 7B — AI chose not to reply
+    if (data?.no_reply) {
+      return { noReply: true };
+    }
 
-        if (!aiText) return;
+    // 5️⃣ Refresh from DB
+    await get().fetchMessages(conversationId);
 
-        const { error: botError } = await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          sender: "bot",
-          message_type: "text",
-          text: aiText,
-          media_url: null,
-          channel: "internal",
-          sub_organization_id: activeSubOrg?.id ?? null,
-        });
+    const orgId = get().conversations.find((c) => c.id === conversationId)
+      ?.organization_id;
 
-        if (botError) {
-          console.error("❌ Error inserting bot reply:", botError);
-          return;
-        }
+    if (orgId) await get().fetchConversations(orgId);
 
-        await get().fetchMessages(conversationId);
+    return { noReply: false };
+  },
 
-        // Update conversation timestamp
-        await supabase
-          .from("conversations")
-          .update({ last_message_at: new Date().toISOString() })
-          .eq("id", conversationId);
+  /* -------------------------------------------------------------------------- */
+  /* PHASE 7C — FOLLOW-UP SUGGESTION                                            */
+  /* -------------------------------------------------------------------------- */
+  suggestFollowup: async (conversationId) => {
+    const { data, error } = await supabase.functions.invoke("ai-handler", {
+      body: {
+        conversation_id: conversationId,
+        user_message: "Suggest follow-up",
+        mode: "suggest_followup",
+      },
+    });
 
-        // Refresh conversation list
-        const conversations = get().conversations;
-        const orgId = conversations.find((c) => c.id === conversationId)
-          ?.organization_id;
+    if (error) {
+      console.error("suggestFollowup error", error);
+      return "";
+    }
 
-        if (orgId) {
-          await get().fetchConversations(orgId);
-        }
-      } catch (err) {
-        console.error("❌ Auto-reply error:", err);
-      }
-    })();
+    return (data?.suggestion ?? "").toString();
   },
 }));

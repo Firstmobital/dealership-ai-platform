@@ -1,7 +1,36 @@
 // src/modules/chats/components/ChatMessageBubble.tsx
+// FULL + FINAL
+// Phase 7A–7C UI clarity
+// Joyz-style bubbles + explicit sender tags
 
 import type { Message } from "../../../types/database";
 
+/* -------------------------------------------------------
+ * HELPERS
+ * ------------------------------------------------------- */
+function getSenderLabel(message: Message) {
+  if (message.sender === "bot") return "AI";
+  if (message.sender === "user") return "Agent";
+  if (message.sender === "customer") return "Customer";
+  return "System";
+}
+
+function getSenderBadgeClass(message: Message) {
+  if (message.sender === "bot")
+    return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200";
+
+  if (message.sender === "customer")
+    return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-200";
+
+  if (message.sender === "user")
+    return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-200";
+
+  return "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+}
+
+/* -------------------------------------------------------
+ * COMPONENT
+ * ------------------------------------------------------- */
 export function ChatMessageBubble({ message }: { message: Message }) {
   const isBot = message.sender === "bot";
   const isUser = message.sender === "user";
@@ -10,7 +39,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
   const isInbound = isCustomer;
 
   /* -------------------------------------------------------
-   * BUBBLE COLORS — Joyz-style (soft, clean)
+   * BUBBLE COLORS — Joyz-style
    * ------------------------------------------------------- */
   const bubbleClasses = (() => {
     if (isBot)
@@ -91,14 +120,19 @@ export function ChatMessageBubble({ message }: { message: Message }) {
         isInbound ? "items-start" : "items-end"
       } animate-messageAppear`}
     >
-      {/* Sender */}
-      <div className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-400">
-        {message.sender}
+      {/* Sender badge */}
+      <div
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getSenderBadgeClass(
+          message,
+        )}`}
+      >
+        {getSenderLabel(message)}
+        {isBot && <span>🤖</span>}
       </div>
 
-      {/* Bubble */}
+      {/* Message bubble */}
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${bubbleClasses}`}
+        className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow-sm ${bubbleClasses}`}
       >
         {message.text && <span>{message.text}</span>}
         {renderMedia()}
