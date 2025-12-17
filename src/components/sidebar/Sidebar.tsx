@@ -1,3 +1,5 @@
+// src/components/sidebar/Sidebar.tsx
+
 import {
   Building2,
   MessageCircle,
@@ -7,17 +9,17 @@ import {
   Megaphone,
   PhoneCall,
   HelpCircle,
+  Database,
 } from "lucide-react";
-import { Database } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
 
 export function Sidebar() {
   return (
-    <aside className="flex h-full w-60 flex-col border-r border-slate-200 bg-white px-4 py-5 text-slate-900">
-      {/* ----------------------------- Brand ----------------------------- */}
+    <aside className="flex h-full w-60 flex-col border-r border-slate-200 bg-white px-4 py-5">
+      {/* Brand */}
       <div className="mb-6 flex items-center gap-3 px-1">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100">
           <Building2 size={20} />
         </div>
 
@@ -31,7 +33,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* ----------------------------- Navigation ----------------------------- */}
+      {/* Navigation */}
       <nav className="flex flex-1 flex-col gap-1 text-sm">
         <SidebarLink to="/" icon={MessageCircle} label="Chats" />
         <SidebarLink to="/database" icon={Database} label="Database" />
@@ -40,7 +42,6 @@ export function Sidebar() {
         <SidebarLink to="/workflows" icon={Workflow} label="Workflows" />
         <SidebarLink to="/campaigns" icon={Megaphone} label="Campaigns" />
 
-        {/* ----------------------------- Settings Section ----------------------------- */}
         <div className="mt-4 border-t border-slate-200 pt-3 text-xs uppercase tracking-wide text-slate-500">
           Settings
         </div>
@@ -50,13 +51,11 @@ export function Sidebar() {
           icon={PhoneCall}
           label="WhatsApp Settings"
         />
-
         <SidebarLink
           to="/settings/sub-orgs"
           icon={Building2}
           label="Divisions"
         />
-
         <SidebarLink
           to="/unanswered"
           icon={HelpCircle}

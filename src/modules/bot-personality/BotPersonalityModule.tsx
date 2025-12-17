@@ -1,14 +1,30 @@
-import { useEffect, useState } from 'react';
-import { Sparkles, Languages, MessageSquare, Smile, Save } from 'lucide-react';
-import { useOrganizationStore } from '../../state/useOrganizationStore';
-import { useSubOrganizationStore } from '../../state/useSubOrganizationStore';
-import { supabase } from '../../lib/supabaseClient';
+///Users/air/dealership-ai-platform/src/modules/bot-personality/BotPersonalityModule.tsx
+import { useEffect, useState } from "react";
+import {
+  Sparkles,
+  Languages,
+  MessageSquare,
+  Smile,
+  Save,
+} from "lucide-react";
 import toast from "react-hot-toast";
 
-const tones = ['Professional', 'Friendly', 'Enthusiastic', 'Conversational'];
-const languages = ['English', 'Hinglish', 'Hindi'];
-const responseLengths = ['Short', 'Medium', 'Detailed'];
-const genderVoices = ['Neutral', 'Feminine', 'Masculine'];
+import { supabase } from "../../lib/supabaseClient";
+import { useOrganizationStore } from "../../state/useOrganizationStore";
+import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
+
+/* ------------------------------------------------------------------ */
+/* CONSTANTS                                                          */
+/* ------------------------------------------------------------------ */
+
+const tones = ["Professional", "Friendly", "Enthusiastic", "Conversational"];
+const languages = ["English", "Hinglish", "Hindi"];
+const responseLengths = ["Short", "Medium", "Detailed"];
+const genderVoices = ["Neutral", "Feminine", "Masculine"];
+
+/* ------------------------------------------------------------------ */
+/* TYPES                                                              */
+/* ------------------------------------------------------------------ */
 
 type PersonalityForm = {
   tone: string;
@@ -21,64 +37,70 @@ type PersonalityForm = {
   instructions: string;
 };
 
+/* ------------------------------------------------------------------ */
+/* MODULE                                                             */
+/* ------------------------------------------------------------------ */
+
 export function BotPersonalityModule() {
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
 
-  const [form, setForm] = useState<PersonalityForm>({
-    tone: 'Professional',
-    language: 'English',
-    response_length: 'Medium',
-    short_responses: false,
-    emoji_usage: true,
-    gender_voice: 'Neutral',
-    fallback_message: 'I will connect you with a human agent shortly.',
-    instructions: JSON.stringify(
-      { guidelines: ['Always greet with dealership name', 'Ask for preferred model'] },
-      null,
-      2
-    )
-  });
-
   const [loading, setLoading] = useState(false);
 
+  const [form, setForm] = useState<PersonalityForm>({
+    tone: "Professional",
+    language: "English",
+    response_length: "Medium",
+    short_responses: false,
+    emoji_usage: true,
+    gender_voice: "Neutral",
+    fallback_message: "I’m sorry, I don’t have enough information to answer that.",
+    instructions: JSON.stringify(
+      {
+        guidelines: [
+          "Always greet with dealership name",
+          "Ask for preferred model",
+        ],
+      },
+      null,
+      2
+    ),
+  });
+
   /* ------------------------------------------------------------------ */
-  /* LOAD PERSONALITY + INSTRUCTIONS FOR ORG + SUB-ORG                  */
+  /* LOAD PERSONALITY + INSTRUCTIONS                                    */
   /* ------------------------------------------------------------------ */
+
   useEffect(() => {
-    const fetchPersonality = async () => {
-      if (!currentOrganization) return;
+    if (!currentOrganization) return;
 
-      const organizationId = currentOrganization.id;
-      const subOrgId = activeSubOrg?.id ?? null;
+    const organizationId = currentOrganization.id;
+    const subOrgId = activeSubOrg?.id ?? null;
 
-      /* ---------------- FIX: Null-safe query for sub_organization_id --------------- */
+    const load = async () => {
       let personalityQuery = supabase
-        .from('bot_personality')
-        .select('*')
-        .eq('organization_id', organizationId);
+        .from("bot_personality")
+        .select("*")
+        .eq("organization_id", organizationId);
 
-      if (subOrgId === null) {
-        personalityQuery = personalityQuery.is('sub_organization_id', null);
-      } else {
-        personalityQuery = personalityQuery.eq('sub_organization_id', subOrgId);
-      }
+      personalityQuery =
+        subOrgId === null
+          ? personalityQuery.is("sub_organization_id", null)
+          : personalityQuery.eq("sub_organization_id", subOrgId);
 
       const { data: personality } = await personalityQuery.maybeSingle();
 
-      /* ---------------- FIX: Null-safe query for instructions ---------------------- */
-      let instructionsQuery = supabase
-        .from('bot_instructions')
-        .select('*')
-        .eq('organization_id', organizationId);
+      let instructionQuery = supabase
+        .from("bot_instructions")
+        .select("*")
+        .eq("organization_id", organizationId);
 
-      if (subOrgId === null) {
-        instructionsQuery = instructionsQuery.is('sub_organization_id', null);
-      } else {
-        instructionsQuery = instructionsQuery.eq('sub_organization_id', subOrgId);
-      }
+      instructionQuery =
+        subOrgId === null
+          ? instructionQuery.is("sub_organization_id", null)
+          : instructionQuery.eq("sub_organization_id", subOrgId);
 
-      const { data: instructions } = await instructionsQuery.maybeSingle();
+      const { data: instructions } = await instructionQuery.maybeSingle();
 
       if (personality) {
         setForm((prev) => ({
@@ -89,36 +111,34 @@ export function BotPersonalityModule() {
           emoji_usage: personality.emoji_usage,
           gender_voice: personality.gender_voice,
           fallback_message: personality.fallback_message,
-          response_length: personality.short_responses ? 'Short' : prev.response_length
+          response_length: personality.short_responses ? "Short" : prev.response_length,
         }));
       }
 
       if (instructions) {
         setForm((prev) => ({
           ...prev,
-          instructions: JSON.stringify(instructions.rules, null, 2)
+          instructions: JSON.stringify(instructions.rules, null, 2),
         }));
       }
     };
 
-    fetchPersonality().catch(console.error);
+    load().catch(console.error);
   }, [currentOrganization, activeSubOrg?.id]);
 
   /* ------------------------------------------------------------------ */
-  /* SAVE PERSONALITY + INSTRUCTIONS                                    */
+  /* SAVE                                                              */
   /* ------------------------------------------------------------------ */
+
   const savePersonality = async () => {
     if (!currentOrganization) return;
-  
+
     setLoading(true);
-  
+
     const organizationId = currentOrganization.id;
     const subOrgId = activeSubOrg?.id ?? null;
-  
+
     try {
-      // -----------------------------
-      // SAVE PERSONALITY
-      // -----------------------------
       const { error: personalityError } = await supabase
         .from("bot_personality")
         .upsert(
@@ -132,200 +152,183 @@ export function BotPersonalityModule() {
             gender_voice: form.gender_voice,
             fallback_message: form.fallback_message,
           },
-          {
-            onConflict: "organization_id,sub_organization_id",
-          }
+          { onConflict: "organization_id,sub_organization_id" }
         );
-  
-      if (personalityError) {
-        console.error(personalityError);
-        toast.error("Failed to save bot personality.");
-        throw personalityError;
-      }
-  
-      // -----------------------------
-      // SAVE CUSTOM INSTRUCTIONS
-      // -----------------------------
-      const parsed = JSON.parse(form.instructions || "{}");
-  
-      const { error: instructionsError } = await supabase
+
+      if (personalityError) throw personalityError;
+
+      const parsedRules = JSON.parse(form.instructions || "{}");
+
+      const { error: instructionError } = await supabase
         .from("bot_instructions")
         .upsert(
           {
             organization_id: organizationId,
             sub_organization_id: subOrgId,
-            rules: parsed,
+            rules: parsedRules,
           },
-          {
-            onConflict: "organization_id,sub_organization_id",
-          }
+          { onConflict: "organization_id,sub_organization_id" }
         );
-  
-      if (instructionsError) {
-        console.error(instructionsError);
-        toast.error("Failed to save custom instructions.");
-        throw instructionsError;
-      }
-  
-      // -----------------------------
-      // SUCCESS TOAST 🎉
-      // -----------------------------
-      toast.success("Bot personality saved successfully!");
-  
+
+      if (instructionError) throw instructionError;
+
+      toast.success("Bot personality saved successfully");
     } catch (err) {
       console.error(err);
+      toast.error("Failed to save bot personality");
     } finally {
       setLoading(false);
     }
   };
-  
+
   /* ------------------------------------------------------------------ */
-  /* UI                                                                 */
+  /* UI                                                                */
   /* ------------------------------------------------------------------ */
 
   return (
-    <div className="grid grid-cols-2 gap-6">
-      {/* LEFT SIDE – PERSONALITY SETTINGS */}
-      <div className="rounded-2xl border border-white/5 bg-slate-900/60 p-6">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-          <Sparkles size={18} className="text-accent" /> Personality Settings
+    <div className="grid grid-cols-3 gap-6">
+      {/* LEFT — TONE & LANGUAGE */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="text-sm font-semibold text-slate-900">
+          Tone & Language
         </h2>
-        <p className="mt-1 text-sm text-slate-400">
-          Configure AI tone, language, and behavior for each dealership division.
-        </p>
 
-        <div className="mt-6 space-y-5">
+        <div className="mt-4 space-y-4">
           <div>
-            <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
-              <Sparkles size={14} /> Tone
-            </label>
+            <label className="text-xs font-medium text-slate-600">Tone</label>
             <select
               value={form.tone}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, tone: event.target.value }))
+              onChange={(e) =>
+                setForm((p) => ({ ...p, tone: e.target.value }))
               }
-              className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             >
-              {tones.map((tone) => (
-                <option key={tone}>{tone}</option>
+              {tones.map((t) => (
+                <option key={t}>{t}</option>
               ))}
             </select>
           </div>
 
           <div>
-            <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
-              <Languages size={14} /> Language
-            </label>
+            <label className="text-xs font-medium text-slate-600">Language</label>
             <select
               value={form.language}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, language: event.target.value }))
+              onChange={(e) =>
+                setForm((p) => ({ ...p, language: e.target.value }))
               }
-              className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             >
-              {languages.map((language) => (
-                <option key={language}>{language}</option>
+              {languages.map((l) => (
+                <option key={l}>{l}</option>
               ))}
             </select>
           </div>
 
           <div>
-            <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
-              <MessageSquare size={14} /> Response Length
+            <label className="text-xs font-medium text-slate-600">Voice</label>
+            <select
+              value={form.gender_voice}
+              onChange={(e) =>
+                setForm((p) => ({ ...p, gender_voice: e.target.value }))
+              }
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            >
+              {genderVoices.map((v) => (
+                <option key={v}>{v}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* MIDDLE — RESPONSE STYLE */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="text-sm font-semibold text-slate-900">
+          Response Style
+        </h2>
+
+        <div className="mt-4 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-600">
+              Response Length
             </label>
             <select
               value={form.response_length}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, response_length: event.target.value }))
+              onChange={(e) =>
+                setForm((p) => ({ ...p, response_length: e.target.value }))
               }
-              className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             >
-              {responseLengths.map((length) => (
-                <option key={length}>{length}</option>
+              {responseLengths.map((r) => (
+                <option key={r}>{r}</option>
               ))}
             </select>
           </div>
 
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
-              <Smile size={14} /> Short Responses
-            </label>
-            <input
-              type="checkbox"
-              checked={form.short_responses}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, short_responses: event.target.checked }))
-              }
-            />
-
-            <label className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-400">
-              Emoji Usage
-            </label>
+          <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={form.emoji_usage}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, emoji_usage: event.target.checked }))
+              onChange={(e) =>
+                setForm((p) => ({ ...p, emoji_usage: e.target.checked }))
               }
             />
-          </div>
+            Emojis allowed
+          </label>
 
           <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">
-              Bot Voice
-            </label>
-            <select
-              value={form.gender_voice}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, gender_voice: event.target.value }))
-              }
-              className="mt-2 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
-            >
-              {genderVoices.map((voice) => (
-                <option key={voice}>{voice}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-xs uppercase tracking-wide text-slate-400">
+            <label className="text-xs font-medium text-slate-600">
               Fallback Message
             </label>
             <textarea
               value={form.fallback_message}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, fallback_message: event.target.value }))
+              onChange={(e) =>
+                setForm((p) => ({ ...p, fallback_message: e.target.value }))
               }
-              className="mt-2 h-24 w-full rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+              className="mt-1 h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
         </div>
       </div>
 
-      {/* RIGHT SIDE: JSON INSTRUCTIONS */}
-      <div className="rounded-2xl border border-white/5 bg-slate-900/60 p-6">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-          <Sparkles size={18} className="text-accent" /> Custom Instructions
-        </h2>
-        <p className="mt-1 text-sm text-slate-400">
-          Provide JSON instructions consumed by the AI engine.
-        </p>
+      {/* RIGHT — PREVIEW + SAVE */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 flex flex-col">
+        <h2 className="text-sm font-semibold text-slate-900">Live Preview</h2>
+
+        <div className="mt-4 text-sm space-y-3">
+          <div className="text-slate-500">Customer:</div>
+          <div className="rounded-md bg-slate-100 px-3 py-2">
+            Hi, I want to know the price
+          </div>
+
+          <div className="text-slate-500 mt-3">Bot:</div>
+          <div className="rounded-md bg-blue-50 px-3 py-2 text-blue-900">
+            {form.tone === "Friendly" ? "Sure 😊" : "Certainly."} How can I help you?
+          </div>
+        </div>
+
+        <button
+          onClick={savePersonality}
+          disabled={loading}
+          className="mt-auto rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {loading ? "Saving..." : "Save Personality"}
+        </button>
+      </div>
+
+      {/* ADVANCED JSON INSTRUCTIONS */}
+      <div className="col-span-3 rounded-xl border border-slate-200 bg-white p-6">
+        <h3 className="text-sm font-semibold text-slate-900">
+          Advanced Instructions (JSON)
+        </h3>
 
         <textarea
           value={form.instructions}
-          onChange={(event) =>
-            setForm((prev) => ({ ...prev, instructions: event.target.value }))
+          onChange={(e) =>
+            setForm((p) => ({ ...p, instructions: e.target.value }))
           }
-          className="mt-4 h-96 w-full rounded-xl border border-white/10 bg-slate-950 px-4 py-3 font-mono text-xs text-slate-200 focus:border-accent focus:outline-none"
+          className="mt-3 h-64 w-full rounded-md border border-slate-300 bg-slate-50 px-4 py-3 font-mono text-xs"
         />
-
-        <button
-          onClick={() => savePersonality().catch(console.error)}
-          disabled={loading}
-          className="mt-4 inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white transition hover:bg-accent/80 disabled:opacity-50"
-        >
-          <Save size={16} /> {loading ? 'Saving...' : 'Save Personality'}
-        </button>
       </div>
     </div>
   );
