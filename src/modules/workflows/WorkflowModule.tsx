@@ -409,9 +409,6 @@ export function WorkflowModule() {
                 <div className="text-lg font-semibold text-slate-900">
                   {selectedWorkflow ? "Edit Workflow" : "New Workflow"}
                 </div>
-                <div className="text-xs text-slate-500">
-                  Smart mode: AI chooses next step. Strict mode: step-by-step.
-                </div>
               </div>
 
               <div className="flex items-center gap-2">
