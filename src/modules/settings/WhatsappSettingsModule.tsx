@@ -1,3 +1,4 @@
+///Users/air/dealership-ai-platform/src/modules/settings/WhatsappSettingsModule.tsx
 import { useEffect, useState } from "react";
 import {
   Loader2,
@@ -36,6 +37,9 @@ export function WhatsappSettingsModule() {
     is_active: true,
   });
 
+  /* ------------------------------------------------------------------ */
+  /* LOAD SETTINGS                                                       */
+  /* ------------------------------------------------------------------ */
   useEffect(() => {
     if (!currentOrganization) return;
     fetchSettings().catch(console.error);
@@ -59,6 +63,7 @@ export function WhatsappSettingsModule() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
+
     await saveSettings({
       phone_number: form.phone_number || null,
       api_token: form.api_token || null,
@@ -71,53 +76,56 @@ export function WhatsappSettingsModule() {
 
   const isDivisionContext = Boolean(activeSubOrg);
 
+  /* ------------------------------------------------------------------ */
+  /* UI                                                                 */
+  /* ------------------------------------------------------------------ */
   return (
-    <div className="flex h-full flex-col px-6 py-6 text-slate-200">
+    <div className="max-w-3xl space-y-6">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-white">
+      <div>
+        <h1 className="text-xl font-semibold text-slate-900">
           WhatsApp Settings
         </h1>
-        <p className="text-sm text-slate-400">
+        <p className="mt-1 text-sm text-slate-500">
           Configure WhatsApp Cloud API for this{" "}
           {isDivisionContext ? "division" : "organization"}.
         </p>
       </div>
 
       {/* Context Banner */}
-      <div className="mb-6">
-        {activeSubOrg && isOrgFallback && (
-          <div className="flex items-start gap-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
-            <AlertTriangle className="text-yellow-400" size={18} />
-            <p className="text-sm text-yellow-200">
-              This division has no override. Using organization-level settings.
-            </p>
-          </div>
-        )}
+      {activeSubOrg && isOrgFallback && (
+        <div className="flex items-start gap-3 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+          <AlertTriangle size={18} className="text-yellow-500" />
+          <p className="text-sm text-yellow-800">
+            This division has no WhatsApp override. Using organization-level
+            settings.
+          </p>
+        </div>
+      )}
 
-        {activeSubOrg && !isOrgFallback && (
-          <div className="flex items-start gap-3 rounded-lg border border-green-500/30 bg-green-500/10 p-3">
-            <ShieldCheck className="text-green-400" size={18} />
-            <p className="text-sm text-green-200">
-              Division-specific WhatsApp configuration is active.
-            </p>
-          </div>
-        )}
+      {activeSubOrg && !isOrgFallback && (
+        <div className="flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 p-3">
+          <ShieldCheck size={18} className="text-green-600" />
+          <p className="text-sm text-green-800">
+            Division-specific WhatsApp configuration is active.
+          </p>
+        </div>
+      )}
 
-        {!activeSubOrg && (
-          <div className="flex items-start gap-3 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
-            <Phone className="text-blue-400" size={18} />
-            <p className="text-sm text-blue-200">
-              Organization-level WhatsApp settings.
-            </p>
-          </div>
-        )}
-      </div>
+      {!activeSubOrg && (
+        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+          <Phone size={18} className="text-blue-600" />
+          <p className="text-sm text-blue-800">
+            Organization-level WhatsApp settings. Divisions inherit these by
+            default.
+          </p>
+        </div>
+      )}
 
       {/* Card */}
       <form
         onSubmit={handleSubmit}
-        className="max-w-3xl rounded-2xl border border-white/10 bg-slate-900/60 p-6 space-y-4"
+        className="rounded-xl border border-slate-200 bg-white p-6 space-y-4"
       >
         {[
           ["Phone Number", "phone_number", "e.g. 919999888877"],
@@ -127,7 +135,7 @@ export function WhatsappSettingsModule() {
           ["Business ID", "whatsapp_business_id", "Business account ID"],
         ].map(([label, key, placeholder]) => (
           <div key={key}>
-            <label className="text-xs uppercase tracking-wide text-slate-400">
+            <label className="block text-xs font-medium text-slate-600">
               {label}
             </label>
             <input
@@ -135,22 +143,19 @@ export function WhatsappSettingsModule() {
               value={(form as any)[key]}
               onChange={(e) => update(key as any, e.target.value)}
               placeholder={placeholder}
-              className="mt-1 w-full rounded-md border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-accent focus:outline-none"
             />
           </div>
         ))}
 
-        <div className="flex items-center gap-2 pt-2">
+        <label className="flex items-center gap-2 pt-2 text-sm text-slate-700">
           <input
             type="checkbox"
             checked={form.is_active}
             onChange={(e) => update("is_active", e.target.checked)}
-            className="h-4 w-4 rounded border-white/20 bg-slate-900 text-accent"
           />
-          <span className="text-sm text-slate-300">
-            Enable WhatsApp
-          </span>
-        </div>
+          Enable WhatsApp
+        </label>
 
         <button
           type="submit"
@@ -165,9 +170,16 @@ export function WhatsappSettingsModule() {
           Save Settings
         </button>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        {success && <p className="text-sm text-green-400">{success}</p>}
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        {success && <p className="text-sm text-green-600">{success}</p>}
       </form>
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading WhatsApp settings…
+        </div>
+      )}
     </div>
   );
 }

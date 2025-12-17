@@ -1,3 +1,5 @@
+///Users/air/dealership-ai-platform/src/modules/dashboard/SettingsModule.tsx
+
 import { Shield, KeyRound, Database } from 'lucide-react';
 
 export function SettingsModule() {
