@@ -5,19 +5,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  MessageCircle,
-  ToggleLeft,
-  ToggleRight,
-  Paperclip,
-  SendHorizonal,
   Sparkles,
   Copy,
+  SendHorizonal,
 } from "lucide-react";
 
 import { useChatStore } from "../../state/useChatStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
-import { useThemeStore } from "../../state/useThemeStore";
 
 import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { ChatSidebarItem } from "./components/ChatSidebarItem";
@@ -44,29 +39,22 @@ export function ChatsModule() {
     messages,
     activeConversationId,
     filter,
-    aiToggle,
     unread,
     fetchConversations,
     fetchMessages,
     subscribeToMessages,
     setActiveConversation,
-    setFilter,
-    toggleAI,
     sendMessage,
   } = useChatStore();
 
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
-  const { theme } = useThemeStore();
 
-  const isDark = theme === "dark";
   const subOrgKey = activeSubOrg?.id ?? "__no_suborg__";
 
   const [headerContact, setHeaderContact] =
     useState<HeaderContact | null>(null);
-  const [headerLoading, setHeaderLoading] = useState(false);
   const [sending, setSending] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
 
   /* ---------------- PHASE 7 STATE ---------------- */
   const [campaignContext, setCampaignContext] = useState<any | null>(null);
@@ -76,7 +64,6 @@ export function ChatsModule() {
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [aiNoReply, setAiNoReply] = useState(false);
 
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -120,7 +107,7 @@ export function ChatsModule() {
   }, [activeConversationId]);
 
   /* -------------------------------------------------------
-   * SCROLL + TYPING
+   * SCROLL
    * ------------------------------------------------------- */
   useEffect(() => {
     const el = scrollRef.current;
@@ -132,17 +119,6 @@ export function ChatsModule() {
     if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  useEffect(() => {
-    if (!activeConversationId) return;
-    const msgs = messages[activeConversationId];
-    if (!msgs?.length) return;
-
-    if (msgs[msgs.length - 1].sender === "bot") {
-      setIsTyping(false);
-      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    }
-  }, [messages, activeConversationId]);
-
   /* -------------------------------------------------------
    * LOAD CONTACT HEADER
    * ------------------------------------------------------- */
@@ -152,7 +128,6 @@ export function ChatsModule() {
       const conv = conversations.find((c) => c.id === activeConversationId);
       if (!conv?.contact_id) return setHeaderContact(null);
 
-      setHeaderLoading(true);
       const { data } = await supabase
         .from("contacts")
         .select("name, phone")
@@ -163,8 +138,6 @@ export function ChatsModule() {
         name: data?.name ?? null,
         phone: data?.phone ?? null,
       });
-
-      setHeaderLoading(false);
     }
     load();
   }, [activeConversationId, conversations]);
@@ -206,10 +179,6 @@ export function ChatsModule() {
 
     if (!text && !file) return;
     setSending(true);
-
-    setIsTyping(true);
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => setIsTyping(false), 3000);
 
     try {
       if (conv.channel === "whatsapp") {
@@ -285,9 +254,9 @@ export function ChatsModule() {
    * UI
    * ------------------------------------------------------- */
   return (
-    <div className={`flex h-full w-full ${isDark ? "bg-slate-900" : "bg-white"}`}>
+    <div className="flex h-full w-full bg-white">
       {/* LEFT PANEL */}
-      <div className="w-80 border-r p-3">
+      <div className="w-80 border-r border-slate-200 p-3">
         {filteredConversations.map((c) => (
           <ChatSidebarItem
             key={c.id}
@@ -307,7 +276,7 @@ export function ChatsModule() {
           </div>
         ) : (
           <>
-            <div className="border-b px-6 py-4 flex justify-between">
+            <div className="flex justify-between border-b border-slate-200 px-6 py-4">
               <div>
                 <div className="font-semibold">
                   {headerContact?.name || headerContact?.phone}
@@ -319,7 +288,7 @@ export function ChatsModule() {
 
               <button
                 onClick={handleSuggestFollowup}
-                className="flex items-center gap-2 text-xs border px-3 py-1 rounded-md"
+                className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1 text-xs hover:bg-slate-50"
               >
                 <Sparkles size={14} />
                 Suggest follow-up
@@ -328,7 +297,7 @@ export function ChatsModule() {
 
             <div
               ref={scrollRef}
-              className="flex-1 overflow-y-auto p-6 space-y-4"
+              className="flex-1 space-y-4 overflow-y-auto p-6"
             >
               {currentMessages.map((msg) => (
                 <ChatMessageBubble key={msg.id} message={msg} />
@@ -343,16 +312,19 @@ export function ChatsModule() {
               <div ref={bottomRef} />
             </div>
 
-            <form onSubmit={handleSend} className="border-t px-6 py-4">
+            <form
+              onSubmit={handleSend}
+              className="border-t border-slate-200 px-6 py-4"
+            >
               <div className="flex gap-3">
                 <input
                   name="message"
                   placeholder="Type your message..."
-                  className="flex-1 border rounded-md px-4 py-2"
+                  className="flex-1 rounded-md border border-slate-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button
                   disabled={sending}
-                  className="bg-accent px-4 py-2 text-white rounded-md"
+                  className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
                 >
                   <SendHorizonal size={16} />
                 </button>
@@ -364,7 +336,7 @@ export function ChatsModule() {
 
       {/* RIGHT PANEL — PHASE 7 */}
       {activeConversationId && (
-        <div className="w-80 border-l p-4 space-y-4 bg-slate-50">
+        <div className="w-80 space-y-4 border-l border-slate-200 bg-slate-50 p-4">
           <h3 className="text-sm font-semibold">Campaign Context</h3>
 
           {campaignContext ? (
@@ -391,13 +363,13 @@ export function ChatsModule() {
           )}
 
           {followupSuggestion && (
-            <div className="relative rounded-md border bg-white p-3 text-sm">
+            <div className="relative rounded-md border border-slate-200 bg-white p-3 text-sm">
               {followupSuggestion}
               <button
                 onClick={() =>
                   navigator.clipboard.writeText(followupSuggestion)
                 }
-                className="absolute top-2 right-2 text-slate-400"
+                className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
               >
                 <Copy size={14} />
               </button>
