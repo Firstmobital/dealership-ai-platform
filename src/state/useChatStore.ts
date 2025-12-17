@@ -32,26 +32,21 @@ type ChatState = {
   aiToggle: Record<string, boolean>;
   unread: Record<string, number>;
 
-  // --- Core actions ---
   fetchConversations: (organizationId: string) => Promise<void>;
   fetchMessages: (conversationId: string) => Promise<void>;
 
-  // Realtime
   initRealtime: (organizationId: string) => void;
-  subscribeToMessages: (conversationId: string) => void;
 
   setActiveConversation: (conversationId: string | null) => void;
   setFilter: (filter: ConversationFilter) => void;
 
   toggleAI: (conversationId: string, enabled: boolean) => Promise<void>;
 
-  // 🔵 UPDATED
   sendMessage: (
     conversationId: string,
     payload: Partial<Message>
   ) => Promise<{ noReply: boolean }>;
 
-  // 🟢 Phase 7C
   suggestFollowup: (conversationId: string) => Promise<string>;
 };
 
@@ -137,11 +132,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* REALTIME: GLOBAL SUBSCRIPTION                                              */
+  /* REALTIME (SINGLE SOURCE OF TRUTH)                                          */
   /* -------------------------------------------------------------------------- */
   initRealtime: (organizationId: string) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
+    /* ------------------ CONVERSATIONS ------------------ */
     supabase
       .channel("rt-conversations")
       .on(
@@ -155,17 +151,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         (payload) => {
           const conv = payload.new as Conversation;
 
-          if (activeSubOrg && conv.sub_organization_id !== activeSubOrg.id) return;
+          if (activeSubOrg && conv.sub_organization_id !== activeSubOrg.id)
+            return;
           if (!activeSubOrg && conv.sub_organization_id !== null) return;
 
           const existing = get().conversations;
-          if (!existing.some((c) => c.id === conv.id)) {
-            set({ conversations: [conv, ...existing] });
-          }
+          if (existing.some((c) => c.id === conv.id)) return;
+
+          set({ conversations: [conv, ...existing] });
         }
       )
       .subscribe();
 
+    /* ------------------ MESSAGES ------------------ */
     supabase
       .channel("rt-messages")
       .on(
@@ -173,8 +171,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           const msg = payload.new as Message;
+
           const existing = get().messages[msg.conversation_id] ?? [];
-          const isActive = get().activeConversationId === msg.conversation_id;
+
+          // 🔒 HARD DEDUPE (CRITICAL)
+          if (existing.some((m) => m.id === msg.id)) return;
+
+          const isActive =
+            get().activeConversationId === msg.conversation_id;
 
           set({
             messages: {
@@ -194,43 +198,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* PER CONVERSATION REALTIME                                                  */
-  /* -------------------------------------------------------------------------- */
-  subscribeToMessages: (conversationId: string) => {
-    supabase
-      .channel(`conv-${conversationId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `conversation_id=eq.${conversationId}`,
-        },
-        (payload) => {
-          const msg = payload.new as Message;
-          const existing = get().messages[conversationId] ?? [];
-          const isActive = get().activeConversationId === conversationId;
-
-          set({
-            messages: {
-              ...get().messages,
-              [conversationId]: [...existing, msg],
-            },
-            unread: {
-              ...get().unread,
-              [conversationId]: isActive
-                ? 0
-                : (get().unread[conversationId] ?? 0) + 1,
-            },
-          });
-        }
-      )
-      .subscribe();
-  },
-
-  /* -------------------------------------------------------------------------- */
-  /* SET ACTIVE CONVERSATION                                                    */
+  /* UI STATE                                                                   */
   /* -------------------------------------------------------------------------- */
   setActiveConversation: (conversationId) => {
     set({ activeConversationId: conversationId });
@@ -245,7 +213,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setFilter: (filter) => set({ filter }),
 
   /* -------------------------------------------------------------------------- */
-  /* TOGGLE AI                                                                 */
+  /* TOGGLE AI                                                                  */
   /* -------------------------------------------------------------------------- */
   toggleAI: async (conversationId, enabled) => {
     const { error } = await supabase
@@ -264,7 +232,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* SEND MESSAGE (AI HANDLER IS SOURCE OF TRUTH)                               */
+  /* SEND MESSAGE                                                               */
   /* -------------------------------------------------------------------------- */
   sendMessage: async (conversationId, payload) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -280,7 +248,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { noReply: false };
     }
 
-    // 1️⃣ Insert user message
     await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender,
@@ -290,13 +257,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sub_organization_id: activeSubOrg?.id ?? null,
     });
 
-    await get().fetchMessages(conversationId);
+    // Realtime will deliver the message
 
-    // 2️⃣ AI disabled?
     const aiEnabled = get().aiToggle[conversationId];
     if (!aiEnabled || sender !== "user") return { noReply: false };
 
-    // 3️⃣ Call ai-handler (AI HANDLER inserts bot reply)
     const { data, error } = await supabase.functions.invoke("ai-handler", {
       body: {
         conversation_id: conversationId,
@@ -310,24 +275,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { noReply: false };
     }
 
-    // 4️⃣ Phase 7B — AI chose not to reply
-    if (data?.no_reply) {
-      return { noReply: true };
-    }
-
-    // 5️⃣ Refresh from DB
-    await get().fetchMessages(conversationId);
-
-    const orgId = get().conversations.find((c) => c.id === conversationId)
-      ?.organization_id;
-
-    if (orgId) await get().fetchConversations(orgId);
+    if (data?.no_reply) return { noReply: true };
 
     return { noReply: false };
   },
 
   /* -------------------------------------------------------------------------- */
-  /* PHASE 7C — FOLLOW-UP SUGGESTION                                            */
+  /* FOLLOW-UP SUGGESTION                                                       */
   /* -------------------------------------------------------------------------- */
   suggestFollowup: async (conversationId) => {
     const { data, error } = await supabase.functions.invoke("ai-handler", {

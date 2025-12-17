@@ -1018,25 +1018,26 @@ serve(async (req: Request): Promise<Response> => {
           const step = steps[stepNum - 1];
           if (step) {
             
-            const result = await runWorkflow({
-              workflow: wfRow,
-              steps,
-              conversationId: conversation_id,
-              userMessage: user_message,
-              openai,
-              supabase,
-            });
-
-            if (result?.reply) {
-              // save + send message
-            }
-
-            const result = await run(step, activeWorkflow, user_message, scopedLogger);
+            // 1️⃣ Optional full-workflow engine (if you still want it)
+            const workflowEngineResult = await runWorkflow({
+            workflow: wfRow,
+            steps,
+            conversationId: conversation_id,
+            userMessage: user_message,
+            openai,
+            supabase,
+          });
+          
+          const stepResult =
+          wfRow.mode === "strict"
+          ? await runStrictMode(step, activeWorkflow, user_message, scopedLogger)
+          : await runSmartMode(step, activeWorkflow, user_message, scopedLogger);
 
             const nextStep =
-              result.nextStepNumber ?? (activeWorkflow.current_step_number ?? 1) + 1;
+            stepResult.nextStepNumber ??
+            (activeWorkflow.current_step_number ?? 1) + 1;
 
-            const finished = result.end || nextStep > steps.length;
+            const finished = stepResult.end || nextStep > steps.length;
 
             await saveWorkflowProgress(
               activeWorkflow.id,
@@ -1046,7 +1047,7 @@ serve(async (req: Request): Promise<Response> => {
               scopedLogger,
             );
 
-            const reply = result.output || fallbackMessage;
+            const reply = stepResult.output || fallbackMessage;
 
             await supabase.from("messages").insert({
               conversation_id,
