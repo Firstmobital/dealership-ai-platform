@@ -1,226 +1,161 @@
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Loader2,
-  Pencil,
-  Plus,
-  Trash2,
-  XCircle,
-  Building2,
-  CheckCircle2,
+  Phone,
+  Save,
+  ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
 
+import { useWhatsappSettingsStore } from "../../state/useWhatsappSettingsStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import {
-  useSubOrganizationStore,
-  type SubOrganization,
-} from "../../state/useSubOrganizationStore";
+import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
-export function SubOrganizationsPanel() {
-  const { currentOrganization } = useOrganizationStore();
+export function WhatsappSettingsModule() {
   const {
-    subOrgs,
-    activeSubOrg,
+    settings,
     loading,
     saving,
     error,
-    fetchSubOrgs,
-    createSubOrg,
-    updateSubOrg,
-    deleteSubOrg,
-    setActive,
+    success,
+    isOrgFallback,
+    fetchSettings,
+    saveSettings,
     clearError,
-  } = useSubOrganizationStore();
+  } = useWhatsappSettingsStore();
 
-  const [newName, setNewName] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
+  const { currentOrganization } = useOrganizationStore();
+  const { activeSubOrg } = useSubOrganizationStore();
 
-  /* ------------------------------------------------------------------ */
-  /* LOAD                                                               */
-  /* ------------------------------------------------------------------ */
+  const [form, setForm] = useState({
+    phone_number: "",
+    api_token: "",
+    verify_token: "",
+    whatsapp_phone_id: "",
+    whatsapp_business_id: "",
+    is_active: true,
+  });
 
   useEffect(() => {
     if (!currentOrganization) return;
-    fetchSubOrgs(currentOrganization.id).catch(console.error);
-  }, [currentOrganization?.id, fetchSubOrgs]);
+    fetchSettings().catch(console.error);
+  }, [currentOrganization?.id, activeSubOrg?.id]);
 
-  /* ------------------------------------------------------------------ */
-  /* ACTIONS                                                            */
-  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!settings) return;
+    setForm({
+      phone_number: settings.phone_number ?? "",
+      api_token: settings.api_token ?? "",
+      verify_token: settings.verify_token ?? "",
+      whatsapp_phone_id: settings.whatsapp_phone_id ?? "",
+      whatsapp_business_id: settings.whatsapp_business_id ?? "",
+      is_active: settings.is_active ?? true,
+    });
+  }, [settings]);
 
-  const handleCreate = async (e: FormEvent) => {
+  const update = (k: keyof typeof form, v: any) =>
+    setForm((p) => ({ ...p, [k]: v }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
-    if (!newName.trim()) return;
-    await createSubOrg(newName.trim());
-    setNewName("");
+    await saveSettings({
+      phone_number: form.phone_number || null,
+      api_token: form.api_token || null,
+      verify_token: form.verify_token || null,
+      whatsapp_phone_id: form.whatsapp_phone_id || null,
+      whatsapp_business_id: form.whatsapp_business_id || null,
+      is_active: form.is_active,
+    });
   };
 
-  const handleStartEdit = (subOrg: SubOrganization) => {
-    clearError();
-    setEditingId(subOrg.id);
-    setEditName(subOrg.name);
-  };
-
-  const handleSaveEdit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!editingId || !editName.trim()) return;
-    clearError();
-    await updateSubOrg(editingId, editName.trim());
-    setEditingId(null);
-    setEditName("");
-  };
-
-  const handleDelete = async (id: string) => {
-    clearError();
-    if (!window.confirm("Delete this division?")) return;
-    await deleteSubOrg(id);
-  };
-
-  const handleSetActive = (subOrg: SubOrganization | null) => {
-    clearError();
-    setActive(subOrg);
-  };
-
-  /* ------------------------------------------------------------------ */
-  /* UI                                                                 */
-  /* ------------------------------------------------------------------ */
+  const isDivisionContext = Boolean(activeSubOrg);
 
   return (
-    <div className="flex h-full flex-col px-6 py-6 text-slate-200">
+    <div className="px-6 py-6">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <Building2 size={20} className="text-accent" />
-        <div>
-          <h1 className="text-xl font-semibold text-white">Divisions</h1>
-          <p className="text-sm text-slate-400">
-            Manage dealership branches / divisions under this organization.
-          </p>
-        </div>
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold text-slate-900">
+          WhatsApp Settings
+        </h1>
+        <p className="text-sm text-slate-500">
+          Configure WhatsApp Cloud API for this{" "}
+          {isDivisionContext ? "division" : "organization"}.
+        </p>
       </div>
 
-      {!currentOrganization ? (
-        <div className="mt-10 text-slate-500">
-          Select an organization to manage divisions.
-        </div>
-      ) : (
-        <div className="mt-6 space-y-6">
-          {/* Create */}
-          <form
-            onSubmit={handleCreate}
-            className="flex max-w-lg gap-3 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3"
-          >
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="New division name (e.g. Jaipur Sales)"
-              disabled={saving}
-              className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-            />
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              Add
-            </button>
-          </form>
-
-          {/* List */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            {loading ? (
-              <div className="flex items-center gap-2 text-slate-400">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-              </div>
-            ) : (
-              <ul className="space-y-3">
-                {subOrgs.map((subOrg) => {
-                  const isActive = activeSubOrg?.id === subOrg.id;
-                  const isEditing = editingId === subOrg.id;
-
-                  if (isEditing) {
-                    return (
-                      <li key={subOrg.id}>
-                        <form
-                          onSubmit={handleSaveEdit}
-                          className="flex gap-3 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3"
-                        >
-                          <input
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-                          />
-                          <button className="bg-accent px-3 py-1.5 text-xs rounded-md text-white">
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingId(null)}
-                            className="text-slate-400"
-                          >
-                            <XCircle size={14} />
-                          </button>
-                        </form>
-                      </li>
-                    );
-                  }
-
-                  return (
-                    <li key={subOrg.id}>
-                      <div
-                        className={`flex items-center justify-between rounded-xl border px-4 py-3 ${
-                          isActive
-                            ? "border-accent bg-accent/15 text-accent"
-                            : "border-slate-700 bg-slate-950"
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{subOrg.name}</span>
-                            {isActive && (
-                              <span className="flex items-center gap-1 text-[10px] uppercase">
-                                <CheckCircle2 size={12} /> Active
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-slate-500">
-                            ID: {subOrg.id.slice(0, 8)}…
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleSetActive(isActive ? null : subOrg)}
-                            className="text-xs border px-2 py-1 rounded-md"
-                          >
-                            {isActive ? "Clear" : "Set Active"}
-                          </button>
-                          <button onClick={() => handleStartEdit(subOrg)}>
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(subOrg.id)}
-                            className="text-red-400"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-
-          {error && (
-            <div className="flex items-center gap-2 text-xs text-red-300">
-              <XCircle size={14} /> {error}
+      {/* Context Banner */}
+      <div className="mb-6">
+        {activeSubOrg && isOrgFallback && (
+          <div className="flex items-start gap-3 rounded-lg border border-yellow-300 bg-yellow-50 p-3">
+            <AlertTriangle className="text-yellow-500" size={18} />
+            <div className="text-sm text-yellow-800">
+              This division has no override. Using organization settings.
             </div>
-          )}
+          </div>
+        )}
+
+        {activeSubOrg && !isOrgFallback && (
+          <div className="flex items-start gap-3 rounded-lg border border-green-300 bg-green-50 p-3">
+            <ShieldCheck className="text-green-600" size={18} />
+            <div className="text-sm text-green-800">
+              Division override active.
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Card */}
+      <form
+        onSubmit={handleSubmit}
+        className="max-w-3xl rounded-xl border border-slate-200 bg-white p-6 space-y-4"
+      >
+        {[
+          ["Phone Number", "phone_number", "e.g. 919999888877"],
+          ["API Token", "api_token", "Permanent token"],
+          ["Verify Token", "verify_token", "Webhook verify token"],
+          ["Phone ID", "whatsapp_phone_id", "Meta phone ID"],
+          ["Business ID", "whatsapp_business_id", "Business account ID"],
+        ].map(([label, key, placeholder]) => (
+          <div key={key}>
+            <label className="text-xs text-slate-500">{label}</label>
+            <input
+              type="text"
+              value={(form as any)[key]}
+              onChange={(e) => update(key as any, e.target.value)}
+              placeholder={placeholder}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-accent focus:outline-none"
+            />
+          </div>
+        ))}
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={form.is_active}
+            onChange={(e) => update("is_active", e.target.checked)}
+          />
+          <span className="text-sm text-slate-700">
+            Enable WhatsApp
+          </span>
         </div>
-      )}
+
+        <button
+          type="submit"
+          disabled={saving}
+          className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white"
+        >
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save size={16} />
+          )}
+          Save Settings
+        </button>
+
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        {success && <p className="text-sm text-green-600">{success}</p>}
+      </form>
     </div>
   );
 }

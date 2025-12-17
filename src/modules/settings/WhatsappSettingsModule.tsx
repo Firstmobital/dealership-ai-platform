@@ -4,7 +4,6 @@ import {
   Phone,
   Save,
   ShieldCheck,
-  ShieldAlert,
   AlertTriangle,
 } from "lucide-react";
 
@@ -57,96 +56,106 @@ export function WhatsappSettingsModule() {
   const update = (k: keyof typeof form, v: any) =>
     setForm((p) => ({ ...p, [k]: v }));
 
-  const submit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
     await saveSettings({
-      ...form,
       phone_number: form.phone_number || null,
+      api_token: form.api_token || null,
+      verify_token: form.verify_token || null,
+      whatsapp_phone_id: form.whatsapp_phone_id || null,
+      whatsapp_business_id: form.whatsapp_business_id || null,
+      is_active: form.is_active,
     });
   };
 
-  return (
-    <div className="flex h-full flex-col px-6 py-6 text-slate-200">
-      <h1 className="text-xl font-semibold text-white">WhatsApp Settings</h1>
+  const isDivisionContext = Boolean(activeSubOrg);
 
-      <div className="mt-4">
-        {activeSubOrg ? (
-          isOrgFallback ? (
-            <div className="flex gap-2 text-yellow-300">
-              <AlertTriangle size={16} />
-              Using organization defaults
+  return (
+    <div className="px-6 py-6">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-xl font-semibold text-slate-900">
+          WhatsApp Settings
+        </h1>
+        <p className="text-sm text-slate-500">
+          Configure WhatsApp Cloud API for this{" "}
+          {isDivisionContext ? "division" : "organization"}.
+        </p>
+      </div>
+
+      {/* Context Banner */}
+      <div className="mb-6">
+        {activeSubOrg && isOrgFallback && (
+          <div className="flex items-start gap-3 rounded-lg border border-yellow-300 bg-yellow-50 p-3">
+            <AlertTriangle className="text-yellow-500" size={18} />
+            <div className="text-sm text-yellow-800">
+              This division has no override. Using organization settings.
             </div>
-          ) : (
-            <div className="flex gap-2 text-green-300">
-              <ShieldCheck size={16} />
-              Division override active
+          </div>
+        )}
+
+        {activeSubOrg && !isOrgFallback && (
+          <div className="flex items-start gap-3 rounded-lg border border-green-300 bg-green-50 p-3">
+            <ShieldCheck className="text-green-600" size={18} />
+            <div className="text-sm text-green-800">
+              Division override active.
             </div>
-          )
-        ) : (
-          <div className="flex gap-2 text-blue-300">
-            <Phone size={16} />
-            Organization-level settings
           </div>
         )}
       </div>
 
+      {/* Card */}
       <form
-        onSubmit={submit}
-        className="mt-6 max-w-2xl space-y-4 rounded-xl border border-slate-700 bg-slate-900 p-6"
+        onSubmit={handleSubmit}
+        className="max-w-3xl rounded-xl border border-slate-200 bg-white p-6 space-y-4"
       >
         {[
-          ["phone_number", "Phone Number"],
-          ["api_token", "API Token"],
-          ["verify_token", "Verify Token"],
-          ["whatsapp_phone_id", "Phone ID"],
-          ["whatsapp_business_id", "Business ID"],
-        ].map(([k, label]) => (
-          <div key={k}>
-            <label className="text-xs text-slate-400">{label}</label>
+          ["Phone Number", "phone_number", "e.g. 919999888877"],
+          ["API Token", "api_token", "Permanent token"],
+          ["Verify Token", "verify_token", "Webhook verify token"],
+          ["Phone ID", "whatsapp_phone_id", "Meta phone ID"],
+          ["Business ID", "whatsapp_business_id", "Business account ID"],
+        ].map(([label, key, placeholder]) => (
+          <div key={key}>
+            <label className="text-xs text-slate-500">{label}</label>
             <input
-              value={(form as any)[k]}
-              onChange={(e) => update(k as any, e.target.value)}
-              className="w-full rounded-md bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-white"
+              type="text"
+              value={(form as any)[key]}
+              onChange={(e) => update(key as any, e.target.value)}
+              placeholder={placeholder}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-accent focus:outline-none"
             />
           </div>
         ))}
 
-        <label className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2">
           <input
             type="checkbox"
             checked={form.is_active}
             onChange={(e) => update("is_active", e.target.checked)}
           />
-          Enable WhatsApp
-        </label>
+          <span className="text-sm text-slate-700">
+            Enable WhatsApp
+          </span>
+        </div>
 
         <button
+          type="submit"
           disabled={saving}
-          className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm text-white"
+          className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-white"
         >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save size={14} />}
-          Save
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save size={16} />
+          )}
+          Save Settings
         </button>
 
-        {error && (
-          <div className="flex gap-2 text-xs text-red-300">
-            <ShieldAlert size={14} /> {error}
-          </div>
-        )}
-
-        {success && (
-          <div className="flex gap-2 text-xs text-green-300">
-            <ShieldCheck size={14} /> {success}
-          </div>
-        )}
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        {success && <p className="text-sm text-green-600">{success}</p>}
       </form>
-
-      {loading && (
-        <div className="mt-4 flex gap-2 text-slate-400">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-        </div>
-      )}
     </div>
   );
 }
