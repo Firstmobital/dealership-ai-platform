@@ -4,11 +4,7 @@
 // PHASE 7A–7C ENABLED IN UI
 
 import { useEffect, useRef, useState } from "react";
-import {
-  Sparkles,
-  Copy,
-  SendHorizonal,
-} from "lucide-react";
+import { Sparkles, Copy, SendHorizonal } from "lucide-react";
 
 import { useChatStore } from "../../state/useChatStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
@@ -42,7 +38,6 @@ export function ChatsModule() {
     unread,
     fetchConversations,
     fetchMessages,
-    subscribeToMessages,
     setActiveConversation,
     sendMessage,
   } = useChatStore();
@@ -59,7 +54,7 @@ export function ChatsModule() {
   /* ---------------- PHASE 7 STATE ---------------- */
   const [campaignContext, setCampaignContext] = useState<any | null>(null);
   const [followupSuggestion, setFollowupSuggestion] = useState<string | null>(
-    null,
+    null
   );
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [aiNoReply, setAiNoReply] = useState(false);
@@ -85,7 +80,6 @@ export function ChatsModule() {
 
     if (!messages[activeConversationId]) {
       fetchMessages(activeConversationId).catch(console.error);
-      subscribeToMessages(activeConversationId);
     }
 
     setFollowupSuggestion(null);
@@ -116,7 +110,9 @@ export function ChatsModule() {
     const nearBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 
-    if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (nearBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
   /* -------------------------------------------------------
@@ -139,6 +135,7 @@ export function ChatsModule() {
         phone: data?.phone ?? null,
       });
     }
+
     load();
   }, [activeConversationId, conversations]);
 
@@ -164,7 +161,7 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-   * SEND MESSAGE (ORIGINAL LOGIC UNCHANGED)
+   * SEND MESSAGE (ORIGINAL LOGIC PRESERVED)
    * ------------------------------------------------------- */
   const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -187,6 +184,7 @@ export function ChatsModule() {
 
         if (file) {
           const path = `org_${conv.organization_id}/${activeConversationId}/${Date.now()}_${file.name}`;
+
           await supabase.storage
             .from(WHATSAPP_MEDIA_BUCKET)
             .upload(path, file);
