@@ -38,9 +38,11 @@ export function ChatsModule() {
     unread,
     fetchConversations,
     fetchMessages,
+    initRealtime,   // ✅ ADD THIS
     setActiveConversation,
     sendMessage,
   } = useChatStore();
+  
 
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
@@ -61,6 +63,16 @@ export function ChatsModule() {
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+
+  /* -------------------------------------------------------
+ * INIT REALTIME (ONCE PER ORG)
+ * ------------------------------------------------------- */
+useEffect(() => {
+  if (!currentOrganization?.id) return;
+
+  initRealtime(currentOrganization.id);
+}, [currentOrganization?.id]);
 
   /* -------------------------------------------------------
    * LOAD CONVERSATIONS

@@ -5,6 +5,12 @@ import type { Conversation, Message } from "../types/database";
 import { useSubOrganizationStore } from "./useSubOrganizationStore";
 
 /* ========================================================================== */
+/*  REALTIME INIT GUARD (CRITICAL)                                             */
+/* ========================================================================== */
+
+let realtimeInitialized = false;
+
+/* ========================================================================== */
 /*  FILTER TYPES                                                              */
 /* ========================================================================== */
 
@@ -135,6 +141,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* REALTIME (SINGLE SOURCE OF TRUTH)                                          */
   /* -------------------------------------------------------------------------- */
   initRealtime: (organizationId: string) => {
+    if (realtimeInitialized) return;
+    realtimeInitialized = true;
+
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
     /* ------------------ CONVERSATIONS ------------------ */
@@ -171,10 +180,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           const msg = payload.new as Message;
-
           const existing = get().messages[msg.conversation_id] ?? [];
 
-          // 🔒 HARD DEDUPE (CRITICAL)
+          // 🔒 HARD DEDUPE
           if (existing.some((m) => m.id === msg.id)) return;
 
           const isActive =
@@ -257,7 +265,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sub_organization_id: activeSubOrg?.id ?? null,
     });
 
-    // Realtime will deliver the message
+    // realtime will deliver the message
 
     const aiEnabled = get().aiToggle[conversationId];
     if (!aiEnabled || sender !== "user") return { noReply: false };
