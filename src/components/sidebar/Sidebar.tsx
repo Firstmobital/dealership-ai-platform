@@ -10,6 +10,7 @@ import {
   PhoneCall,
   HelpCircle,
   Database,
+  BarChart3,
 } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
@@ -41,6 +42,7 @@ export function Sidebar() {
         <SidebarLink to="/bot" icon={Bot} label="Bot Personality" />
         <SidebarLink to="/workflows" icon={Workflow} label="Workflows" />
         <SidebarLink to="/campaigns" icon={Megaphone} label="Campaigns" />
+        <SidebarLink to="/analytics" icon={BarChart3} label="Analytics" />
 
         <div className="mt-4 border-t border-slate-200 pt-3 text-xs uppercase tracking-wide text-slate-500">
           Settings
