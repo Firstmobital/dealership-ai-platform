@@ -1,7 +1,7 @@
 // src/modules/campaigns/CampaignsModule.tsx
 // FULL + FINAL — Tier 6
 // Bright CRM Campaign Manager
-// Logic untouched
+// Logic untouched + Division fallback UI
 
 import {
   Megaphone,
@@ -153,6 +153,22 @@ export function CampaignsModule() {
 
   const csvPreview = csvState.parsedRows.slice(0, 5);
 
+  /* -------------------------------------------------------------------- */
+  /* 🔑 DIVISION FIRST, ORG FALLBACK NEXT                                  */
+  /* -------------------------------------------------------------------- */
+  const orderedCampaigns = useMemo(() => {
+    if (!activeSubOrg) return campaigns;
+
+    return [...campaigns].sort((a, b) => {
+      const aLocal = a.sub_organization_id === activeSubOrg.id;
+      const bLocal = b.sub_organization_id === activeSubOrg.id;
+
+      if (aLocal && !bLocal) return -1;
+      if (!aLocal && bLocal) return 1;
+      return 0;
+    });
+  }, [campaigns, activeSubOrg]);
+
   /* ===================================================================== */
   /* UI                                                                    */
   /* ===================================================================== */
@@ -268,8 +284,12 @@ export function CampaignsModule() {
           </div>
 
           <div className="space-y-2 overflow-y-auto">
-            {campaigns.map((c) => {
+            {orderedCampaigns.map((c) => {
               const isActive = c.id === selectedCampaignId;
+              const isLocal =
+                activeSubOrg &&
+                c.sub_organization_id === activeSubOrg.id;
+
               return (
                 <div
                   key={c.id}
@@ -280,7 +300,22 @@ export function CampaignsModule() {
                       : "border-slate-200 hover:bg-slate-50"
                   }`}
                 >
-                  <div className="text-sm font-medium">{c.name}</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium">{c.name}</div>
+
+                    {activeSubOrg && (
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] ${
+                          isLocal
+                            ? "bg-green-50 text-green-700"
+                            : "bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        {isLocal ? "This Division" : "From Organization"}
+                      </span>
+                    )}
+                  </div>
+
                   <div className="mt-1 flex items-center gap-3 text-xs text-slate-500">
                     <Clock size={12} />
                     {c.scheduled_at
@@ -295,7 +330,7 @@ export function CampaignsModule() {
       </div>
 
       {/* =============================================================== */}
-      {/* RIGHT — DETAILS                                               */}
+      {/* RIGHT — DETAILS (UNCHANGED)                                   */}
       {/* =============================================================== */}
       <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
         {!selectedCampaignId ? (

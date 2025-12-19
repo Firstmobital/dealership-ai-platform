@@ -34,7 +34,9 @@ type WorkflowState = {
   reorderSteps: (workflowId: string, orderedIds: string[]) => Promise<void>;
   cloneWorkflow: (workflowId: string) => Promise<string | null>;
 
-  generateWorkflowFromDescription: (description: string) => Promise<string | null>;
+  generateWorkflowFromDescription: (
+    description: string
+  ) => Promise<string | null>;
 
   setSelectedWorkflow: (wf: Workflow | null) => void;
 };
@@ -53,7 +55,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   setSelectedWorkflow: (wf) => set({ selectedWorkflow: wf }),
 
   /* ============================================================================
-     FETCH WORKFLOWS  (Org + sub-org aware)
+     FETCH WORKFLOWS (ORG + DIVISION FALLBACK)
   ============================================================================ */
   fetchWorkflows: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -61,7 +63,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (!currentOrganization) return;
 
     const orgId = currentOrganization.id;
-    const subOrgId = activeSubOrg?.id ?? null;
 
     set({ loading: true, error: null });
 
@@ -70,13 +71,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       .select("*")
       .eq("organization_id", orgId);
 
-    if (subOrgId) {
+    // ✅ Division selected → division + org workflows
+    if (activeSubOrg) {
       query = query.or(
-        `sub_organization_id.eq.${subOrgId},sub_organization_id.is.null`
+        `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
       );
-    } else {
-      query = query.is("sub_organization_id", null);
     }
+    // ✅ ALL divisions → no sub-org filter
 
     const { data, error } = await query.order("created_at", {
       ascending: false,
@@ -131,7 +132,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   /* ============================================================================
-     SAVE WORKFLOW (Create or Update)
+     SAVE WORKFLOW
   ============================================================================ */
   saveWorkflow: async (payload) => {
     if (payload.id) {
@@ -196,11 +197,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       return;
     }
 
-    const updated = get().workflows.map((w) =>
-      w.id === id ? data : w
-    );
-
-    set({ workflows: updated, saving: false });
+    set({
+      workflows: get().workflows.map((w) =>
+        w.id === id ? data : w
+      ),
+      saving: false,
+    });
   },
 
   /* ============================================================================
@@ -276,7 +278,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   /* ============================================================================
-     REORDER STEPS (Drag & Drop)
+     REORDER STEPS
   ============================================================================ */
   reorderSteps: async (workflowId, orderedIds) => {
     const updates = orderedIds.map((id, index) => ({
@@ -297,7 +299,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   /* ============================================================================
-     CLONE WORKFLOW (Deep Copy)
+     CLONE WORKFLOW
   ============================================================================ */
   cloneWorkflow: async (workflowId) => {
     const state = get();
@@ -344,7 +346,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   },
 
   /* ============================================================================
-     GENERATE WORKFLOW FROM DESCRIPTION (Edge Function)
+     GENERATE WORKFLOW FROM DESCRIPTION
   ============================================================================ */
   generateWorkflowFromDescription: async (description) => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -428,4 +430,3 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     return workflowId;
   },
 }));
-

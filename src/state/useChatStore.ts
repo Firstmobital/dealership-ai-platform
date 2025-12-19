@@ -1,3 +1,5 @@
+// src/state/useChatStore.ts
+
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
@@ -57,6 +59,43 @@ type ChatState = {
 };
 
 /* ========================================================================== */
+/*  HELPERS                                                                   */
+/* ========================================================================== */
+
+function normalizeConversation(row: any): Conversation {
+  // Your select uses `contacts(*)` so Supabase returns `contacts` as an object/array.
+  // Normalize to a predictable `contact` field (safe for UI).
+  const contact = row?.contacts
+    ? Array.isArray(row.contacts)
+      ? row.contacts[0] ?? null
+      : row.contacts
+    : null;
+
+  return {
+    ...row,
+    contact,
+  } as Conversation;
+}
+
+async function fetchContactForConversation(conversation: any) {
+  try {
+    const contactId = conversation?.contact_id;
+    if (!contactId) return null;
+
+    const { data, error } = await supabase
+      .from("contacts")
+      .select("id, phone, name, first_name, last_name")
+      .eq("id", contactId)
+      .maybeSingle();
+
+    if (error) return null;
+    return data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* ========================================================================== */
 /*  STORE IMPLEMENTATION                                                      */
 /* ========================================================================== */
 
@@ -79,6 +118,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({ loading: true });
 
+    // ✅ All divisions = DO NOT filter by sub_organization_id at all
+    // ✅ Specific division = filter by that division id
     let query = supabase
       .from("conversations")
       .select("*, contacts(*)")
@@ -86,7 +127,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .order("last_message_at", { ascending: false });
 
     if (activeSubOrg) query = query.eq("sub_organization_id", activeSubOrg.id);
-    else query = query.is("sub_organization_id", null);
 
     const { data, error } = await query;
 
@@ -96,12 +136,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
+    const normalized = (data ?? []).map(normalizeConversation);
+
     const aiToggle = Object.fromEntries(
-      (data ?? []).map((c) => [c.id, c.ai_enabled !== false])
+      normalized.map((c: any) => [c.id, c.ai_enabled !== false])
     );
 
     set({
-      conversations: (data ?? []) as Conversation[],
+      conversations: normalized as Conversation[],
       aiToggle,
       loading: false,
     });
@@ -111,18 +153,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* FETCH MESSAGES                                                             */
   /* -------------------------------------------------------------------------- */
   fetchMessages: async (conversationId: string) => {
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-
-    let query = supabase
+    // ✅ IMPORTANT: messages should be fetched only by conversation_id
+    // because chat ownership is by conversation, not by selected division filter.
+    const { data, error } = await supabase
       .from("messages")
       .select("*")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
-
-    if (activeSubOrg) query = query.eq("sub_organization_id", activeSubOrg.id);
-    else query = query.is("sub_organization_id", null);
-
-    const { data, error } = await query;
 
     if (error) {
       console.error("[useChatStore] fetchMessages error", error);
@@ -144,8 +181,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (realtimeInitialized) return;
     realtimeInitialized = true;
 
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-
     /* ------------------ CONVERSATIONS ------------------ */
     supabase
       .channel("rt-conversations")
@@ -158,16 +193,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
           filter: `organization_id=eq.${organizationId}`,
         },
         (payload) => {
-          const conv = payload.new as Conversation;
+          // NOTE: payload.new does NOT include joined contacts, so we enrich it.
+          const convRaw = payload.new as any;
 
-          if (activeSubOrg && conv.sub_organization_id !== activeSubOrg.id)
+          // ✅ Read activeSubOrg dynamically (division can change after initRealtime)
+          const { activeSubOrg } = useSubOrganizationStore.getState();
+
+          // Chats rule:
+          // - If a division selected → only accept that division's conversations
+          // - If ALL divisions selected → accept everything under org
+          if (activeSubOrg && convRaw.sub_organization_id !== activeSubOrg.id)
             return;
-          if (!activeSubOrg && conv.sub_organization_id !== null) return;
 
           const existing = get().conversations;
-          if (existing.some((c) => c.id === conv.id)) return;
+          if (existing.some((c) => c.id === convRaw.id)) return;
 
-          set({ conversations: [conv, ...existing] });
+          // Enrich contact asynchronously
+          void (async () => {
+            const contact = await fetchContactForConversation(convRaw);
+            const conv = normalizeConversation({ ...convRaw, contacts: contact });
+
+            set({ conversations: [conv, ...get().conversations] });
+          })();
         }
       )
       .subscribe();
@@ -185,8 +232,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // 🔒 HARD DEDUPE
           if (existing.some((m) => m.id === msg.id)) return;
 
-          const isActive =
-            get().activeConversationId === msg.conversation_id;
+          // ✅ If division selected, we only want unread counts / UI updates
+          // for conversations that are currently visible (division filtered).
+          const { activeSubOrg } = useSubOrganizationStore.getState();
+          if (activeSubOrg) {
+            const conv = get().conversations.find(
+              (c) => c.id === msg.conversation_id
+            );
+            // If that conversation isn't in the current list, ignore
+            // (prevents cross-division noise).
+            if (!conv) return;
+          }
+
+          const isActive = get().activeConversationId === msg.conversation_id;
 
           set({
             messages: {
@@ -243,9 +301,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* SEND MESSAGE                                                               */
   /* -------------------------------------------------------------------------- */
   sendMessage: async (conversationId, payload) => {
-    const { activeSubOrg } = useSubOrganizationStore.getState();
     const text = payload.text?.trim() ?? "";
-
     if (!text) return { noReply: false };
 
     const sender = payload.sender ?? "user";
@@ -256,13 +312,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { noReply: false };
     }
 
+    // ✅ Always send messages under the SAME division as the conversation.
+    // This is critical when "All divisions" is selected (activeSubOrg = null).
+    const conv = get().conversations.find((c) => c.id === conversationId);
+    const subOrgId =
+      (conv as any)?.sub_organization_id ??
+      useSubOrganizationStore.getState().activeSubOrg?.id ??
+      null;
+
     await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender,
       message_type: payload.message_type ?? "text",
       text,
       channel,
-      sub_organization_id: activeSubOrg?.id ?? null,
+      sub_organization_id: subOrgId,
     });
 
     // realtime will deliver the message

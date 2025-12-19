@@ -1,9 +1,9 @@
 // src/modules/knowledge-base/KnowledgeBaseModule.tsx
 // FULL + FINAL — Tier 4
 // Bright CRM Knowledge Base UI
-// Logic untouched
+// Logic untouched + Division fallback UX
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FileText,
   Loader2,
@@ -121,6 +121,22 @@ export function KnowledgeBaseModule() {
   }, [currentOrganization?.id, activeSubOrg?.id]);
 
   /* -----------------------------------------------------------
+   * ORDER — DIVISION FIRST, ORG FALLBACK NEXT
+   * -----------------------------------------------------------*/
+  const orderedArticles = useMemo(() => {
+    if (!activeSubOrg) return articles;
+
+    return [...articles].sort((a, b) => {
+      const aLocal = a.sub_organization_id === activeSubOrg.id;
+      const bLocal = b.sub_organization_id === activeSubOrg.id;
+
+      if (aLocal && !bLocal) return -1;
+      if (!aLocal && bLocal) return 1;
+      return 0;
+    });
+  }, [articles, activeSubOrg]);
+
+  /* -----------------------------------------------------------
    * Create / Update
    * -----------------------------------------------------------*/
   async function handleManualSubmit(e: React.FormEvent) {
@@ -213,7 +229,7 @@ export function KnowledgeBaseModule() {
         {/* LEFT — ARTICLES */}
         <div className="w-[35%] overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold">
-            Articles ({articles.length})
+            Articles ({orderedArticles.length})
           </h2>
 
           {loading ? (
@@ -221,14 +237,17 @@ export function KnowledgeBaseModule() {
               <Loader2 size={16} className="animate-spin" />
               Loading articles...
             </div>
-          ) : articles.length === 0 ? (
+          ) : orderedArticles.length === 0 ? (
             <p className="py-6 text-sm text-slate-500">
               No knowledge articles yet.
             </p>
           ) : (
             <ul className="space-y-2">
-              {articles.map((a) => {
+              {orderedArticles.map((a) => {
                 const isSelected = selectedArticle?.id === a.id;
+                const isLocal =
+                  activeSubOrg &&
+                  a.sub_organization_id === activeSubOrg.id;
 
                 return (
                   <li
@@ -241,8 +260,24 @@ export function KnowledgeBaseModule() {
                         : "border-slate-200 bg-slate-50 hover:bg-slate-100",
                     ].join(" ")}
                   >
-                    <div className="flex items-center justify-between">
-                      <p className="font-medium">{a.title}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium">{a.title}</p>
+
+                        {activeSubOrg && (
+                          <span
+                            className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] ${
+                              isLocal
+                                ? "bg-green-50 text-green-700"
+                                : "bg-amber-50 text-amber-700"
+                            }`}
+                          >
+                            {isLocal
+                              ? "This Division"
+                              : "From Organization"}
+                          </span>
+                        )}
+                      </div>
 
                       <div className="flex gap-2">
                         <button

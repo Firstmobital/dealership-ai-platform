@@ -78,6 +78,14 @@ export type Conversation = {
   channel: ConversationChannel;
   sub_organization_id: UUID | null;
   created_at?: string;
+
+  // ✅ Added: joined contact (from select("*, contacts(*)"))
+  // We normalize it in the store to always be:
+  // conversation.contact = { phone, name, ... } | null
+  contact?: Pick<
+    Contact,
+    "id" | "phone" | "name" | "first_name" | "last_name" | "model"
+  > | null;
 };
 
 export type MessageSender = "user" | "bot" | "customer";

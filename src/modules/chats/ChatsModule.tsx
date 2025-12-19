@@ -1,7 +1,6 @@
 // src/modules/chats/ChatsModule.tsx
-// FULL + FINAL
-// ORIGINAL LOGIC PRESERVED
-// PHASE 7A–7C ENABLED IN UI
+// FULL + FINAL — PATCHED
+// SEARCH + PHONE-FIRST + DIVISION SAFE
 
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, Copy, SendHorizonal } from "lucide-react";
@@ -16,19 +15,8 @@ import { ChatSidebarItem } from "./components/ChatSidebarItem";
 import type { Conversation } from "../../types/database";
 import { supabase } from "../../lib/supabaseClient";
 
-/* -------------------------------------------------------
- * TYPES
- * ------------------------------------------------------- */
-type HeaderContact = {
-  name: string | null;
-  phone: string | null;
-};
-
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 
-/* -------------------------------------------------------
- * COMPONENT
- * ------------------------------------------------------- */
 export function ChatsModule() {
   const {
     conversations,
@@ -38,19 +26,18 @@ export function ChatsModule() {
     unread,
     fetchConversations,
     fetchMessages,
-    initRealtime,   // ✅ ADD THIS
+    initRealtime,
     setActiveConversation,
     sendMessage,
   } = useChatStore();
-  
 
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
 
-  const subOrgKey = activeSubOrg?.id ?? "__no_suborg__";
+  const subOrgKey = activeSubOrg?.id ?? "__all__";
 
-  const [headerContact, setHeaderContact] =
-    useState<HeaderContact | null>(null);
+  /* ---------------- UI STATE ---------------- */
+  const [search, setSearch] = useState("");
   const [sending, setSending] = useState(false);
 
   /* ---------------- PHASE 7 STATE ---------------- */
@@ -64,15 +51,13 @@ export function ChatsModule() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-
   /* -------------------------------------------------------
- * INIT REALTIME (ONCE PER ORG)
- * ------------------------------------------------------- */
-useEffect(() => {
-  if (!currentOrganization?.id) return;
-
-  initRealtime(currentOrganization.id);
-}, [currentOrganization?.id]);
+   * INIT REALTIME (ONCE PER ORG)
+   * ------------------------------------------------------- */
+  useEffect(() => {
+    if (!currentOrganization?.id) return;
+    initRealtime(currentOrganization.id);
+  }, [currentOrganization?.id]);
 
   /* -------------------------------------------------------
    * LOAD CONVERSATIONS
@@ -97,7 +82,6 @@ useEffect(() => {
     setFollowupSuggestion(null);
     setAiNoReply(false);
 
-    /* ---------------- PHASE 7A: LOAD CAMPAIGN CONTEXT ---------------- */
     const conv = conversations.find((c) => c.id === activeConversationId);
     if (!conv?.contact_id) {
       setCampaignContext(null);
@@ -128,31 +112,7 @@ useEffect(() => {
   }, [messages]);
 
   /* -------------------------------------------------------
-   * LOAD CONTACT HEADER
-   * ------------------------------------------------------- */
-  useEffect(() => {
-    async function load() {
-      if (!activeConversationId) return setHeaderContact(null);
-      const conv = conversations.find((c) => c.id === activeConversationId);
-      if (!conv?.contact_id) return setHeaderContact(null);
-
-      const { data } = await supabase
-        .from("contacts")
-        .select("name, phone")
-        .eq("id", conv.contact_id)
-        .maybeSingle();
-
-      setHeaderContact({
-        name: data?.name ?? null,
-        phone: data?.phone ?? null,
-      });
-    }
-
-    load();
-  }, [activeConversationId, conversations]);
-
-  /* -------------------------------------------------------
-   * PHASE 7C — FOLLOW-UP SUGGESTION
+   * FOLLOW-UP SUGGESTION
    * ------------------------------------------------------- */
   const handleSuggestFollowup = async () => {
     if (!activeConversationId) return;
@@ -173,7 +133,7 @@ useEffect(() => {
   };
 
   /* -------------------------------------------------------
-   * SEND MESSAGE (ORIGINAL LOGIC PRESERVED)
+   * SEND MESSAGE (UNCHANGED LOGIC)
    * ------------------------------------------------------- */
   const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -235,30 +195,35 @@ useEffect(() => {
   };
 
   /* -------------------------------------------------------
-   * FILTER
+   * FILTER + SEARCH
    * ------------------------------------------------------- */
-  const filteredConversations: Conversation[] = conversations.filter((c) => {
-    if (filter === "unassigned") return !c.assigned_to;
-    if (filter === "assigned") return Boolean(c.assigned_to);
-    if (filter === "bot") return c.ai_enabled;
-    if (filter === "whatsapp") return c.channel === "whatsapp";
-    if (filter === "web") return c.channel === "web";
-    if (filter === "internal") return c.channel === "internal";
-    return true;
-  });
-
-  if (!currentOrganization) {
-    return (
-      <div className="flex h-full items-center justify-center text-slate-600">
-        Select an organization to continue.
-      </div>
-    );
-  }
+  const filteredConversations: Conversation[] = conversations
+    .filter((c) => {
+      if (filter === "unassigned") return !c.assigned_to;
+      if (filter === "assigned") return Boolean(c.assigned_to);
+      if (filter === "bot") return c.ai_enabled;
+      if (filter === "whatsapp") return c.channel === "whatsapp";
+      if (filter === "web") return c.channel === "web";
+      if (filter === "internal") return c.channel === "internal";
+      return true;
+    })
+    .filter((c) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        c.contact?.phone?.toLowerCase().includes(q) ||
+        c.contact?.name?.toLowerCase().includes(q)
+      );
+    });
 
   const currentMessages =
     activeConversationId && messages[activeConversationId]
       ? messages[activeConversationId]
       : [];
+
+  const activeConversation = conversations.find(
+    (c) => c.id === activeConversationId
+  );
 
   /* -------------------------------------------------------
    * UI
@@ -267,6 +232,14 @@ useEffect(() => {
     <div className="flex h-full w-full bg-white">
       {/* LEFT PANEL */}
       <div className="w-80 border-r border-slate-200 p-3">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by phone or name…"
+          className="mb-3 w-full rounded-md border border-slate-200 px-3 py-2 text-sm
+                     focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+
         {filteredConversations.map((c) => (
           <ChatSidebarItem
             key={c.id}
@@ -289,10 +262,11 @@ useEffect(() => {
             <div className="flex justify-between border-b border-slate-200 px-6 py-4">
               <div>
                 <div className="font-semibold">
-                  {headerContact?.name || headerContact?.phone}
+                  {activeConversation?.contact?.name ||
+                    activeConversation?.contact?.phone}
                 </div>
                 <div className="text-xs text-slate-500">
-                  {headerContact?.phone}
+                  {activeConversation?.contact?.phone}
                 </div>
               </div>
 
@@ -330,7 +304,8 @@ useEffect(() => {
                 <input
                   name="message"
                   placeholder="Type your message..."
-                  className="flex-1 rounded-md border border-slate-300 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 rounded-md border border-slate-300 px-4 py-2 text-sm
+                             focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button
                   disabled={sending}

@@ -44,7 +44,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSearchTerm: (term) => set({ searchTerm: term }),
 
   /* -----------------------------------------------------------
-   * FETCH ARTICLES
+   * FETCH ARTICLES (ORG + DIVISION FALLBACK)
    * -----------------------------------------------------------*/
   fetchArticles: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -68,11 +68,13 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .eq("organization_id", currentOrganization.id)
         .order("created_at", { ascending: false });
 
+      // ✅ Division selected → include division + org articles
       if (activeSubOrg) {
-        query = query.eq("sub_organization_id", activeSubOrg.id);
-      } else {
-        query = query.is("sub_organization_id", null);
+        query = query.or(
+          `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
+        );
       }
+      // ✅ ALL divisions → no sub-org filter at all
 
       const { data, error } = await query;
 
@@ -88,7 +90,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
 
       let articles = (data ?? []) as KnowledgeArticle[];
 
-      // Client-side search
+      /* -------------------------------------------------------
+       * CLIENT SEARCH (UNCHANGED)
+       * ------------------------------------------------------- */
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
         articles = articles.filter((a) => {
@@ -114,7 +118,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * CREATE FROM TEXT
+   * CREATE FROM TEXT (UNCHANGED)
    * -----------------------------------------------------------*/
   createArticleFromText: async ({ title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -164,7 +168,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * CREATE FROM FILE
+   * CREATE FROM FILE (UNCHANGED)
    * -----------------------------------------------------------*/
   createArticleFromFile: async ({ file, title }) => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -239,7 +243,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * UPDATE ARTICLE (NEW)
+   * UPDATE ARTICLE (UNCHANGED)
    * -----------------------------------------------------------*/
   updateArticle: async ({ id, title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -279,7 +283,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * DELETE ARTICLE
+   * DELETE ARTICLE (UNCHANGED)
    * -----------------------------------------------------------*/
   deleteArticle: async (articleId: string) => {
     const { currentOrganization } = useOrganizationStore.getState();
