@@ -291,3 +291,9 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 - AI generates short WhatsApp follow-up suggestions using campaign history.
 - Suggestions are never auto-sent or saved.
 - Enables human-reviewed, intelligent follow-ups.
+
+## 2025-12-20 — Step 1: WhatsApp Templates (Draft CRUD)
+- Added whatsapp_templates table with org/sub-org scope + RLS policies
+- Added frontend Templates Manager UI (create/edit/delete draft templates)
+- Added Zustand store for template CRUD
+- Wired Templates page into Settings routes + sidebar

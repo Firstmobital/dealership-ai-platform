@@ -26,6 +26,8 @@ import { useChatStore } from "./state/useChatStore";
 import { Toaster } from "react-hot-toast";
 import DatabasePage from "./modules/database/pages/DatabasePage";
 import AnalyticsPage from "./modules/analytics/pages/AnalyticsPage";
+import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesModule";
+
 
 
 /* -------------------------------------------------------------------------- */
@@ -134,9 +136,12 @@ function App() {
         <Route path="bot" element={<BotPersonalityModule />} />
         <Route path="workflows" element={<WorkflowModule />} />
         <Route path="campaigns" element={<CampaignsModule />} />
+        <Route path="settings/whatsapp-templates" element={<WhatsappTemplatesModule />} />
         <Route path="database" element={<DatabasePage />} />
         <Route path="settings" element={<SettingsModule />} />
         <Route path="analytics" element={<AnalyticsPage />} />
+        
+
 
         <Route
           path="settings/whatsapp"

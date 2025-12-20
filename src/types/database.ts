@@ -331,3 +331,26 @@ export type WhatsappSettings = {
   created_at?: string;
   updated_at?: string;
 };
+
+export type WhatsappTemplateStatus = "draft" | "pending" | "approved" | "rejected";
+
+export type WhatsappTemplate = {
+  id: string;
+  organization_id: string;
+  sub_organization_id: string | null;
+
+  name: string;
+  category: string;
+  language: string;
+
+  header_type: string | null;
+  header_text: string | null;
+  body: string;
+  footer: string | null;
+
+  status: WhatsappTemplateStatus;
+  meta_template_id: string | null;
+
+  created_at: string;
+  updated_at: string;
+};

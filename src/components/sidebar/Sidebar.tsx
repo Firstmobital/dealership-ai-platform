@@ -11,6 +11,7 @@ import {
   HelpCircle,
   Database,
   BarChart3,
+  FileText,
 } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
@@ -43,6 +44,8 @@ export function Sidebar() {
         <SidebarLink to="/workflows" icon={Workflow} label="Workflows" />
         <SidebarLink to="/campaigns" icon={Megaphone} label="Campaigns" />
         <SidebarLink to="/analytics" icon={BarChart3} label="Analytics" />
+        <SidebarLink to="/settings/whatsapp-templates" icon={FileText} label="WhatsApp Templates"/>
+
 
         <div className="mt-4 border-t border-slate-200 pt-3 text-xs uppercase tracking-wide text-slate-500">
           Settings

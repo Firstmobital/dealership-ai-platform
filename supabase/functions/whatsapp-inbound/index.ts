@@ -884,6 +884,50 @@ serve(async (req: Request): Promise<Response> => {
     const messages = value?.messages ?? [];
     const statuses = value?.statuses ?? [];
 
+    /* =====================================================================================
+   TEMPLATE STATUS UPDATE HANDLER (WhatsApp)
+===================================================================================== */
+const templateUpdate = value?.message_template_status_update;
+
+if (templateUpdate) {
+  const { message_template_id, event, reason } = templateUpdate;
+
+  let newStatus: "approved" | "rejected" | null = null;
+
+  if (event === "APPROVED") newStatus = "approved";
+  if (event === "REJECTED") newStatus = "rejected";
+
+  if (newStatus && message_template_id) {
+    const { error } = await supabase
+      .from("whatsapp_templates")
+      .update({
+        status: newStatus,
+      })
+      .eq("meta_template_id", message_template_id);
+
+    if (error) {
+      baseLogger.error("TEMPLATE_STATUS_UPDATE_ERROR", {
+        message_template_id,
+        event,
+        error,
+      });
+    } else {
+      baseLogger.info("TEMPLATE_STATUS_UPDATED", {
+        message_template_id,
+        status: newStatus,
+        reason,
+      });
+    }
+  }
+
+  // IMPORTANT: template status updates do not contain messages
+  return new Response(
+    JSON.stringify({ success: true, request_id }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
+
+
     // Handle statuses (delivery / read / failed) first
     if (statuses.length > 0) {
       await handleStatuses(statuses, baseLogger);
