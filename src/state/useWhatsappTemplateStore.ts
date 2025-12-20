@@ -8,6 +8,7 @@ type TemplateState = {
   loading: boolean;
   error: string | null;
 
+  fetchApprovedTemplates: (organizationId: string) => Promise<void>;
   fetchTemplates: (organizationId: string) => Promise<void>;
   createTemplate: (payload: Partial<WhatsappTemplate>) => Promise<string | null>;
   updateTemplate: (id: string, payload: Partial<WhatsappTemplate>) => Promise<void>;
@@ -85,4 +86,32 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
     }
     set({ templates: get().templates.filter((t) => t.id !== id) });
   },
+  fetchApprovedTemplates: async (organizationId) => {
+    const { activeSubOrg } = useSubOrganizationStore.getState();
+    set({ loading: true, error: null });
+  
+    let q = supabase
+      .from("whatsapp_templates")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .eq("status", "approved") // ✅ only approved
+      .order("created_at", { ascending: false });
+  
+    // division fallback: sub-org + org templates
+    if (activeSubOrg) {
+      q = q.or(
+        `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
+      );
+    }
+  
+    const { data, error } = await q;
+  
+    if (error) {
+      console.error("[useWhatsappTemplateStore] fetchApprovedTemplates error", error);
+      set({ loading: false, error: error.message });
+      return;
+    }
+  
+    set({ templates: (data ?? []) as WhatsappTemplate[], loading: false });
+  },  
 }));

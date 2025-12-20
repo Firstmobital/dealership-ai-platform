@@ -4,6 +4,9 @@ import { supabase } from "../lib/supabaseClient";
 import type { Campaign, CampaignMessage } from "../types/database";
 import { useSubOrganizationStore } from "./useSubOrganizationStore";
 
+/* =========================================================
+   TYPES
+========================================================= */
 type CsvRow = {
   phone: string;
   variables: Record<string, unknown>;
@@ -21,12 +24,9 @@ type CampaignState = {
     organizationId: string;
     sub_organization_id?: string | null;
     name: string;
-
-    template_name: string;
-
     description?: string;
-    templateBody: string;
-    templateVariables: string[];
+
+    template_id: string; // ✅ IMPORTANT
     scheduledAt: string | null;
     rows: CsvRow[];
   }) => Promise<string>;
@@ -39,14 +39,17 @@ type CampaignState = {
   retryFailedMessages: (campaignId: string) => Promise<void>;
 };
 
+/* =========================================================
+   STORE
+========================================================= */
 export const useCampaignStore = create<CampaignState>((set, get) => ({
   campaigns: [],
   messages: {},
   loading: false,
 
-  /* -------------------------------------------------------------- */
-  /* FETCH CAMPAIGNS (ORG + DIVISION FALLBACK)                       */
-  /* -------------------------------------------------------------- */
+  /* ------------------------------------------------------
+     FETCH CAMPAIGNS (ORG + SUB-ORG FALLBACK)
+  ------------------------------------------------------ */
   fetchCampaigns: async (organizationId) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
     set({ loading: true });
@@ -57,13 +60,11 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
 
-    // ✅ DIVISION SELECTED → division + org fallback
     if (activeSubOrg) {
       query = query.or(
         `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
       );
     }
-    // ✅ ALL divisions → no sub-org filter
 
     const { data, error } = await query;
 
@@ -79,9 +80,9 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     });
   },
 
-  /* -------------------------------------------------------------- */
-  /* FETCH CAMPAIGN MESSAGES (BY CAMPAIGN ONLY)                     */
-  /* -------------------------------------------------------------- */
+  /* ------------------------------------------------------
+     FETCH CAMPAIGN MESSAGES
+  ------------------------------------------------------ */
   fetchCampaignMessages: async (campaignId) => {
     const { data, error } = await supabase
       .from("campaign_messages")
@@ -102,17 +103,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     }));
   },
 
-  /* -------------------------------------------------------------- */
-  /* CREATE CAMPAIGN + INSERT MESSAGES                              */
-  /* -------------------------------------------------------------- */
+  /* ------------------------------------------------------
+     CREATE CAMPAIGN (DRAFT OR SCHEDULED)
+  ------------------------------------------------------ */
   createCampaignWithMessages: async ({
     organizationId,
     sub_organization_id,
     name,
-    template_name,
     description,
-    templateBody,
-    templateVariables,
+    template_id,
     scheduledAt,
     rows,
   }) => {
@@ -120,7 +119,6 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     const finalSubOrg = sub_organization_id ?? activeSubOrg?.id ?? null;
 
     const status = scheduledAt ? "scheduled" : "draft";
-    const totalRecipients = rows.length;
 
     /* 1️⃣ Create Campaign */
     const { data: campaignData, error: campaignError } = await supabase
@@ -129,14 +127,14 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         organization_id: organizationId,
         sub_organization_id: finalSubOrg,
         name,
-        template_name,
         description: description ?? null,
         channel: "whatsapp",
+
+        template_id, // ✅ LINK TO TEMPLATE
         status,
         scheduled_at: scheduledAt,
-        template_body: templateBody,
-        template_variables: templateVariables,
-        total_recipients: totalRecipients,
+
+        total_recipients: rows.length,
         sent_count: 0,
         failed_count: 0,
       })
@@ -178,9 +176,9 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     return campaignId;
   },
 
-  /* -------------------------------------------------------------- */
-  /* LAUNCH CAMPAIGN                                                */
-  /* -------------------------------------------------------------- */
+  /* ------------------------------------------------------
+     SEND CAMPAIGN (EXPLICIT ACTION)
+  ------------------------------------------------------ */
   launchCampaign: async (campaignId, scheduledAt) => {
     const effectiveTime = scheduledAt ?? new Date().toISOString();
 
@@ -206,9 +204,9 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     }));
   },
 
-  /* -------------------------------------------------------------- */
-  /* RETRY FAILED (CAMPAIGN-LEVEL)                                  */
-  /* -------------------------------------------------------------- */
+  /* ------------------------------------------------------
+     RETRY FAILED MESSAGES
+  ------------------------------------------------------ */
   retryFailedMessages: async (campaignId) => {
     const { error } = await supabase
       .from("campaign_messages")
@@ -219,7 +217,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         error: null,
         whatsapp_message_id: null,
       })
-      .eq("campaign_id", campaignId);
+      .eq("campaign_id", campaignId)
+      .eq("status", "failed");
 
     if (error) {
       console.error("[useCampaignStore] retryFailedMessages error", error);

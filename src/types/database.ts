@@ -212,7 +212,7 @@ export type Campaign = {
 
   // Internal batch name (eg: "Dec 16 Batch 1")
   name: string;
-
+  whatsapp_template_id: UUID | null; // ✅ add this
   // ✅ Template / use-case name (eg: "Zawl Altroz")
   template_name: string | null;
 
