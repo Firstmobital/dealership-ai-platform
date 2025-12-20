@@ -1,7 +1,6 @@
-/// src/state/useUnansweredQuestionsStore.ts
-// const { unanswered } = useUnansweredStore();
+// src/state/useUnansweredQuestionsStore.ts
 
-//import { create } from "zustand";
+import { create } from "zustand"; // ✅ FIXED
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
 import { useSubOrganizationStore } from "./useSubOrganizationStore";
@@ -29,9 +28,9 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     saving: false,
     error: null,
 
-    /**
-     * Load unanswered questions for the current organization + sub-org.
-     */
+    /* -------------------------------------------------- */
+    /* FETCH                                              */
+    /* -------------------------------------------------- */
     fetchUnanswered: async () => {
       const { currentOrganization } = useOrganizationStore.getState();
       const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -62,7 +61,6 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
         const { data, error } = await query;
 
         if (error) {
-          console.error("[Unanswered] fetchUnanswered error:", error);
           set({
             loading: false,
             error: error.message ?? "Failed to load unanswered questions.",
@@ -76,25 +74,23 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           error: null,
           questions: (data ?? []) as UnansweredQuestion[],
         });
-      } catch (err: any) {
-        console.error("[Unanswered] fetchUnanswered exception:", err);
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Unexpected error while loading unanswered questions.";
+
         set({
           loading: false,
-          error:
-            err?.message ?? "Unexpected error while loading unanswered questions.",
+          error: message,
           questions: [],
         });
       }
     },
 
-    /**
-     * Convert a single unanswered question into a KB article.
-     *
-     * We delegate the heavy lifting to `kb-save-from-unanswered`:
-     *  - Creates a knowledge_articles row (summary/abstract in `content`)
-     *  - Generates chunks + embeddings in knowledge_chunks
-     *  - (Optionally) cleans up / marks the unanswered question as resolved
-     */
+    /* -------------------------------------------------- */
+    /* SAVE TO KNOWLEDGE                                  */
+    /* -------------------------------------------------- */
     saveToKnowledge: async ({ questionId, title, summary }) => {
       const { currentOrganization } = useOrganizationStore.getState();
       const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -123,34 +119,31 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
         );
 
         if (error) {
-          console.error("[Unanswered] saveToKnowledge error:", error);
           set({
             saving: false,
-            error:
-              error.message ?? "Failed to save unanswered question to KB.",
+            error: error.message ?? "Failed to save unanswered question to KB.",
           });
           return;
         }
 
-        // Refresh unanswered questions after successful save
         await get().fetchUnanswered();
-
         set({ saving: false, error: null });
-      } catch (err: any) {
-        console.error("[Unanswered] saveToKnowledge exception:", err);
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Unexpected error while saving unanswered question to KB.";
+
         set({
           saving: false,
-          error:
-            err?.message ??
-            "Unexpected error while saving unanswered question to KB.",
+          error: message,
         });
       }
     },
 
-    /**
-     * Delete / archive an unanswered question.
-     * (Simple delete; if you later add a `status` column, you can switch to update.)
-     */
+    /* -------------------------------------------------- */
+    /* DELETE                                             */
+    /* -------------------------------------------------- */
     deleteQuestion: async (questionId: string) => {
       const { currentOrganization } = useOrganizationStore.getState();
 
@@ -169,7 +162,6 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           .eq("organization_id", currentOrganization.id);
 
         if (error) {
-          console.error("[Unanswered] deleteQuestion error:", error);
           set({
             loading: false,
             error: error.message ?? "Failed to delete unanswered question.",
@@ -177,15 +169,17 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           return;
         }
 
-        // Refresh list
         await get().fetchUnanswered();
         set({ loading: false, error: null });
-      } catch (err: any) {
-        console.error("[Unanswered] deleteQuestion exception:", err);
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Unexpected error while deleting unanswered question.";
+
         set({
           loading: false,
-          error:
-            err?.message ?? "Unexpected error while deleting unanswered question.",
+          error: message,
         });
       }
     },

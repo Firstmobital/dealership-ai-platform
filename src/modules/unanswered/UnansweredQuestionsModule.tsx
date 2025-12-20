@@ -1,6 +1,4 @@
 // src/modules/unanswered/UnansweredQuestionsModule.tsx
-// Tier 11 — Final UI (Bright CRM Theme)
-// Logic untouched, UI cleaned
 
 import { useEffect, useState } from "react";
 import {
@@ -35,9 +33,6 @@ export function UnansweredQuestionsModule() {
   const [kbTitle, setKbTitle] = useState("");
   const [kbSummary, setKbSummary] = useState("");
 
-  /* ------------------------------------------------------------------ */
-  /* LOAD                                                               */
-  /* ------------------------------------------------------------------ */
   useEffect(() => {
     if (!currentOrganization) return;
     fetchUnanswered().catch(console.error);
@@ -64,10 +59,6 @@ export function UnansweredQuestionsModule() {
     if (selected?.id === q.id) setSelected(null);
   };
 
-  /* ------------------------------------------------------------------ */
-  /* UI                                                                 */
-  /* ------------------------------------------------------------------ */
-
   return (
     <div className="flex h-full flex-col px-6 py-6 bg-slate-50 text-slate-900">
       {/* Header */}
@@ -83,11 +74,10 @@ export function UnansweredQuestionsModule() {
         </div>
       </div>
 
-      {/* Main layout */}
       <div className="flex flex-1 gap-6 overflow-hidden">
-        {/* LEFT — QUESTIONS LIST */}
-        <div className="w-[360px] flex-shrink-0 overflow-y-auto rounded-xl border border-slate-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">
+        {/* LEFT */}
+        <div className="w-[360px] overflow-y-auto rounded-xl border bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold">
             Questions ({questions.length})
           </h2>
 
@@ -102,130 +92,82 @@ export function UnansweredQuestionsModule() {
             </p>
           ) : (
             <ul className="space-y-2">
-              {questions.map((q) => {
-                const isSelected = selected?.id === q.id;
-
-                return (
-                  <li
-                    key={q.id}
-                    onClick={() => setSelected(q)}
-                    className={`cursor-pointer rounded-lg border p-3 transition ${
-                      isSelected
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-slate-200 bg-white hover:bg-slate-50"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium line-clamp-2">
-                        {q.question}
-                      </p>
-
-                      <button
-                        className="text-slate-400 hover:text-red-500"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(q);
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-
-                    <p className="mt-1 text-xs text-slate-400">
-                      {q.created_at
-                        ? new Date(q.created_at).toLocaleString()
-                        : "—"}
+              {questions.map((q: UnansweredQuestion) => (
+                <li
+                  key={q.id}
+                  onClick={() => setSelected(q)}
+                  className={`cursor-pointer rounded-lg border p-3 ${
+                    selected?.id === q.id
+                      ? "border-blue-500 bg-blue-50"
+                      : "hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex justify-between gap-2">
+                    <p className="text-sm font-medium line-clamp-2">
+                      {q.question}
                     </p>
-                  </li>
-                );
-              })}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(q);
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </li>
+              ))}
             </ul>
           )}
         </div>
 
-        {/* RIGHT — DETAILS */}
-        <div className="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-6">
+        {/* RIGHT */}
+        <div className="flex-1 rounded-xl border bg-white p-6">
           {!selected ? (
-            <div className="flex flex-1 items-center justify-center text-slate-400">
-              Select a question to review and save it to Knowledge Base.
+            <div className="flex h-full items-center justify-center text-slate-400">
+              Select a question to review.
             </div>
           ) : (
-            <div className="flex flex-1 flex-col overflow-y-auto">
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Question Details</h2>
-                <button
-                  onClick={() => setSelected(null)}
-                  className="text-slate-400 hover:text-slate-600"
-                >
-                  <XCircle size={20} />
+            <>
+              <div className="flex justify-between">
+                <h2 className="font-semibold">Question Details</h2>
+                <button onClick={() => setSelected(null)}>
+                  <XCircle size={18} />
                 </button>
               </div>
 
-              {/* Question */}
-              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <p className="whitespace-pre-wrap text-sm text-slate-700">
-                  {selected.question}
-                </p>
+              <div className="mt-4 rounded border bg-slate-50 p-4">
+                {selected.question}
               </div>
 
-              {/* Convert to KB */}
-              <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-                <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                  <BookOpen size={16} className="text-blue-600" />
+              <div className="mt-4">
+                <input
+                  placeholder="KB title"
+                  value={kbTitle}
+                  onChange={(e) => setKbTitle(e.target.value)}
+                  className="w-full mb-2 rounded border px-3 py-2"
+                />
+                <textarea
+                  placeholder="Summary"
+                  value={kbSummary}
+                  onChange={(e) => setKbSummary(e.target.value)}
+                  className="w-full rounded border px-3 py-2"
+                />
+                <button
+                  onClick={handleSaveToKnowledge}
+                  disabled={saving}
+                  className="mt-3 flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-white"
+                >
+                  {saving ? <Loader2 size={14} /> : <FileText size={14} />}
                   Save to Knowledge Base
-                </h3>
-
-                <div className="space-y-4">
-                  <input
-                    type="text"
-                    placeholder="Article title (optional)"
-                    value={kbTitle}
-                    onChange={(e) => setKbTitle(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
-                  />
-
-                  <textarea
-                    placeholder="Short summary (optional)"
-                    value={kbSummary}
-                    onChange={(e) => setKbSummary(e.target.value)}
-                    rows={3}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
-                  />
-
-                  <button
-                    onClick={handleSaveToKnowledge}
-                    disabled={saving}
-                    className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-                  >
-                    {saving ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <FileText size={16} />
-                    )}
-                    Save to Knowledge Base
-                  </button>
-                </div>
+                </button>
               </div>
-
-              {/* Meta */}
-              <div className="mt-6 text-xs text-slate-500">
-                <div>ID: {selected.id}</div>
-                <div>
-                  Created:{" "}
-                  {selected.created_at
-                    ? new Date(selected.created_at).toLocaleString()
-                    : "—"}
-                </div>
-              </div>
-            </div>
+            </>
           )}
         </div>
       </div>
 
-      {error && (
-        <div className="mt-4 text-sm text-red-600">Error: {error}</div>
-      )}
+      {error && <div className="mt-4 text-sm text-red-600">{error}</div>}
     </div>
   );
 }
