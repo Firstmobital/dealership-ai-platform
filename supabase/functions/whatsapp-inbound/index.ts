@@ -816,6 +816,34 @@ async function processInboundMessage(
     msgLogger.error("MESSAGE_INSERT_ERROR", { error: insertMsgError });
   }
 
+    /* ------------------ LINK REPLY TO CAMPAIGN MESSAGE ------------------ */
+    const contextMessageId: string | null =
+    waMessage?.context?.id ? String(waMessage.context.id) : null;
+
+  if (contextMessageId && waMessageId) {
+    const { error: replyUpdateError } = await supabase
+      .from("campaign_messages")
+      .update({
+        replied_at: new Date().toISOString(),
+        reply_whatsapp_message_id: waMessageId,
+        reply_text: text?.slice(0, 2000) ?? null,
+      })
+      .eq("whatsapp_message_id", contextMessageId)
+      .is("replied_at", null); // store only first reply
+
+    if (replyUpdateError) {
+      msgLogger.error("CAMPAIGN_REPLY_LINK_ERROR", {
+        error: replyUpdateError,
+        contextMessageId,
+      });
+    } else {
+      msgLogger.info("CAMPAIGN_REPLY_LINKED", {
+        contextMessageId,
+        reply_whatsapp_message_id: waMessageId,
+      });
+    }
+  }
+
   /* ------------------ AI Handler ------------------ */
   // For non-text, send the best available description.
   const aiText = text ?? "Customer sent a non-text WhatsApp message.";

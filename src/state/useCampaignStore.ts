@@ -1,3 +1,4 @@
+///Users/air/dealership-ai-platform/src/state/useCampaignStore.ts
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
@@ -26,7 +27,7 @@ type CampaignState = {
     name: string;
     description?: string;
 
-    template_id: string; // ✅ IMPORTANT
+    whatsapp_template_id: string; // ✅ FIXED
     scheduledAt: string | null;
     rows: CsvRow[];
   }) => Promise<string>;
@@ -62,7 +63,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
 
     if (activeSubOrg) {
       query = query.or(
-        `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
+        `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`,
       );
     }
 
@@ -104,23 +105,37 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   },
 
   /* ------------------------------------------------------
-     CREATE CAMPAIGN (DRAFT OR SCHEDULED)
+     CREATE CAMPAIGN (DRAFT / SCHEDULED)
   ------------------------------------------------------ */
   createCampaignWithMessages: async ({
     organizationId,
     sub_organization_id,
     name,
     description,
-    template_id,
+    whatsapp_template_id,
     scheduledAt,
     rows,
   }) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
     const finalSubOrg = sub_organization_id ?? activeSubOrg?.id ?? null;
-
     const status = scheduledAt ? "scheduled" : "draft";
 
-    /* 1️⃣ Create Campaign */
+    /* 1️⃣ Fetch template (must be approved) */
+    const { data: template, error: tplError } = await supabase
+      .from("whatsapp_templates")
+      .select("id, name, body, language, status")
+      .eq("id", whatsapp_template_id)
+      .single();
+
+    if (tplError || !template) {
+      throw tplError ?? new Error("Template not found");
+    }
+
+    if (template.status !== "approved") {
+      throw new Error("Template is not approved yet");
+    }
+
+    /* 2️⃣ Create campaign */
     const { data: campaignData, error: campaignError } = await supabase
       .from("campaigns")
       .insert({
@@ -130,7 +145,11 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         description: description ?? null,
         channel: "whatsapp",
 
-        template_id, // ✅ LINK TO TEMPLATE
+        whatsapp_template_id: template.id,
+        template_name: template.name,
+        template_body: template.body,
+        template_language: template.language,
+
         status,
         scheduled_at: scheduledAt,
 
@@ -148,9 +167,9 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
 
     const campaignId = campaignData.id as string;
 
-    /* 2️⃣ Insert Campaign Messages */
+    /* 3️⃣ Insert campaign messages */
     if (rows.length > 0) {
-      const messagesPayload = rows.map((row) => ({
+      const payload = rows.map((row) => ({
         organization_id: organizationId,
         campaign_id: campaignId,
         sub_organization_id: finalSubOrg,
@@ -159,17 +178,17 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         status: "pending",
       }));
 
-      const { error: messagesError } = await supabase
+      const { error } = await supabase
         .from("campaign_messages")
-        .insert(messagesPayload);
+        .insert(payload);
 
-      if (messagesError) {
-        console.error("[useCampaignStore] insert messages error", messagesError);
-        throw messagesError;
+      if (error) {
+        console.error("[useCampaignStore] insert messages error", error);
+        throw error;
       }
     }
 
-    /* 3️⃣ Refresh */
+    /* 4️⃣ Refresh state */
     await get().fetchCampaigns(organizationId);
     await get().fetchCampaignMessages(campaignId);
 
@@ -177,7 +196,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   },
 
   /* ------------------------------------------------------
-     SEND CAMPAIGN (EXPLICIT ACTION)
+     LAUNCH CAMPAIGN
   ------------------------------------------------------ */
   launchCampaign: async (campaignId, scheduledAt) => {
     const effectiveTime = scheduledAt ?? new Date().toISOString();
@@ -199,7 +218,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       campaigns: state.campaigns.map((c) =>
         c.id === campaignId
           ? { ...c, status: "scheduled", scheduled_at: effectiveTime }
-          : c
+          : c,
       ),
     }));
   },

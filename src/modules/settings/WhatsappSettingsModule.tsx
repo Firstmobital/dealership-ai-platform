@@ -1,4 +1,3 @@
-///Users/air/dealership-ai-platform/src/modules/settings/WhatsappSettingsModule.tsx
 import { useEffect, useState } from "react";
 import {
   Loader2,
@@ -31,7 +30,6 @@ export function WhatsappSettingsModule() {
   const [form, setForm] = useState({
     phone_number: "",
     api_token: "",
-    verify_token: "",
     whatsapp_phone_id: "",
     whatsapp_business_id: "",
     is_active: true,
@@ -50,7 +48,6 @@ export function WhatsappSettingsModule() {
     setForm({
       phone_number: settings.phone_number ?? "",
       api_token: settings.api_token ?? "",
-      verify_token: settings.verify_token ?? "",
       whatsapp_phone_id: settings.whatsapp_phone_id ?? "",
       whatsapp_business_id: settings.whatsapp_business_id ?? "",
       is_active: settings.is_active ?? true,
@@ -67,7 +64,6 @@ export function WhatsappSettingsModule() {
     await saveSettings({
       phone_number: form.phone_number || null,
       api_token: form.api_token || null,
-      verify_token: form.verify_token || null,
       whatsapp_phone_id: form.whatsapp_phone_id || null,
       whatsapp_business_id: form.whatsapp_business_id || null,
       is_active: form.is_active,
@@ -130,7 +126,6 @@ export function WhatsappSettingsModule() {
         {[
           ["Phone Number", "phone_number", "e.g. 919999888877"],
           ["API Token", "api_token", "Permanent API token"],
-          ["Verify Token", "verify_token", "Webhook verify token"],
           ["Phone ID", "whatsapp_phone_id", "Meta phone ID"],
           ["Business ID", "whatsapp_business_id", "Business account ID"],
         ].map(([label, key, placeholder]) => (

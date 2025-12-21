@@ -21,7 +21,6 @@ type WhatsappSettingsState = {
   saveSettings: (params: {
     phone_number: string | null;
     api_token: string | null;
-    verify_token: string | null;
     whatsapp_phone_id: string | null;
     whatsapp_business_id: string | null;
     is_active: boolean;
@@ -38,7 +37,6 @@ function normalizeSettings(raw: any | null): WhatsappSettings | null {
     ...raw,
     phone_number: raw.phone_number ?? "",
     api_token: raw.api_token ?? "",
-    verify_token: raw.verify_token ?? "",
     whatsapp_phone_id: raw.whatsapp_phone_id ?? "",
     whatsapp_business_id: raw.whatsapp_business_id ?? "",
     is_active: raw.is_active ?? true,
@@ -58,7 +56,7 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
     clearSuccess: () => set({ success: null }),
 
     /* =====================================================================================
-       FETCH SETTINGS (hybrid: sub-org override → org fallback)
+       FETCH SETTINGS (sub-org override → org fallback)
     ====================================================================================== */
     fetchSettings: async () => {
       const { currentOrganization } = useOrganizationStore.getState();
@@ -79,9 +77,8 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
         const orgId = currentOrganization.id;
         const subOrgId = activeSubOrg?.id ?? null;
 
-        /* ----------------- SUB-ORG CONTEXT ----------------- */
+        /* ---------- SUB-ORG ---------- */
         if (subOrgId) {
-          // Try sub-org override
           const { data: subData } = await supabase
             .from("whatsapp_settings")
             .select("*")
@@ -98,7 +95,6 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
             return;
           }
 
-          // Fallback to organization-level
           const { data: orgData } = await supabase
             .from("whatsapp_settings")
             .select("*")
@@ -115,16 +111,11 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
             return;
           }
 
-          // No config exists
-          set({
-            loading: false,
-            settings: null,
-            isOrgFallback: false,
-          });
+          set({ loading: false, settings: null, isOrgFallback: false });
           return;
         }
 
-        /* ----------------- ORG-LEVEL CONTEXT ----------------- */
+        /* ---------- ORG ---------- */
         const { data } = await supabase
           .from("whatsapp_settings")
           .select("*")
@@ -142,19 +133,17 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
           loading: false,
           settings: null,
           isOrgFallback: false,
-          error:
-            err?.message ?? "Unexpected error while loading WhatsApp settings.",
+          error: err?.message ?? "Unexpected error while loading settings.",
         });
       }
     },
 
     /* =====================================================================================
-       SAVE SETTINGS (sub-org override aware)
+       SAVE SETTINGS
     ====================================================================================== */
     saveSettings: async ({
       phone_number,
       api_token,
-      verify_token,
       whatsapp_phone_id,
       whatsapp_business_id,
       is_active,
@@ -164,32 +153,27 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
       const { settings } = get();
 
       if (!currentOrganization) {
-        set({ error: "Select an organization before saving WhatsApp settings." });
+        set({ error: "Select an organization before saving settings." });
         return;
       }
 
       set({ saving: true, error: null, success: null });
 
       try {
-        const orgId = currentOrganization.id;
-        const subOrgId = activeSubOrg?.id ?? null;
-
         const payload: any = {
-          organization_id: orgId,
-          sub_organization_id: subOrgId,
+          organization_id: currentOrganization.id,
+          sub_organization_id: activeSubOrg?.id ?? null,
           phone_number,
           api_token,
-          verify_token,
           whatsapp_phone_id,
           whatsapp_business_id,
           is_active,
         };
 
-        // Preserve ID if row already exists
         if (
           settings &&
-          settings.organization_id === orgId &&
-          settings.sub_organization_id === subOrgId
+          settings.organization_id === payload.organization_id &&
+          settings.sub_organization_id === payload.sub_organization_id
         ) {
           payload.id = settings.id;
         }
@@ -203,14 +187,10 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
           .single();
 
         if (error) {
-          set({
-            saving: false,
-            error: error.message ?? "Failed to save WhatsApp settings.",
-          });
+          set({ saving: false, error: error.message });
           return;
         }
 
-        // SUCCESS
         set({
           saving: false,
           settings: normalizeSettings(data),
@@ -218,19 +198,15 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
           isOrgFallback: false,
         });
 
-        // Auto-clear success after 2 seconds
         setTimeout(() => {
-          const { success } = get();
-          if (success) set({ success: null });
+          if (get().success) set({ success: null });
         }, 2000);
       } catch (err: any) {
         set({
           saving: false,
-          error:
-            err?.message ?? "Unexpected error while saving WhatsApp settings.",
+          error: err?.message ?? "Unexpected error while saving settings.",
         });
       }
     },
-  })
+  }),
 );
-

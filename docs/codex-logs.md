@@ -297,3 +297,12 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 - Added frontend Templates Manager UI (create/edit/delete draft templates)
 - Added Zustand store for template CRUD
 - Wired Templates page into Settings routes + sidebar
+
+## 2025-12-21 — WhatsApp Bulk Messaging: Template Sync + True Template Dispatch + Reply Attribution
+
+- Fixed campaign creation to link campaigns to whatsapp_templates via whatsapp_template_id (removed invalid template_id usage).
+- Updated campaign-dispatch to send WhatsApp template messages through whatsapp-send (type=template), not freeform text.
+- Added whatsapp-template-sync edge function to fetch template approval status from Meta and update whatsapp_templates.
+- Added campaign_messages reply attribution (replied_at, reply_whatsapp_message_id, reply_text) and linked inbound replies via context.id.
+- Removed verify_token from frontend WhatsApp settings (verify token is env-only now).
+- Improved Campaign upload to accept CSV/XLSX (phone column required; variables mapped from remaining columns).

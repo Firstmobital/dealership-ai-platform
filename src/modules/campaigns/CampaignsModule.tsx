@@ -1,3 +1,4 @@
+///Users/air/dealership-ai-platform/src/modules/campaigns/CampaignsModule.tsx
 import {
   Megaphone,
   Upload,
@@ -6,16 +7,16 @@ import {
   Clock,
   Loader2,
 } from "lucide-react";
-
 import { useEffect, useMemo, useState } from "react";
+
 import { useCampaignStore } from "../../state/useCampaignStore";
 import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
-/* ======================================================================== */
-/* TYPES                                                                     */
-/* ======================================================================== */
+/* ========================================================================
+   TYPES
+========================================================================= */
 type ParsedCsvRow = {
   phone: string;
   variables: Record<string, string>;
@@ -24,12 +25,12 @@ type ParsedCsvRow = {
 type BuilderState = {
   name: string;
   description: string;
-  template_id: string;
+  whatsapp_template_id: string;
 };
 
-/* ======================================================================== */
-/* CSV HELPERS                                                               */
-/* ======================================================================== */
+/* ========================================================================
+   CSV HELPERS (simple + predictable)
+========================================================================= */
 function parseSimpleCsv(raw: string) {
   const rows = raw.trim().split("\n").map((r) => r.split(","));
   const headers = rows[0] || [];
@@ -43,16 +44,16 @@ function mapCsvRowsToObjects(
 ): ParsedCsvRow[] {
   return rows.map((cols) => {
     const obj: Record<string, string> = {};
-    headers.forEach((h, i) => (obj[h] = cols[i] || ""));
-    const phone = obj["phone"]?.trim() ?? "";
+    headers.forEach((h, i) => (obj[h] = cols[i]?.trim() ?? ""));
+    const phone = obj["phone"] ?? "";
     delete obj["phone"];
     return { phone, variables: obj };
   });
 }
 
-/* ======================================================================== */
-/* COMPONENT                                                                 */
-/* ======================================================================== */
+/* ========================================================================
+   COMPONENT
+========================================================================= */
 export function CampaignsModule() {
   const {
     campaigns,
@@ -79,7 +80,7 @@ export function CampaignsModule() {
   const [builder, setBuilder] = useState<BuilderState>({
     name: "",
     description: "",
-    template_id: "",
+    whatsapp_template_id: "",
   });
 
   const [csvText, setCsvText] = useState("");
@@ -88,12 +89,11 @@ export function CampaignsModule() {
   const [creating, setCreating] = useState(false);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
 
-  /* -------------------------------------------------------------------- */
-  /* LOAD DATA                                                            */
-  /* -------------------------------------------------------------------- */
+  /* --------------------------------------------------------------------
+     LOAD DATA
+  -------------------------------------------------------------------- */
   useEffect(() => {
     if (!currentOrganization?.id) return;
-
     fetchCampaigns(currentOrganization.id);
     fetchApprovedTemplates(currentOrganization.id);
   }, [currentOrganization?.id, activeSubOrg?.id]);
@@ -104,9 +104,9 @@ export function CampaignsModule() {
     }
   }, [selectedCampaignId]);
 
-  /* -------------------------------------------------------------------- */
-  /* CSV PARSE                                                            */
-  /* -------------------------------------------------------------------- */
+  /* --------------------------------------------------------------------
+     CSV PARSE
+  -------------------------------------------------------------------- */
   useEffect(() => {
     if (!csvText.trim()) {
       setParsedRows([]);
@@ -126,13 +126,13 @@ export function CampaignsModule() {
     setCsvErrors(errors);
   }, [csvText]);
 
-  /* -------------------------------------------------------------------- */
-  /* CREATE CAMPAIGN (DRAFT)                                               */
-  /* -------------------------------------------------------------------- */
+  /* --------------------------------------------------------------------
+     CREATE CAMPAIGN (DRAFT)
+  -------------------------------------------------------------------- */
   async function onCreateCampaign() {
     if (!currentOrganization?.id) return;
 
-    if (!builder.name || !builder.template_id) {
+    if (!builder.name || !builder.whatsapp_template_id) {
       alert("Campaign name and template are required.");
       return;
     }
@@ -150,22 +150,22 @@ export function CampaignsModule() {
         sub_organization_id: activeSubOrg?.id ?? null,
         name: builder.name,
         description: builder.description,
-        template_id: builder.template_id,
-        scheduledAt: null, // ✅ DRAFT
+        whatsapp_template_id: builder.whatsapp_template_id,
+        scheduledAt: null, // DRAFT
         rows: parsedRows,
       });
 
       setSelectedCampaignId(id);
-      setBuilder({ name: "", description: "", template_id: "" });
+      setBuilder({ name: "", description: "", whatsapp_template_id: "" });
       setCsvText("");
     } finally {
       setCreating(false);
     }
   }
 
-  /* -------------------------------------------------------------------- */
-  /* LAUNCH CAMPAIGN                                                       */
-  /* -------------------------------------------------------------------- */
+  /* --------------------------------------------------------------------
+     LAUNCH CAMPAIGN
+  -------------------------------------------------------------------- */
   async function onLaunch(campaignId: string) {
     if (!confirm("This will start sending WhatsApp messages immediately.")) {
       return;
@@ -179,9 +179,9 @@ export function CampaignsModule() {
     }
   }
 
-  /* -------------------------------------------------------------------- */
-  /* ORDER: SUB-ORG FIRST                                                  */
-  /* -------------------------------------------------------------------- */
+  /* --------------------------------------------------------------------
+     ORDER: SUB-ORG FIRST
+  -------------------------------------------------------------------- */
   const orderedCampaigns = useMemo(() => {
     if (!activeSubOrg) return campaigns;
 
@@ -192,9 +192,9 @@ export function CampaignsModule() {
     });
   }, [campaigns, activeSubOrg]);
 
-  /* ===================================================================== */
-  /* UI                                                                    */
-  /* ===================================================================== */
+  /* =====================================================================
+     UI
+  ===================================================================== */
   return (
     <div className="flex h-full w-full gap-6 px-6 py-6">
       {/* LEFT */}
@@ -217,9 +217,12 @@ export function CampaignsModule() {
 
           <select
             className="mb-2 w-full rounded-md border px-3 py-2 text-sm"
-            value={builder.template_id}
+            value={builder.whatsapp_template_id}
             onChange={(e) =>
-              setBuilder((p) => ({ ...p, template_id: e.target.value }))
+              setBuilder((p) => ({
+                ...p,
+                whatsapp_template_id: e.target.value,
+              }))
             }
             disabled={templatesLoading}
           >
@@ -253,7 +256,7 @@ export function CampaignsModule() {
             className="mt-2 w-full rounded-md bg-blue-600 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {creating ? (
-              <Loader2 size={16} className="animate-spin mx-auto" />
+              <Loader2 size={16} className="mx-auto animate-spin" />
             ) : (
               "Create Draft Campaign"
             )}
@@ -290,7 +293,7 @@ export function CampaignsModule() {
       {/* RIGHT */}
       <div className="flex-1 rounded-lg border bg-white p-4">
         {!selectedCampaignId ? (
-          <div className="h-full flex items-center justify-center text-slate-500">
+          <div className="flex h-full items-center justify-center text-slate-500">
             Select a campaign
           </div>
         ) : (
