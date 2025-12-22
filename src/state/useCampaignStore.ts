@@ -1,3 +1,5 @@
+///Users/air/dealership-ai-platform/src/state/useCampaignStore.ts
+
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
