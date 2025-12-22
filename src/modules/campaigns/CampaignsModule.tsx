@@ -1,10 +1,13 @@
-///Users/air/dealership-ai-platform/src/modules/campaigns/CampaignsModule.tsx
 import {
   Megaphone,
-  Play,
   PlusCircle,
   Clock,
   Loader2,
+  X,
+  Send,
+  Play,
+  Save,
+  RefreshCcw,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -12,6 +15,7 @@ import { useCampaignStore } from "../../state/useCampaignStore";
 import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
+import { supabase } from "../../lib/supabaseClient";
 
 /* ========================================================================
    TYPES
@@ -27,81 +31,64 @@ type BuilderState = {
   whatsapp_template_id: string;
 };
 
-type CampaignPageMode = "view" | "create";
+type Mode = "view" | "create";
 
 /* ========================================================================
    CSV HELPERS
 ========================================================================= */
 function parseSimpleCsv(raw: string) {
   const rows = raw.trim().split("\n").map((r) => r.split(","));
-  const headers = rows[0] || [];
-  const dataRows = rows.slice(1);
-  return { headers, rows: dataRows };
+  const headers = (rows[0] || []).map((h) => String(h ?? "").trim());
+  return { headers, rows: rows.slice(1) };
 }
 
-function mapCsvRowsToObjects(
-  headers: string[],
-  rows: string[][],
-): ParsedCsvRow[] {
-  return rows.map((cols) => {
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => (obj[h] = cols[i]?.trim() ?? ""));
-    const phone = obj["phone"] ?? "";
-    delete obj["phone"];
-    return { phone, variables: obj };
-  });
+function mapCsvRowsToObjects(headers: string[], rows: string[][]) {
+  return rows
+    .map((cols) => {
+      const obj: Record<string, string> = {};
+      headers.forEach((h, i) => (obj[h] = String(cols[i] ?? "").trim()));
+      const phone = obj.phone;
+      delete obj.phone;
+      return phone ? { phone, variables: obj } : null;
+    })
+    .filter(Boolean) as ParsedCsvRow[];
 }
 
 /* ========================================================================
-   PREVIEW HELPERS
+   TEMPLATE PREVIEW HELPERS
 ========================================================================= */
-function extractPlaceholders(body: string): number[] {
-  const matches = body.match(/{{\s*(\d+)\s*}}/g) ?? [];
-  return Array.from(
-    new Set(matches.map((m) => Number(m.replace(/[^\d]/g, "")))),
-  ).sort();
-}
-
 function renderTemplatePreview(
   body: string,
-  sample: Record<string, string>,
+  vars: Record<string, string>
 ) {
   let out = String(body ?? "");
-  const keys = Object.keys(sample ?? {});
-  extractPlaceholders(out).forEach((n, idx) => {
-    const val = keys[idx] ? sample[keys[idx]] : "";
-    out = out.replace(new RegExp(`{{\\s*${n}\\s*}}`, "g"), val || `{{${n}}}`);
+  Object.values(vars ?? {}).forEach((v, i) => {
+    out = out.replace(new RegExp(`{{\\s*${i + 1}\\s*}}`, "g"), v || `{{${i + 1}}}`);
   });
   return out;
 }
 
-function WhatsAppPreviewCard(props: {
+/* ========================================================================
+   PREVIEW CARD
+========================================================================= */
+function WhatsAppPreviewCard({
+  title,
+  body,
+}: {
+  title?: string;
   body: string;
-  header?: string | null;
-  footer?: string | null;
 }) {
   return (
-    <div className="rounded-xl border bg-slate-50 p-4">
-      <div className="mb-2 text-xs font-semibold text-slate-600">
-        WhatsApp Preview
+    <div className="rounded-xl border bg-white p-4">
+      <div className="mb-2 flex justify-between">
+        <div className="font-semibold">{title}</div>
+        <div className="text-xs text-slate-500">WhatsApp</div>
       </div>
 
-      <div className="max-w-[420px] rounded-2xl bg-white p-3 shadow-sm">
-        {props.header && (
-          <div className="mb-2 text-sm font-semibold">
-            {props.header}
-          </div>
-        )}
-
-        <div className="whitespace-pre-wrap text-sm">
-          {props.body}
+      <div className="rounded-2xl bg-slate-50 p-4">
+        <div className="max-w-[520px] rounded-2xl bg-white p-3 shadow-sm whitespace-pre-wrap text-sm">
+          {body || "(no content)"}
         </div>
-
-        {props.footer && (
-          <div className="mt-2 text-xs text-slate-500">
-            {props.footer}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -119,19 +106,15 @@ export function CampaignsModule() {
     fetchCampaignMessages,
     createCampaignWithMessages,
     launchCampaign,
+    retryFailedMessages,
   } = useCampaignStore();
 
-  const {
-    templates,
-    fetchApprovedTemplates,
-  } = useWhatsappTemplateStore();
-
+  const { templates, fetchApprovedTemplates } = useWhatsappTemplateStore();
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
 
-  const [mode, setMode] = useState<CampaignPageMode>("view");
-  const [selectedCampaignId, setSelectedCampaignId] =
-    useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("view");
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
 
   const [builder, setBuilder] = useState<BuilderState>({
     name: "",
@@ -142,12 +125,12 @@ export function CampaignsModule() {
   const [csvText, setCsvText] = useState("");
   const [parsedRows, setParsedRows] = useState<ParsedCsvRow[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [launchingId, setLaunchingId] = useState<string | null>(null);
+  const [testPhone, setTestPhone] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  /* --------------------------------------------------------------------
-     LOAD DATA
-  -------------------------------------------------------------------- */
+  /* ---------------------------------------------------------
+     LOAD
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!currentOrganization?.id) return;
     fetchCampaigns(currentOrganization.id);
@@ -160,9 +143,9 @@ export function CampaignsModule() {
     }
   }, [selectedCampaignId]);
 
-  /* --------------------------------------------------------------------
+  /* ---------------------------------------------------------
      CSV PARSE
-  -------------------------------------------------------------------- */
+  --------------------------------------------------------- */
   useEffect(() => {
     if (!csvText.trim()) {
       setParsedRows([]);
@@ -170,159 +153,189 @@ export function CampaignsModule() {
       return;
     }
 
-    const parsed = parseSimpleCsv(csvText);
-    const errors: string[] = [];
+    const { headers, rows } = parseSimpleCsv(csvText);
+    const errors = [];
 
-    if (!parsed.headers.includes("phone")) {
-      errors.push("CSV must include phone column");
-    }
+    if (!headers.includes("phone")) errors.push("CSV must include phone column");
 
-    setParsedRows(mapCsvRowsToObjects(parsed.headers, parsed.rows));
+    const mapped = mapCsvRowsToObjects(headers, rows);
+    if (!mapped.length) errors.push("No valid rows");
+
+    setParsedRows(mapped);
     setCsvErrors(errors);
   }, [csvText]);
 
-  /* --------------------------------------------------------------------
+  /* ---------------------------------------------------------
      DERIVED
-  -------------------------------------------------------------------- */
+  --------------------------------------------------------- */
   const selectedCampaign = useMemo(
     () => campaigns.find((c) => c.id === selectedCampaignId) ?? null,
-    [campaigns, selectedCampaignId],
+    [campaigns, selectedCampaignId]
   );
 
   const selectedTemplate = useMemo(
-    () =>
-      templates.find((t) => t.id === builder.whatsapp_template_id) ??
-      null,
-    [builder.whatsapp_template_id, templates],
+    () => templates.find((t) => t.id === builder.whatsapp_template_id) ?? null,
+    [templates, builder.whatsapp_template_id]
   );
 
-  const previewBody = useMemo(() => {
-    if (mode === "view" && selectedCampaign) {
-      return selectedCampaign.template_body;
+  const previewBody =
+    mode === "create"
+      ? renderTemplatePreview(
+          selectedTemplate?.body ?? "",
+          parsedRows[0]?.variables ?? {}
+        )
+      : selectedCampaign?.template_body ?? "";
+
+  const selectedMsgs = selectedCampaign
+    ? messages[selectedCampaign.id] ?? []
+    : [];
+
+  const failedCount = selectedMsgs.filter((m) => m.status === "failed").length;
+
+  /* ---------------------------------------------------------
+     ACTIONS
+  --------------------------------------------------------- */
+  async function saveDraft() {
+    if (!currentOrganization?.id) return;
+    if (!builder.name || !builder.whatsapp_template_id || csvErrors.length) return;
+
+    setBusy(true);
+    try {
+      const id = await createCampaignWithMessages({
+        organizationId: currentOrganization.id,
+        sub_organization_id: activeSubOrg?.id ?? null,
+        name: builder.name,
+        description: builder.description,
+        whatsapp_template_id: builder.whatsapp_template_id,
+        scheduledAt: null,
+        rows: parsedRows,
+      });
+      setSelectedCampaignId(id);
+      setMode("view");
+    } finally {
+      setBusy(false);
     }
-    if (mode === "create" && selectedTemplate) {
-      return renderTemplatePreview(
-        selectedTemplate.body,
-        parsedRows[0]?.variables ?? {},
+  }
+
+  async function launchNow() {
+    setBusy(true);
+    try {
+      await saveDraft();
+      if (selectedCampaignId) await launchCampaign(selectedCampaignId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testSend() {
+    if (!testPhone || !previewBody) return;
+
+    setBusy(true);
+    try {
+      const session = await supabase.auth.getSession();
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-test-send`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.data.session?.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            organization_id: currentOrganization?.id,
+            sub_organization_id: activeSubOrg?.id ?? null,
+            to: testPhone,
+            text: previewBody,
+          }),
+        }
       );
+      alert("✅ Test sent");
+    } finally {
+      setBusy(false);
     }
-    return "";
-  }, [mode, selectedCampaign, selectedTemplate, parsedRows]);
+  }
 
   /* =====================================================================
      UI
   ===================================================================== */
   return (
-    <div className="flex h-full w-full gap-6 px-6 py-6">
+    <div className="flex h-full gap-6 p-6">
       {/* LEFT */}
-      <div className="w-[420px] flex flex-col gap-4">
-        <div className="flex justify-end">
+      <div className="w-[360px] rounded-xl border bg-white p-4">
+        <div className="mb-3 flex justify-between">
+          <div className="flex gap-2 font-semibold">
+            <Megaphone size={16} /> Campaigns
+          </div>
           <button
-            onClick={() => {
-              setMode("create");
-              setSelectedCampaignId(null);
-            }}
-            className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm text-white"
+            onClick={() => setMode("create")}
+            className="text-blue-600 text-sm flex gap-1"
           >
-            <PlusCircle size={16} />
-            New Campaign
+            <PlusCircle size={14} /> New
           </button>
         </div>
 
-        {mode === "create" && (
-          <div className="rounded-lg border bg-white p-4">
-            <input
-              className="mb-2 w-full border px-3 py-2 text-sm"
-              placeholder="Campaign name"
-              value={builder.name}
-              onChange={(e) =>
-                setBuilder((p) => ({ ...p, name: e.target.value }))
-              }
-            />
-
-            <select
-              className="mb-2 w-full border px-3 py-2 text-sm"
-              value={builder.whatsapp_template_id}
-              onChange={(e) =>
-                setBuilder((p) => ({
-                  ...p,
-                  whatsapp_template_id: e.target.value,
-                }))
-              }
+        {loading ? (
+          <Loader2 className="animate-spin" />
+        ) : (
+          campaigns.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => {
+                setSelectedCampaignId(c.id);
+                setMode("view");
+              }}
+              className={`w-full mb-2 rounded-md border p-2 text-left ${
+                selectedCampaignId === c.id
+                  ? "bg-blue-50 border-blue-600"
+                  : ""
+              }`}
             >
-              <option value="">Select Template</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-
-            <textarea
-              className="w-full border px-3 py-2 text-xs"
-              rows={4}
-              placeholder="Paste CSV"
-              value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
-            />
-          </div>
-        )}
-
-        <div className="flex-1 rounded-lg border bg-white p-4 overflow-y-auto">
-          <h2 className="mb-2 text-sm font-semibold">Campaigns</h2>
-
-          {loading ? (
-            <div>Loading…</div>
-          ) : (
-            campaigns.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => {
-                  setSelectedCampaignId(c.id);
-                  setMode("view");
-                }}
-                className={`mb-2 cursor-pointer rounded-md border px-3 py-2 ${
-                  selectedCampaignId === c.id
-                    ? "border-blue-600 bg-blue-50"
-                    : "hover:bg-slate-50"
-                }`}
-              >
-                <div className="text-sm font-medium">{c.name}</div>
-                <div className="mt-1 flex items-center gap-2 text-xs">
+              <div className="flex justify-between">
+                <div>{c.name}</div>
+                <div className="text-xs flex gap-1">
                   <Clock size={12} /> {c.status}
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            </button>
+          ))
+        )}
       </div>
 
       {/* RIGHT */}
       <div className="flex-1 flex flex-col gap-4">
-        {previewBody ? (
-          <WhatsAppPreviewCard body={previewBody} />
+        <WhatsAppPreviewCard
+          title={
+            mode === "create"
+              ? "Template Preview"
+              : `Preview: ${selectedCampaign?.name ?? ""}`
+          }
+          body={previewBody}
+        />
+
+        {mode === "create" ? (
+          <div className="flex gap-2">
+            <button onClick={launchNow} className="btn-green">
+              <Play size={14} /> Launch
+            </button>
+            <button onClick={saveDraft} className="btn-outline">
+              <Save size={14} /> Draft
+            </button>
+            <button onClick={testSend} className="btn-blue">
+              <Send size={14} /> Test
+            </button>
+            <button onClick={() => setMode("view")} className="btn-outline">
+              <X size={14} /> Cancel
+            </button>
+          </div>
         ) : (
-          <div className="rounded-lg border p-4 text-sm text-slate-500">
-            Select a campaign or template to preview
-          </div>
-        )}
-
-        {mode === "view" && selectedCampaign && (
-          <div className="flex-1 rounded-lg border bg-white p-4">
-            <div className="mb-2 font-semibold">
-              {selectedCampaign.name}
-            </div>
-
-            {selectedCampaign.status === "draft" && (
-              <button
-                onClick={() => launchCampaign(selectedCampaign.id)}
-                className="flex items-center gap-2 rounded-md bg-green-600 px-3 py-2 text-sm text-white"
-              >
-                <Play size={14} />
-                Launch Now
-              </button>
-            )}
-          </div>
+          failedCount > 0 && (
+            <button
+              onClick={() => retryFailedMessages(selectedCampaign!.id)}
+              className="btn-outline flex gap-2 w-fit"
+            >
+              <RefreshCcw size={14} /> Retry Failed ({failedCount})
+            </button>
+          )
         )}
       </div>
     </div>
