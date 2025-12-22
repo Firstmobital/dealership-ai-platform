@@ -1,6 +1,10 @@
+// deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+/* ------------------------------------------------------------------ */
+/* CORS                                                               */
+/* ------------------------------------------------------------------ */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -8,7 +12,16 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Maps Meta statuses -> our DB statuses
+function jsonResponse(status: number, payload: any) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* STATUS MAP                                                         */
+/* ------------------------------------------------------------------ */
 function mapStatus(metaStatus: string | null | undefined) {
   const s = String(metaStatus ?? "").toUpperCase();
   if (s === "APPROVED") return "approved";
@@ -18,122 +31,238 @@ function mapStatus(metaStatus: string | null | undefined) {
   return "pending";
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (req.method !== "POST") {
-    return new Response("Method not allowed", { status: 405, headers: corsHeaders });
-  }
+/* ------------------------------------------------------------------ */
+/* META FETCH (PAGINATED)                                              */
+/* ------------------------------------------------------------------ */
+async function fetchAllMetaTemplates(params: {
+  wabaId: string;
+  token: string;
+}): Promise<any[]> {
+  const { wabaId, token } = params;
 
-  try {
-    const supabase = createClient(
-      Deno.env.get("PROJECT_URL")!,
-      Deno.env.get("SERVICE_ROLE_KEY")!
-    );
+  const results: any[] = [];
+  let nextUrl =
+    `https://graph.facebook.com/v20.0/${wabaId}/message_templates` +
+    `?limit=200&access_token=${token}`;
 
-    const body = await req.json().catch(() => ({}));
-    const organization_id = body?.organization_id as string | undefined;
-    const sub_organization_id = (body?.sub_organization_id ?? null) as string | null;
-
-    if (!organization_id) {
-      return new Response(JSON.stringify({ error: "organization_id required" }), {
-        status: 400,
-        headers: corsHeaders,
-      });
-    }
-
-    // 1) Load WhatsApp settings (must have waba + token)
-    let settingsQuery = supabase
-      .from("whatsapp_settings")
-      .select("whatsapp_business_id, api_token")
-      .eq("organization_id", organization_id)
-      .eq("is_active", true);
-
-    if (sub_organization_id) settingsQuery = settingsQuery.eq("sub_organization_id", sub_organization_id);
-    else settingsQuery = settingsQuery.is("sub_organization_id", null);
-
-    const { data: settings, error: settingsError } = await settingsQuery.single();
-    if (settingsError || !settings?.whatsapp_business_id || !settings?.api_token) {
-      return new Response(JSON.stringify({ error: "WhatsApp settings not found/incomplete" }), {
-        status: 400,
-        headers: corsHeaders,
-      });
-    }
-
-    const wabaId = settings.whatsapp_business_id;
-    const token = settings.api_token;
-
-    // 2) Fetch templates from Meta WABA
-    // Endpoint is /{WABA_ID}/message_templates
-    // (Meta returns template list + status + language + name + id)
-    const url = `https://graph.facebook.com/v20.0/${wabaId}/message_templates?limit=200&access_token=${token}`;
-
-    const res = await fetch(url);
+  for (let i = 0; i < 10; i++) {
+    const res = await fetch(nextUrl);
     const json = await res.json().catch(() => null);
 
     if (!res.ok) {
-      return new Response(JSON.stringify({ error: "Meta fetch failed", meta: json }), {
-        status: 502,
-        headers: corsHeaders,
+      const err: any = new Error("Meta fetch failed");
+      err.meta = json;
+      throw err;
+    }
+
+    if (Array.isArray(json?.data)) {
+      results.push(...json.data);
+    }
+
+    if (!json?.paging?.next) break;
+    nextUrl = json.paging.next;
+  }
+
+  return results;
+}
+
+/* ------------------------------------------------------------------ */
+/* HANDLER                                                            */
+/* ------------------------------------------------------------------ */
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse(405, { error: "Method not allowed" });
+  }
+
+  try {
+    const PROJECT_URL = Deno.env.get("PROJECT_URL");
+    const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY");
+
+    if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
+      return jsonResponse(500, {
+        error: "Missing PROJECT_URL or SERVICE_ROLE_KEY",
       });
     }
 
-    const metaTemplates: any[] = Array.isArray(json?.data) ? json.data : [];
+    const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false },
+    });
 
-    // 3) Pull our templates to match by (name+language) and update
-    const { data: localTemplates, error: localErr } = await supabase
+    const body = await req.json().catch(() => ({}));
+    const organization_id = body?.organization_id as string | undefined;
+    const sub_organization_id =
+      (body?.sub_organization_id ?? null) as string | null;
+
+    if (!organization_id) {
+      return jsonResponse(400, { error: "organization_id required" });
+    }
+
+    /* =========================================================
+       1️⃣ LOAD WHATSAPP SETTINGS (SUB-ORG → ORG FALLBACK)
+    ========================================================= */
+    let settings: {
+      whatsapp_business_id: string | null;
+      api_token: string | null;
+    } | null = null;
+
+    // Try sub-organization settings first
+    if (sub_organization_id) {
+      const { data } = await supabase
+        .from("whatsapp_settings")
+        .select("whatsapp_business_id, api_token")
+        .eq("organization_id", organization_id)
+        .eq("sub_organization_id", sub_organization_id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      settings = data ?? null;
+    }
+
+    // Fallback to organization-level
+    if (!settings) {
+      const { data } = await supabase
+        .from("whatsapp_settings")
+        .select("whatsapp_business_id, api_token")
+        .eq("organization_id", organization_id)
+        .is("sub_organization_id", null)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      settings = data ?? null;
+    }
+
+    if (!settings?.whatsapp_business_id || !settings?.api_token) {
+      return jsonResponse(400, {
+        error: "Active WhatsApp settings not found",
+      });
+    }
+
+    const wabaId = String(settings.whatsapp_business_id);
+    const token = String(settings.api_token);
+
+    /* =========================================================
+       2️⃣ FETCH META TEMPLATES
+    ========================================================= */
+    let metaTemplates: any[] = [];
+    try {
+      metaTemplates = await fetchAllMetaTemplates({ wabaId, token });
+    } catch (e: any) {
+      return jsonResponse(502, {
+        error: "Meta fetch failed",
+        meta: e?.meta ?? String(e),
+      });
+    }
+
+    /* =========================================================
+       3️⃣ LOAD LOCAL TEMPLATES (SCOPED)
+    ========================================================= */
+    let localQuery = supabase
       .from("whatsapp_templates")
       .select("id, name, language, meta_template_id, status")
       .eq("organization_id", organization_id);
 
+    if (sub_organization_id) {
+      localQuery = localQuery.eq(
+        "sub_organization_id",
+        sub_organization_id,
+      );
+    } else {
+      localQuery = localQuery.is("sub_organization_id", null);
+    }
+
+    const { data: locals, error: localErr } = await localQuery;
+
     if (localErr) {
-      return new Response(JSON.stringify({ error: "DB read failed", db: localErr }), {
-        status: 500,
-        headers: corsHeaders,
-      });
+      return jsonResponse(500, { error: "DB read failed", db: localErr });
+    }
+
+    /* =========================================================
+       4️⃣ MATCH & PREPARE SAFE UPDATES
+    ========================================================= */
+    const metaById = new Map<string, any>();
+    const metaByNameLang = new Map<string, any>();
+
+    for (const mt of metaTemplates) {
+      const metaId = mt?.id ? String(mt.id) : null;
+      const name = String(mt?.name ?? "");
+      const lang = String(mt?.language ?? mt?.languages?.[0]?.code ?? "");
+
+      if (metaId) metaById.set(metaId, mt);
+      if (name && lang) metaByNameLang.set(`${name}::${lang}`, mt);
     }
 
     const updates: any[] = [];
-    for (const lt of localTemplates ?? []) {
-      const match = metaTemplates.find((mt) => {
-        const mtName = String(mt?.name ?? "");
-        const mtLang = String(mt?.language ?? mt?.languages?.[0]?.code ?? "");
-        return mtName === lt.name && mtLang === lt.language;
-      });
+    let matched = 0;
+
+    for (const lt of locals ?? []) {
+      const currentMetaId = lt.meta_template_id
+        ? String(lt.meta_template_id)
+        : null;
+
+      let match: any | null = null;
+
+      if (currentMetaId && metaById.has(currentMetaId)) {
+        match = metaById.get(currentMetaId);
+      } else {
+        const key = `${String(lt.name)}::${String(lt.language)}`;
+        match = metaByNameLang.get(key) ?? null;
+      }
 
       if (!match) continue;
+      matched++;
 
       const newStatus = mapStatus(match.status);
-      const metaId = match.id ? String(match.id) : null;
+      const metaId = match?.id ? String(match.id) : null;
+      const nextMetaId = currentMetaId ?? metaId;
 
-      // Update only if changed / missing meta id
-      if (lt.status !== newStatus || (!lt.meta_template_id && metaId)) {
+      if (lt.status !== newStatus || (!currentMetaId && nextMetaId)) {
         updates.push({
           id: lt.id,
           status: newStatus,
-          meta_template_id: lt.meta_template_id ?? metaId,
+          meta_template_id: nextMetaId,
           updated_at: new Date().toISOString(),
         });
       }
     }
 
-    if (updates.length) {
-      const { error: upErr } = await supabase.from("whatsapp_templates").upsert(updates);
-      if (upErr) {
-        return new Response(JSON.stringify({ error: "DB update failed", db: upErr }), {
-          status: 500,
-          headers: corsHeaders,
-        });
-      }
+    /* =========================================================
+       5️⃣ APPLY UPDATES
+    ========================================================= */
+    if (updates.length > 0) {
+      for (const row of updates) {
+        const { error } = await supabase
+          .from("whatsapp_templates")
+          .update({
+            status: row.status,
+            meta_template_id: row.meta_template_id,
+            updated_at: row.updated_at,
+          })
+          .eq("id", row.id);
+      
+        if (error) {
+          return jsonResponse(500, {
+            error: "DB update failed",
+            db: error,
+          });
+        }
+      }      
     }
 
-    return new Response(JSON.stringify({ success: true, updated: updates.length }), {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    return jsonResponse(200, {
+      success: true,
+      meta_count: metaTemplates.length,
+      local_count: locals?.length ?? 0,
+      matched,
+      updated: updates.length,
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: "Unexpected error", details: String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    return jsonResponse(500, {
+      error: "Unexpected error",
+      details: String(e),
     });
   }
 });
