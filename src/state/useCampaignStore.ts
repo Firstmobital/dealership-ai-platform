@@ -268,6 +268,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       throw error;
     }
 
-    await get().fetchCampaignMessages(campaignId);
+    await get().fetchCampaigns(
+      get().campaigns.find(c => c.id === campaignId)?.organization_id!
+    );    
   },
 }));
