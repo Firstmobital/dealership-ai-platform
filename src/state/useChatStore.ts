@@ -1,5 +1,7 @@
 // src/state/useChatStore.ts
 
+// src/state/useChatStore.ts
+
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
@@ -37,16 +39,34 @@ type ChatState = {
   filter: ConversationFilter;
   loading: boolean;
 
+  // 🔍 Phase 1B — Search & Filters
+  search: string;
+  intentFilter: string | null;
+  assignedFilter: string | null;
+
   aiToggle: Record<string, boolean>;
   unread: Record<string, number>;
 
-  fetchConversations: (organizationId: string) => Promise<void>;
+  fetchConversations: (
+    organizationId: string,
+    params?: {
+      search?: string;
+      intent?: string | null;
+      assignedTo?: string | null;
+    }
+  ) => Promise<void>;
+
   fetchMessages: (conversationId: string) => Promise<void>;
 
   initRealtime: (organizationId: string) => void;
 
   setActiveConversation: (conversationId: string | null) => void;
   setFilter: (filter: ConversationFilter) => void;
+
+  // 🔍 setters
+  setSearch: (q: string) => void;
+  setIntentFilter: (intent: string | null) => void;
+  setAssignedFilter: (userId: string | null) => void;
 
   toggleAI: (conversationId: string, enabled: boolean) => Promise<void>;
 
@@ -63,8 +83,6 @@ type ChatState = {
 /* ========================================================================== */
 
 function normalizeConversation(row: any): Conversation {
-  // Your select uses `contacts(*)` so Supabase returns `contacts` as an object/array.
-  // Normalize to a predictable `contact` field (safe for UI).
   const contact = row?.contacts
     ? Array.isArray(row.contacts)
       ? row.contacts[0] ?? null
@@ -82,13 +100,12 @@ async function fetchContactForConversation(conversation: any) {
     const contactId = conversation?.contact_id;
     if (!contactId) return null;
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("contacts")
       .select("id, phone, name, first_name, last_name")
       .eq("id", contactId)
       .maybeSingle();
 
-    if (error) return null;
     return data ?? null;
   } catch {
     return null;
@@ -107,26 +124,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
   filter: "all",
   loading: false,
 
+  // 🔍 Phase 1B
+  search: "",
+  intentFilter: null,
+  assignedFilter: null,
+
   aiToggle: {},
   unread: {},
 
   /* -------------------------------------------------------------------------- */
-  /* FETCH CONVERSATIONS                                                        */
+  /* FETCH CONVERSATIONS (WITH SEARCH + FILTERS)                                */
   /* -------------------------------------------------------------------------- */
-  fetchConversations: async (organizationId: string) => {
+  fetchConversations: async (organizationId, params) => {
     const { activeSubOrg } = useSubOrganizationStore.getState();
+    const search = (params?.search ?? "").trim();
+    const intent = params?.intent ?? null;
+    const assignedTo = params?.assignedTo ?? null;
 
     set({ loading: true });
 
-    // ✅ All divisions = DO NOT filter by sub_organization_id at all
-    // ✅ Specific division = filter by that division id
     let query = supabase
       .from("conversations")
       .select("*, contacts(*)")
       .eq("organization_id", organizationId)
-      .order("last_message_at", { ascending: false });
+      .order("last_message_at", { ascending: false })
+      .limit(200);
 
+    // Division scoping
     if (activeSubOrg) query = query.eq("sub_organization_id", activeSubOrg.id);
+
+    // Intent filter
+    if (intent) query = query.eq("intent", intent);
+
+    // Assigned filter
+    if (assignedTo) query = query.eq("assigned_to", assignedTo);
+
+    // Search by phone or name
+    if (search) {
+      const digits = search.replace(/\D/g, "");
+      const nameTerm = `%${search}%`;
+
+      if (digits) {
+        query = query.or(
+          `contacts.name.ilike.${nameTerm},contacts.phone.ilike.%${digits}%`
+        );
+      } else {
+        query = query.or(`contacts.name.ilike.${nameTerm}`);
+      }
+    }
 
     const { data, error } = await query;
 
@@ -152,9 +197,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* -------------------------------------------------------------------------- */
   /* FETCH MESSAGES                                                             */
   /* -------------------------------------------------------------------------- */
-  fetchMessages: async (conversationId: string) => {
-    // ✅ IMPORTANT: messages should be fetched only by conversation_id
-    // because chat ownership is by conversation, not by selected division filter.
+  fetchMessages: async (conversationId) => {
     const { data, error } = await supabase
       .from("messages")
       .select("*")
@@ -175,9 +218,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* REALTIME (SINGLE SOURCE OF TRUTH)                                          */
+  /* REALTIME                                                                  */
   /* -------------------------------------------------------------------------- */
-  initRealtime: (organizationId: string) => {
+  initRealtime: (organizationId) => {
     if (realtimeInitialized) return;
     realtimeInitialized = true;
 
@@ -193,26 +236,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           filter: `organization_id=eq.${organizationId}`,
         },
         (payload) => {
-          // NOTE: payload.new does NOT include joined contacts, so we enrich it.
           const convRaw = payload.new as any;
-
-          // ✅ Read activeSubOrg dynamically (division can change after initRealtime)
           const { activeSubOrg } = useSubOrganizationStore.getState();
 
-          // Chats rule:
-          // - If a division selected → only accept that division's conversations
-          // - If ALL divisions selected → accept everything under org
           if (activeSubOrg && convRaw.sub_organization_id !== activeSubOrg.id)
             return;
 
-          const existing = get().conversations;
-          if (existing.some((c) => c.id === convRaw.id)) return;
+          if (get().conversations.some((c) => c.id === convRaw.id)) return;
 
-          // Enrich contact asynchronously
           void (async () => {
             const contact = await fetchContactForConversation(convRaw);
             const conv = normalizeConversation({ ...convRaw, contacts: contact });
-
             set({ conversations: [conv, ...get().conversations] });
           })();
         }
@@ -229,18 +263,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const msg = payload.new as Message;
           const existing = get().messages[msg.conversation_id] ?? [];
 
-          // 🔒 HARD DEDUPE
           if (existing.some((m) => m.id === msg.id)) return;
 
-          // ✅ If division selected, we only want unread counts / UI updates
-          // for conversations that are currently visible (division filtered).
           const { activeSubOrg } = useSubOrganizationStore.getState();
           if (activeSubOrg) {
             const conv = get().conversations.find(
               (c) => c.id === msg.conversation_id
             );
-            // If that conversation isn't in the current list, ignore
-            // (prevents cross-division noise).
             if (!conv) return;
           }
 
@@ -268,7 +297,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* -------------------------------------------------------------------------- */
   setActiveConversation: (conversationId) => {
     set({ activeConversationId: conversationId });
-
     if (conversationId) {
       set((state) => ({
         unread: { ...state.unread, [conversationId]: 0 },
@@ -277,6 +305,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setFilter: (filter) => set({ filter }),
+
+  // 🔍 Phase 1B setters
+  setSearch: (q) => set({ search: q }),
+  setIntentFilter: (intent) => set({ intentFilter: intent }),
+  setAssignedFilter: (userId) => set({ assignedFilter: userId }),
 
   /* -------------------------------------------------------------------------- */
   /* TOGGLE AI                                                                  */
@@ -304,16 +337,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const text = payload.text?.trim() ?? "";
     if (!text) return { noReply: false };
 
-    const sender = payload.sender ?? "user";
-    const channel = payload.channel ?? "web";
-
-    if (channel === "whatsapp") {
+    if (payload.channel === "whatsapp") {
       console.warn("WhatsApp messages cannot be sent from frontend");
       return { noReply: false };
     }
 
-    // ✅ Always send messages under the SAME division as the conversation.
-    // This is critical when "All divisions" is selected (activeSubOrg = null).
     const conv = get().conversations.find((c) => c.id === conversationId);
     const subOrgId =
       (conv as any)?.sub_organization_id ??
@@ -322,33 +350,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     await supabase.from("messages").insert({
       conversation_id: conversationId,
-      sender,
+      sender: payload.sender ?? "user",
       message_type: payload.message_type ?? "text",
       text,
-      channel,
+      channel: payload.channel ?? "web",
       sub_organization_id: subOrgId,
     });
 
-    // realtime will deliver the message
-
     const aiEnabled = get().aiToggle[conversationId];
-    if (!aiEnabled || sender !== "user") return { noReply: false };
+    if (!aiEnabled) return { noReply: false };
 
-    const { data, error } = await supabase.functions.invoke("ai-handler", {
-      body: {
-        conversation_id: conversationId,
-        user_message: text,
-        mode: "reply",
-      },
+    const { data } = await supabase.functions.invoke("ai-handler", {
+      body: { conversation_id: conversationId, user_message: text },
     });
 
-    if (error) {
-      console.error("ai-handler error", error);
-      return { noReply: false };
-    }
-
     if (data?.no_reply) return { noReply: true };
-
     return { noReply: false };
   },
 
@@ -356,18 +372,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* FOLLOW-UP SUGGESTION                                                       */
   /* -------------------------------------------------------------------------- */
   suggestFollowup: async (conversationId) => {
-    const { data, error } = await supabase.functions.invoke("ai-handler", {
+    const { data } = await supabase.functions.invoke("ai-handler", {
       body: {
         conversation_id: conversationId,
         user_message: "Suggest follow-up",
         mode: "suggest_followup",
       },
     });
-
-    if (error) {
-      console.error("suggestFollowup error", error);
-      return "";
-    }
 
     return (data?.suggestion ?? "").toString();
   },

@@ -1,5 +1,6 @@
 // src/modules/chats/components/ChatSidebarItem.tsx
-// FULL + FINAL — Tier 3
+// src/modules/chats/components/ChatSidebarItem.tsx
+// FULL + FINAL — Phase 1B (Intent Tagging UI)
 // Bright CRM sidebar items (PHONE-FIRST)
 
 import type { Conversation } from "../../../types/database";
@@ -40,6 +41,49 @@ export function ChatSidebarItem({
         Internal
       </span>
     );
+  })();
+
+  /* -------------------------------------------------------
+   * INTENT BADGE — Phase 1B
+   * ------------------------------------------------------- */
+  const intent = conversation.intent ?? "general";
+
+  const intentBadge = (() => {
+    const base =
+      "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize";
+
+    switch (intent) {
+      case "sales":
+        return (
+          <span className={`${base} bg-emerald-50 text-emerald-700`}>
+            Sales
+          </span>
+        );
+      case "service":
+        return (
+          <span className={`${base} bg-blue-50 text-blue-700`}>
+            Service
+          </span>
+        );
+      case "finance":
+        return (
+          <span className={`${base} bg-purple-50 text-purple-700`}>
+            Finance
+          </span>
+        );
+      case "accessories":
+        return (
+          <span className={`${base} bg-amber-50 text-amber-700`}>
+            Accessories
+          </span>
+        );
+      default:
+        return (
+          <span className={`${base} bg-slate-100 text-slate-600`}>
+            General
+          </span>
+        );
+    }
   })();
 
   /* -------------------------------------------------------
@@ -91,9 +135,10 @@ export function ChatSidebarItem({
         </span>
       </div>
 
-      {/* RIGHT — Channel + unread */}
+      {/* RIGHT — Badges + unread */}
       <div className="flex flex-col items-end gap-1">
         {channelBadge}
+        {intentBadge}
 
         {unreadCount > 0 && (
           <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-medium text-white">

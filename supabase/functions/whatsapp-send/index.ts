@@ -1,5 +1,3 @@
-// supabase/functions/whatsapp-send/index.ts
-
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
@@ -35,6 +33,7 @@ type MessageType =
 type SendBody = {
   organization_id?: string;
   sub_organization_id?: string | null;
+  contact_id?: string | null; // ✅ IMPORTANT (campaign + chat linking)
   to?: string;
   type?: MessageType;
 
@@ -62,57 +61,25 @@ async function resolveWhatsappSettings(
   orgId: string,
   subOrgId: string | null
 ) {
-  // 1) Try sub-org override first
   if (subOrgId) {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("whatsapp_settings")
       .select("*")
       .eq("organization_id", orgId)
       .eq("sub_organization_id", subOrgId)
       .maybeSingle();
 
-    if (error) {
-      console.error("[whatsapp-send] sub-org settings error:", error);
-    }
-
-    if (data && data.is_active !== false) {
-      return data;
-    }
-
-    // 2) Fallback → org-level
-    const { data: orgData, error: orgError } = await supabase
-      .from("whatsapp_settings")
-      .select("*")
-      .eq("organization_id", orgId)
-      .is("sub_organization_id", null)
-      .maybeSingle();
-
-    if (orgError) {
-      console.error("[whatsapp-send] org-level fallback error:", orgError);
-    }
-
-    if (orgData && orgData.is_active !== false) {
-      return orgData;
-    }
-
-    return null;
+    if (data && data.is_active !== false) return data;
   }
 
-  // 3) If no sub-org → fetch org-level only
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from("whatsapp_settings")
     .select("*")
     .eq("organization_id", orgId)
     .is("sub_organization_id", null)
     .maybeSingle();
 
-  if (error) {
-    console.error("[whatsapp-send] org-level settings error:", error);
-  }
-
-  if (data && data.is_active !== false) {
-    return data;
-  }
+  if (data && data.is_active !== false) return data;
 
   return null;
 }
@@ -123,10 +90,7 @@ async function resolveWhatsappSettings(
 
 function buildWhatsappPayload(body: SendBody) {
   const { type, to } = body;
-
-  if (!type || !to) {
-    throw new Error("Missing type or to");
-  }
+  if (!type || !to) throw new Error("Missing type or to");
 
   const payload: any = {
     messaging_product: "whatsapp",
@@ -136,9 +100,7 @@ function buildWhatsappPayload(body: SendBody) {
 
   switch (type) {
     case "text":
-      if (!body.text?.trim()) {
-        throw new Error("Missing text for type=text");
-      }
+      if (!body.text?.trim()) throw new Error("Missing text");
       return { ...payload, text: { body: body.text.trim() } };
 
     case "template":
@@ -187,7 +149,6 @@ function buildWhatsappPayload(body: SendBody) {
       };
 
     case "typing_on":
-      // Cloud API doesn't support typing indicators (Messenger-only)
       return null;
 
     default:
@@ -211,76 +172,39 @@ serve(async (req: Request) => {
     const body = (await req.json()) as SendBody;
 
     const orgId = body.organization_id?.trim();
-    const subOrgId =
-      body.sub_organization_id === undefined
-        ? null
-        : body.sub_organization_id;
+    const subOrgId = body.sub_organization_id ?? null;
+    const contactId = body.contact_id ?? null;
+    const type = body.type;
+    const to = body.to?.trim();
 
-    if (!orgId) {
+    if (!orgId || !type || !to) {
       return new Response(
-        JSON.stringify({ error: "Missing organization_id" }),
+        JSON.stringify({ error: "Missing required fields" }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    const type = body.type;
-    const to = body.to?.trim();
-
-    if (!type) {
-      return new Response(JSON.stringify({ error: "Missing type" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    // typing_on is NO-OP
     if (type === "typing_on") {
-      return new Response(
-        JSON.stringify({ success: true, message: "typing_on ignored" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
 
-    if (!to) {
-      return new Response(JSON.stringify({ error: "Missing to" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    /* ===========================
-       RESOLVE SETTINGS
-    ============================ */
+    /* ---------------- RESOLVE SETTINGS ---------------- */
 
     const settings = await resolveWhatsappSettings(orgId, subOrgId);
 
-    if (
-      !settings ||
-      !settings.api_token ||
-      !settings.whatsapp_phone_id
-    ) {
+    if (!settings?.api_token || !settings?.whatsapp_phone_id) {
       return new Response(
-        JSON.stringify({
-          error:
-            "No WhatsApp settings found (api_token or whatsapp_phone_id missing).",
-        }),
+        JSON.stringify({ error: "WhatsApp settings not found" }),
         { status: 400, headers: { "Content-Type": "application/json" } }
       );
     }
 
     const waPayload = buildWhatsappPayload(body);
-
     if (!waPayload) {
-      // typing_on no-op safeguard
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
 
-    /* ===========================
-       SEND TO META
-    ============================ */
+    /* ---------------- SEND TO META ---------------- */
 
     const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
 
@@ -296,31 +220,63 @@ serve(async (req: Request) => {
     const metaResponse = await waRes.json().catch(() => null);
 
     if (!waRes.ok) {
-      console.error("[whatsapp-send] Meta API error:", metaResponse);
       return new Response(
-        JSON.stringify({
-          error: "Failed to send WhatsApp message",
-          meta_status: waRes.status,
-          meta_response: metaResponse,
-        }),
+        JSON.stringify({ error: "Meta send failed", metaResponse }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }
 
+    const waMessageId =
+      metaResponse?.messages?.[0]?.id ??
+      metaResponse?.message_id ??
+      null;
+
+    /* ===========================================================================
+       INSERT OUTBOUND MESSAGE INTO CHAT
+    =========================================================================== */
+
+    if (contactId) {
+      const { data: conversation } = await supabase
+        .from("conversations")
+        .select("id, sub_organization_id")
+        .eq("organization_id", orgId)
+        .eq("contact_id", contactId)
+        .eq("channel", "whatsapp")
+        .order("last_message_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (conversation) {
+        await supabase.from("messages").insert({
+          conversation_id: conversation.id,
+          sender: "bot",
+          channel: "whatsapp",
+          message_type: type,
+          text:
+          body.rendered_text ??
+            (type === "template"
+              ? `Template: ${body.template_name}`
+              : body.text ?? null),
+          whatsapp_message_id: waMessageId,
+          sub_organization_id: conversation.sub_organization_id,
+        });
+
+        await supabase
+          .from("conversations")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", conversation.id);
+      }
+    }
+
     return new Response(
-      JSON.stringify({
-        success: true,
-        meta_status: waRes.status,
-        meta_response: metaResponse,
-      }),
+      JSON.stringify({ success: true, meta_response: metaResponse }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("[whatsapp-send] Fatal error:", err);
+    console.error("[whatsapp-send] Fatal:", err);
     return new Response(
       JSON.stringify({ error: "Internal Server Error" }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
 });
-
