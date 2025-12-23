@@ -306,3 +306,33 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 - Added campaign_messages reply attribution (replied_at, reply_whatsapp_message_id, reply_text) and linked inbound replies via context.id.
 - Removed verify_token from frontend WhatsApp settings (verify token is env-only now).
 - Improved Campaign upload to accept CSV/XLSX (phone column required; variables mapped from remaining columns).
+
+## 2025-12-23 — Phase 2.3: Campaign Template Media UI (Finalization)
+
+- Fixed broken JSX structure in `CampaignsModule.tsx` where create-mode UI blocks were rendered outside the component `return`, causing build failures.
+- Stabilized template selection logic using a single derived `selectedTemplate` reference.
+- Added explicit `needsMedia` guard based on `whatsapp_templates.header_type` (IMAGE, DOCUMENT).
+
+- Finalized template-level media attachment UI:
+  - Media section renders only for IMAGE/DOCUMENT templates.
+  - Displays “Already attached ✅” state when `header_media_url` exists.
+  - Added preview link for attached media.
+  - Added inline image preview for IMAGE templates.
+  - Added clear “Attach media / Replace media” action.
+
+- Implemented reliable media upload workflow:
+  - IMAGE templates upload to `whatsapp-template-images` bucket.
+  - DOCUMENT templates upload to `whatsapp-template-documents` bucket.
+  - Media stored once per template (not per campaign).
+  - On upload success, updates `whatsapp_templates.header_media_url`,
+    `header_media_mime`, and `updated_at`.
+
+- Added upload UX states:
+  - Selected file name display.
+  - Upload-in-progress indicator.
+  - Success and error feedback.
+
+- Refreshed approved templates list post-upload to keep Campaign UI in sync.
+
+Result: Phase 2.3 is compile-safe, media UX-complete, and locked.  
+No database migrations, RLS changes, or Edge Function updates were required.

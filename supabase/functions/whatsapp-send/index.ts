@@ -1,3 +1,4 @@
+// supabase/functions/whatsapp-send/index.ts
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
@@ -44,30 +45,20 @@ type SendBody = {
   template_name?: string;
   template_language?: string;
   template_variables?: string[];
+  template_components?: any[] | null; // ← Phase 2.4
 
-  // media (non-template)
+  // direct media
   image_url?: string;
   video_url?: string;
   audio_url?: string;
   document_url?: string;
   filename?: string;
 
-  // internal (for chat logging)
-  rendered_text?: string;
+  // logging helpers (Phase 2.4)
+  message_type?: MessageType;
+  media_url?: string | null;
+  mime_type?: string | null;
 };
-
-/* ===========================================================================
-   HELPERS
-=========================================================================== */
-
-function filenameFromUrl(url: string) {
-  try {
-    const u = new URL(url);
-    return u.pathname.split("/").pop() || "document";
-  } catch {
-    return "document";
-  }
-}
 
 /* ===========================================================================
    RESOLVE SETTINGS
@@ -75,7 +66,7 @@ function filenameFromUrl(url: string) {
 
 async function resolveWhatsappSettings(
   orgId: string,
-  subOrgId: string | null
+  subOrgId: string | null,
 ) {
   if (subOrgId) {
     const { data } = await supabase
@@ -96,7 +87,6 @@ async function resolveWhatsappSettings(
     .maybeSingle();
 
   if (data && data.is_active !== false) return data;
-
   return null;
 }
 
@@ -104,7 +94,7 @@ async function resolveWhatsappSettings(
    BUILD WHATSAPP PAYLOAD
 =========================================================================== */
 
-async function buildWhatsappPayload(body: SendBody) {
+function buildWhatsappPayload(body: SendBody) {
   const { type, to } = body;
   if (!type || !to) throw new Error("Missing type or to");
 
@@ -120,64 +110,10 @@ async function buildWhatsappPayload(body: SendBody) {
     return { ...payload, text: { body: body.text.trim() } };
   }
 
-  /* ---------------- TEMPLATE (WITH MEDIA HEADER) ---------------- */
+  /* ---------------- TEMPLATE (Phase 2.4) ---------------- */
   if (type === "template") {
     if (!body.template_name || !body.template_language) {
       throw new Error("Missing template_name or template_language");
-    }
-
-    // 🔑 Load template to check media header
-    const { data: template } = await supabase
-      .from("whatsapp_templates")
-      .select(
-        "header_type, header_media_url, header_media_mime"
-      )
-      .eq("name", body.template_name)
-      .maybeSingle();
-
-    const components: any[] = [];
-
-    // HEADER MEDIA (auto-injected)
-    if (
-      template?.header_media_url &&
-      (template.header_type === "IMAGE" ||
-        template.header_type === "DOCUMENT")
-    ) {
-      if (template.header_type === "IMAGE") {
-        components.push({
-          type: "header",
-          parameters: [
-            {
-              type: "image",
-              image: { link: template.header_media_url },
-            },
-          ],
-        });
-      } else {
-        components.push({
-          type: "header",
-          parameters: [
-            {
-              type: "document",
-              document: {
-                link: template.header_media_url,
-                filename: filenameFromUrl(template.header_media_url),
-              },
-            },
-          ],
-        });
-      }
-    }
-
-    // BODY VARIABLES
-    if (body.template_variables?.length) {
-      components.push({
-        type: "body",
-        parameters: body.template_variables.map((v) => ({
-          type: "text",
-          text: String(v ?? ""),
-        })),
-      });
     }
 
     return {
@@ -185,7 +121,7 @@ async function buildWhatsappPayload(body: SendBody) {
       template: {
         name: body.template_name,
         language: { code: body.template_language },
-        components,
+        components: body.template_components ?? [],
       },
     };
   }
@@ -212,7 +148,7 @@ async function buildWhatsappPayload(body: SendBody) {
       ...payload,
       document: {
         link: body.document_url,
-        filename: body.filename || undefined,
+        filename: body.filename ?? "Document",
       },
     };
   }
@@ -221,7 +157,6 @@ async function buildWhatsappPayload(body: SendBody) {
 
   throw new Error(`Unsupported type: ${type}`);
 }
-
 /* ===========================================================================
    MAIN HANDLER
 =========================================================================== */
@@ -231,7 +166,6 @@ serve(async (req: Request) => {
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ error: "Method not allowed" }), {
         status: 405,
-        headers: { "Content-Type": "application/json" },
       });
     }
 
@@ -246,7 +180,7 @@ serve(async (req: Request) => {
     if (!orgId || !type || !to) {
       return new Response(
         JSON.stringify({ error: "Missing required fields" }),
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -254,22 +188,18 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
 
-    /* ---------------- SETTINGS ---------------- */
-
     const settings = await resolveWhatsappSettings(orgId, subOrgId);
     if (!settings?.api_token || !settings?.whatsapp_phone_id) {
       return new Response(
         JSON.stringify({ error: "WhatsApp settings not found" }),
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const waPayload = await buildWhatsappPayload(body);
+    const waPayload = buildWhatsappPayload(body);
     if (!waPayload) {
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
-
-    /* ---------------- SEND TO META ---------------- */
 
     const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
 
@@ -287,7 +217,7 @@ serve(async (req: Request) => {
     if (!waRes.ok) {
       return new Response(
         JSON.stringify({ error: "Meta send failed", metaResponse }),
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -296,7 +226,7 @@ serve(async (req: Request) => {
       metaResponse?.message_id ??
       null;
 
-    /* ---------------- CHAT LOGGING ---------------- */
+    /* ---------------- CHAT LOGGING (FIXED) ---------------- */
 
     if (contactId) {
       const { data: conversation } = await supabase
@@ -312,12 +242,13 @@ serve(async (req: Request) => {
           conversation_id: conversation.id,
           sender: "bot",
           channel: "whatsapp",
-          message_type: type,
-          text:
-            body.rendered_text ??
-            (type === "template"
-              ? `Template: ${body.template_name}`
-              : body.text ?? null),
+
+          message_type: body.message_type ?? type,
+          text: type === "text" ? body.text ?? null : null,
+
+          media_url: body.media_url ?? null,
+          mime_type: body.mime_type ?? null,
+
           whatsapp_message_id: waMessageId,
           sub_organization_id: conversation.sub_organization_id,
         });
@@ -331,13 +262,13 @@ serve(async (req: Request) => {
 
     return new Response(
       JSON.stringify({ success: true, meta_response: metaResponse }),
-      { status: 200 }
+      { status: 200 },
     );
   } catch (err) {
     console.error("[whatsapp-send] Fatal:", err);
     return new Response(
       JSON.stringify({ error: "Internal Server Error" }),
-      { status: 500 }
+      { status: 500 },
     );
   }
 });

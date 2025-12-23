@@ -1,4 +1,5 @@
 // supabase/functions/campaign-dispatch/index.ts
+// supabase/functions/campaign-dispatch/index.ts
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -71,6 +72,11 @@ type WhatsappTemplate = {
   language: string;
   status: "approved" | "pending" | "rejected";
   body: string | null;
+
+  // Phase 2.4
+  header_type: "NONE" | "TEXT" | "IMAGE" | "DOCUMENT" | string;
+  header_media_url: string | null;
+  header_media_mime: string | null;
 };
 
 type DispatchMode = "scheduled" | "immediate";
@@ -125,6 +131,46 @@ function variablesToArray(vars: Record<string, unknown> | null): string[] {
 }
 
 /* ============================================================
+   PHASE 2.4 — TEMPLATE HEADER COMPONENTS
+============================================================ */
+function buildTemplateHeaderComponents(template: WhatsappTemplate) {
+  const headerType = String(template.header_type ?? "").toUpperCase();
+
+  if (headerType === "IMAGE") {
+    return [
+      {
+        type: "header",
+        parameters: [
+          {
+            type: "image",
+            image: { link: template.header_media_url },
+          },
+        ],
+      },
+    ];
+  }
+
+  if (headerType === "DOCUMENT") {
+    return [
+      {
+        type: "header",
+        parameters: [
+          {
+            type: "document",
+            document: {
+              link: template.header_media_url,
+              filename: "Document",
+            },
+          },
+        ],
+      },
+    ];
+  }
+
+  return [];
+}
+
+/* ============================================================
    TEMPLATE TEXT RENDER (best-effort for UI)
    - Uses template.body with {{1}}, {{2}}... placeholders
    - Pulls values from contact based on campaign.variable_mapping
@@ -146,12 +192,12 @@ function resolveTemplateText(
 }
 
 /* ============================================================
-   FETCH TEMPLATE (includes body)
+   FETCH TEMPLATE (includes body + media)
 ============================================================ */
 async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
   const { data, error } = await supabaseAdmin
     .from("whatsapp_templates")
-    .select("name, language, status, body")
+    .select("name, language, status, body, header_type, header_media_url, header_media_mime")
     .eq("id", templateId)
     .single();
 
@@ -160,20 +206,15 @@ async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
 
   return data as WhatsappTemplate;
 }
-
 /* ============================================================
    SAFE CONTACT UPSERT (C1 PATCH)
-   - Ensures we NEVER create duplicate contacts for same org+phone
-   - Requires UNIQUE constraint/index on (organization_id, phone)
 ============================================================ */
 async function upsertContactByPhone(params: {
   organizationId: string;
   phoneDigits: string; // "91XXXXXXXXXX"
   name?: string | null;
-  subOrganizationId?: string | null; // if your contacts table has it, otherwise ignored
+  subOrganizationId?: string | null; // ignored if not in schema
 }) {
-  // Note: your contacts table (as shared) does NOT include sub_organization_id.
-  // So we only use organization_id + phone + name.
   const { data, error } = await supabaseAdmin
     .from("contacts")
     .upsert(
@@ -182,16 +223,10 @@ async function upsertContactByPhone(params: {
         phone: params.phoneDigits,
         name: params.name ?? null,
       },
-      {
-        onConflict: "organization_id,phone",
-      },
+      { onConflict: "organization_id,phone" },
     )
     .select("id, phone, name, first_name, last_name, model")
     .single();
-
-  // If you don't have UNIQUE(organization_id, phone), Supabase will throw.
-  // Add it if needed:
-  //   create unique index if not exists contacts_org_phone_uq on public.contacts(organization_id, phone);
 
   if (error || !data) {
     throw new Error(
@@ -211,17 +246,22 @@ async function upsertContactByPhone(params: {
 
 /* ============================================================
    SEND WHATSAPP TEMPLATE (calls whatsapp-send)
-   - whatsapp-send should create the OUTBOUND message row in chats
 ============================================================ */
 async function sendWhatsappTemplate(params: {
   organizationId: string;
   subOrganizationId: string | null;
-  contactId: string; // ensure exists
+  contactId: string;
   phonePlusE164: string; // "+91..."
   templateName: string;
   language: string;
   variables: string[];
   renderedText: string;
+
+  // Phase 2.4
+  templateComponents?: any[]; // header media etc.
+  mediaUrl?: string | null;
+  mimeType?: string | null;
+  messageType?: "template" | "image" | "document";
 }) {
   const res = await fetch(`${PROJECT_URL}/functions/v1/whatsapp-send`, {
     method: "POST",
@@ -233,11 +273,19 @@ async function sendWhatsappTemplate(params: {
       organization_id: params.organizationId,
       sub_organization_id: params.subOrganizationId,
       contact_id: params.contactId,
-      to: waToFromE164(params.phonePlusE164), // Cloud API expects digits without "+"
+      to: waToFromE164(params.phonePlusE164),
       type: "template",
       template_name: params.templateName,
       template_language: params.language,
       template_variables: params.variables,
+
+      // Phase 2.4 (whatsapp-send will be updated next to actually use these)
+      template_components: params.templateComponents ?? null,
+      message_type: params.messageType ?? "template",
+      media_url: params.mediaUrl ?? null,
+      mime_type: params.mimeType ?? null,
+
+      // keep for now; whatsapp-send currently expects this in some versions
       rendered_text: params.renderedText,
     }),
   });
@@ -316,7 +364,6 @@ async function fetchContact(contactId: string) {
   if (error) return null;
   return data ?? null;
 }
-
 /* ============================================================
    STATUS UPDATES
 ============================================================ */
@@ -343,8 +390,6 @@ async function markFailed(id: string, err: string) {
 }
 
 async function setRenderedText(id: string, renderedText: string) {
-  // safe even if column doesn't exist? -> will error.
-  // You SHOULD have campaign_messages.rendered_text added in Phase 2B.1
   await supabaseAdmin
     .from("campaign_messages")
     .update({ rendered_text: renderedText })
@@ -402,7 +447,6 @@ async function ensureContactForCampaignMessage(params: {
     throw new Error("Invalid phone");
   }
 
-  // upsert contact (safe + deterministic)
   const contact = await upsertContactByPhone({
     organizationId: params.organizationId,
     phoneDigits,
@@ -410,7 +454,6 @@ async function ensureContactForCampaignMessage(params: {
     subOrganizationId: params.subOrganizationId,
   });
 
-  // persist back into campaign_messages (fixes missing/incorrect contact_id + normalizes phone)
   if (params.msg.contact_id !== contact.id || params.msg.phone !== phoneDigits) {
     await setMessageContactAndPhone({
       campaignMessageId: params.msg.id,
@@ -442,7 +485,6 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
     if (orgCount >= ORG_RATE_LIMIT_PER_RUN) continue;
 
     try {
-      // ✅ C1: ensure contact exists (prevents duplicates / missing chats)
       const { contactId, phoneDigits } = await ensureContactForCampaignMessage({
         organizationId: msg.organization_id,
         subOrganizationId: msg.sub_organization_id,
@@ -471,6 +513,22 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         // ignore
       }
 
+      // Phase 2.4: media templates must have media attached
+      const headerType = String(template.header_type ?? "").toUpperCase();
+      const needsMedia = headerType === "IMAGE" || headerType === "DOCUMENT";
+      if (needsMedia && !template.header_media_url) {
+        await markFailed(msg.id, "Missing template media (header_media_url)");
+        continue;
+      }
+
+      const templateComponents = buildTemplateHeaderComponents(template);
+      const messageType =
+        headerType === "IMAGE"
+          ? "image"
+          : headerType === "DOCUMENT"
+          ? "document"
+          : "template";
+
       const waId = await sendWhatsappTemplate({
         organizationId: msg.organization_id,
         subOrganizationId: msg.sub_organization_id,
@@ -480,6 +538,12 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         language: template.language,
         variables: variablesToArray(msg.variables),
         renderedText,
+
+        // Phase 2.4
+        templateComponents,
+        mediaUrl: template.header_media_url,
+        mimeType: template.header_media_mime,
+        messageType,
       });
 
       await markSent(msg.id, waId);
@@ -492,7 +556,6 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
     }
   }
 
-  // If no pending/queued left → complete
   const { count, error } = await supabaseAdmin
     .from("campaign_messages")
     .select("*", { count: "exact", head: true })
@@ -571,7 +634,6 @@ serve(async (req: Request) => {
       if (campaignsProcessed >= MAX_CAMPAIGNS_PER_RUN) break;
       if (!campaign.whatsapp_template_id) continue;
 
-      // Mark sending when first picked up
       if (campaign.status === "scheduled") {
         await markCampaignSending(campaign.id, false);
       }
@@ -586,7 +648,6 @@ serve(async (req: Request) => {
         if (orgCount >= ORG_RATE_LIMIT_PER_RUN) continue;
 
         try {
-          // ✅ C1: ensure contact exists for each campaign_message
           const { contactId, phoneDigits } = await ensureContactForCampaignMessage({
             organizationId: msg.organization_id,
             subOrganizationId: msg.sub_organization_id,
@@ -615,6 +676,22 @@ serve(async (req: Request) => {
             // ignore
           }
 
+          // Phase 2.4: media templates must have media attached
+          const headerType = String(template.header_type ?? "").toUpperCase();
+          const needsMedia = headerType === "IMAGE" || headerType === "DOCUMENT";
+          if (needsMedia && !template.header_media_url) {
+            await markFailed(msg.id, "Missing template media (header_media_url)");
+            continue;
+          }
+
+          const templateComponents = buildTemplateHeaderComponents(template);
+          const messageType =
+            headerType === "IMAGE"
+              ? "image"
+              : headerType === "DOCUMENT"
+              ? "document"
+              : "template";
+
           const waId = await sendWhatsappTemplate({
             organizationId: msg.organization_id,
             subOrganizationId: msg.sub_organization_id,
@@ -624,6 +701,12 @@ serve(async (req: Request) => {
             language: template.language,
             variables: variablesToArray(msg.variables),
             renderedText,
+
+            // Phase 2.4
+            templateComponents,
+            mediaUrl: template.header_media_url,
+            mimeType: template.header_media_mime,
+            messageType,
           });
 
           await markSent(msg.id, waId);
