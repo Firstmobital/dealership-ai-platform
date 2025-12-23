@@ -25,7 +25,7 @@ import { useChatStore } from "./state/useChatStore";
 
 import { Toaster } from "react-hot-toast";
 import DatabasePage from "./modules/database/pages/DatabasePage";
-import AnalyticsPage from "./modules/analytics/pages/AnalyticsPage";
+import AnalyticsPage from "./modules/analytics/pages/WhatsappOverviewPage";
 import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesModule";
 
 
