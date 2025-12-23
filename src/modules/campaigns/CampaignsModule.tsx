@@ -390,55 +390,60 @@ export function CampaignsModule() {
      UI
   ===================================================================== */
   return (
-    <div className="flex h-full gap-6 p-6">
+    <div className="flex h-[calc(100vh-64px)] gap-6 p-6">
       {/* LEFT */}
-      <div className="w-[360px] rounded-xl border bg-white p-4">
-        <div className="mb-3 flex justify-between">
-          <div className="flex gap-2 font-semibold">
-            <Megaphone size={16} /> Campaigns
+      <div className="w-[360px] rounded-xl border bg-white flex flex-col">
+       {/* Header (fixed) */}
+<div className="p-4 border-b">
+  <div className="flex justify-between">
+    <div className="flex gap-2 font-semibold">
+      <Megaphone size={16} /> Campaigns
+    </div>
+    <button
+      onClick={openCreate}
+      className="text-blue-600 text-sm flex gap-1"
+    >
+      <PlusCircle size={14} /> New
+    </button>
+  </div>
+</div>
+
+{/* Scrollable list */}
+<div className="flex-1 overflow-y-auto p-4">
+  {loading ? (
+    <div className="flex items-center gap-2 text-sm text-slate-500">
+      <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+    </div>
+  ) : campaigns.length === 0 ? (
+    <div className="text-sm text-slate-500">No campaigns yet.</div>
+  ) : (
+    campaigns.map((c) => (
+      <button
+        key={c.id}
+        onClick={() => {
+          setSelectedCampaignId(c.id);
+          setMode("view");
+        }}
+        className={`w-full mb-2 rounded-md border p-2 text-left ${
+          selectedCampaignId === c.id
+            ? "bg-blue-50 border-blue-600"
+            : "border-slate-200 hover:bg-slate-50"
+        }`}
+      >
+        <div className="flex justify-between">
+          <div className="font-medium">{c.name}</div>
+          <div className="text-xs flex gap-1 text-slate-600">
+            <Clock size={12} /> {c.status}
           </div>
-          <button
-            onClick={openCreate}
-            className="text-blue-600 text-sm flex gap-1"
-          >
-            <PlusCircle size={14} /> New
-          </button>
         </div>
-
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-          </div>
-        ) : campaigns.length === 0 ? (
-          <div className="text-sm text-slate-500">No campaigns yet.</div>
-        ) : (
-          campaigns.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => {
-                setSelectedCampaignId(c.id);
-                setMode("view");
-              }}
-              className={`w-full mb-2 rounded-md border p-2 text-left ${
-                selectedCampaignId === c.id
-                  ? "bg-blue-50 border-blue-600"
-                  : "border-slate-200 hover:bg-slate-50"
-              }`}
-            >
-              <div className="flex justify-between">
-                <div className="font-medium">{c.name}</div>
-                <div className="text-xs flex gap-1 text-slate-600">
-                  <Clock size={12} /> {c.status}
-                </div>
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {(c.sent_count ?? 0)}/{(c.total_recipients ?? 0)} sent
-              </div>
-            </button>
-          ))
-        )}
-      </div>
-
+        <div className="mt-1 text-xs text-slate-500">
+          {(c.sent_count ?? 0)}/{(c.total_recipients ?? 0)} sent
+        </div>
+      </button>
+    ))
+  )}
+</div>
+</div>
       {/* RIGHT */}
       <div className="flex-1 flex flex-col gap-4">
         <WhatsAppPreviewCard
