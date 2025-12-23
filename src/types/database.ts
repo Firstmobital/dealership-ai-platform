@@ -347,20 +347,23 @@ export type WhatsappTemplateStatus =
   | "rejected";
 
   export type WhatsappTemplate = {
-    id: string;
-    organization_id: string;
-    sub_organization_id: string | null;
+    id: UUID;
+    organization_id: UUID;
+    sub_organization_id: UUID | null;
+  
     name: string;
     category: string | null;
     language: string | null;
-    header_type: "TEXT" | "IMAGE" | "DOCUMENT" | null;
+  
+    header_type: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | null;
     header_text: string | null;
+  
     body: string | null;
     footer: string | null;
-    status: string;
+  
+    status: WhatsappTemplateStatus;
     meta_template_id: string | null;
   
-    // ✅ ADD THESE
     header_media_url: string | null;
     header_media_mime: string | null;
   

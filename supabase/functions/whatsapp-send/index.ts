@@ -33,7 +33,7 @@ type MessageType =
 type SendBody = {
   organization_id?: string;
   sub_organization_id?: string | null;
-  contact_id?: string | null; // ✅ IMPORTANT (campaign + chat linking)
+  contact_id?: string | null;
   to?: string;
   type?: MessageType;
 
@@ -45,16 +45,32 @@ type SendBody = {
   template_language?: string;
   template_variables?: string[];
 
-  // media
+  // media (non-template)
   image_url?: string;
   video_url?: string;
   audio_url?: string;
   document_url?: string;
   filename?: string;
+
+  // internal (for chat logging)
+  rendered_text?: string;
 };
 
 /* ===========================================================================
-   RESOLVE SETTINGS (Hybrid Logic)
+   HELPERS
+=========================================================================== */
+
+function filenameFromUrl(url: string) {
+  try {
+    const u = new URL(url);
+    return u.pathname.split("/").pop() || "document";
+  } catch {
+    return "document";
+  }
+}
+
+/* ===========================================================================
+   RESOLVE SETTINGS
 =========================================================================== */
 
 async function resolveWhatsappSettings(
@@ -88,7 +104,7 @@ async function resolveWhatsappSettings(
    BUILD WHATSAPP PAYLOAD
 =========================================================================== */
 
-function buildWhatsappPayload(body: SendBody) {
+async function buildWhatsappPayload(body: SendBody) {
   const { type, to } = body;
   if (!type || !to) throw new Error("Missing type or to");
 
@@ -98,62 +114,112 @@ function buildWhatsappPayload(body: SendBody) {
     type,
   };
 
-  switch (type) {
-    case "text":
-      if (!body.text?.trim()) throw new Error("Missing text");
-      return { ...payload, text: { body: body.text.trim() } };
-
-    case "template":
-      if (!body.template_name || !body.template_language) {
-        throw new Error("Missing template_name or template_language");
-      }
-      return {
-        ...payload,
-        template: {
-          name: body.template_name,
-          language: { code: body.template_language },
-          components: body.template_variables?.length
-            ? [
-                {
-                  type: "body",
-                  parameters: body.template_variables.map((v) => ({
-                    type: "text",
-                    text: v,
-                  })),
-                },
-              ]
-            : [],
-        },
-      };
-
-    case "image":
-      if (!body.image_url) throw new Error("Missing image_url");
-      return { ...payload, image: { link: body.image_url } };
-
-    case "video":
-      if (!body.video_url) throw new Error("Missing video_url");
-      return { ...payload, video: { link: body.video_url } };
-
-    case "audio":
-      if (!body.audio_url) throw new Error("Missing audio_url");
-      return { ...payload, audio: { link: body.audio_url } };
-
-    case "document":
-      if (!body.document_url) throw new Error("Missing document_url");
-      return {
-        ...payload,
-        document: {
-          link: body.document_url,
-          filename: body.filename || undefined,
-        },
-      };
-
-    case "typing_on":
-      return null;
-
-    default:
-      throw new Error(`Unsupported type: ${type}`);
+  /* ---------------- TEXT ---------------- */
+  if (type === "text") {
+    if (!body.text?.trim()) throw new Error("Missing text");
+    return { ...payload, text: { body: body.text.trim() } };
   }
+
+  /* ---------------- TEMPLATE (WITH MEDIA HEADER) ---------------- */
+  if (type === "template") {
+    if (!body.template_name || !body.template_language) {
+      throw new Error("Missing template_name or template_language");
+    }
+
+    // 🔑 Load template to check media header
+    const { data: template } = await supabase
+      .from("whatsapp_templates")
+      .select(
+        "header_type, header_media_url, header_media_mime"
+      )
+      .eq("name", body.template_name)
+      .maybeSingle();
+
+    const components: any[] = [];
+
+    // HEADER MEDIA (auto-injected)
+    if (
+      template?.header_media_url &&
+      (template.header_type === "IMAGE" ||
+        template.header_type === "DOCUMENT")
+    ) {
+      if (template.header_type === "IMAGE") {
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: "image",
+              image: { link: template.header_media_url },
+            },
+          ],
+        });
+      } else {
+        components.push({
+          type: "header",
+          parameters: [
+            {
+              type: "document",
+              document: {
+                link: template.header_media_url,
+                filename: filenameFromUrl(template.header_media_url),
+              },
+            },
+          ],
+        });
+      }
+    }
+
+    // BODY VARIABLES
+    if (body.template_variables?.length) {
+      components.push({
+        type: "body",
+        parameters: body.template_variables.map((v) => ({
+          type: "text",
+          text: String(v ?? ""),
+        })),
+      });
+    }
+
+    return {
+      ...payload,
+      template: {
+        name: body.template_name,
+        language: { code: body.template_language },
+        components,
+      },
+    };
+  }
+
+  /* ---------------- DIRECT MEDIA ---------------- */
+  if (type === "image") {
+    if (!body.image_url) throw new Error("Missing image_url");
+    return { ...payload, image: { link: body.image_url } };
+  }
+
+  if (type === "video") {
+    if (!body.video_url) throw new Error("Missing video_url");
+    return { ...payload, video: { link: body.video_url } };
+  }
+
+  if (type === "audio") {
+    if (!body.audio_url) throw new Error("Missing audio_url");
+    return { ...payload, audio: { link: body.audio_url } };
+  }
+
+  if (type === "document") {
+    if (!body.document_url) throw new Error("Missing document_url");
+    return {
+      ...payload,
+      document: {
+        link: body.document_url,
+        filename: body.filename || undefined,
+      },
+    };
+  }
+
+  if (type === "typing_on") return null;
+
+  throw new Error(`Unsupported type: ${type}`);
 }
 
 /* ===========================================================================
@@ -180,7 +246,7 @@ serve(async (req: Request) => {
     if (!orgId || !type || !to) {
       return new Response(
         JSON.stringify({ error: "Missing required fields" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        { status: 400 }
       );
     }
 
@@ -188,18 +254,17 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
 
-    /* ---------------- RESOLVE SETTINGS ---------------- */
+    /* ---------------- SETTINGS ---------------- */
 
     const settings = await resolveWhatsappSettings(orgId, subOrgId);
-
     if (!settings?.api_token || !settings?.whatsapp_phone_id) {
       return new Response(
         JSON.stringify({ error: "WhatsApp settings not found" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        { status: 400 }
       );
     }
 
-    const waPayload = buildWhatsappPayload(body);
+    const waPayload = await buildWhatsappPayload(body);
     if (!waPayload) {
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
@@ -222,7 +287,7 @@ serve(async (req: Request) => {
     if (!waRes.ok) {
       return new Response(
         JSON.stringify({ error: "Meta send failed", metaResponse }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
+        { status: 500 }
       );
     }
 
@@ -231,9 +296,7 @@ serve(async (req: Request) => {
       metaResponse?.message_id ??
       null;
 
-    /* ===========================================================================
-       INSERT OUTBOUND MESSAGE INTO CHAT
-    =========================================================================== */
+    /* ---------------- CHAT LOGGING ---------------- */
 
     if (contactId) {
       const { data: conversation } = await supabase
@@ -242,8 +305,6 @@ serve(async (req: Request) => {
         .eq("organization_id", orgId)
         .eq("contact_id", contactId)
         .eq("channel", "whatsapp")
-        .order("last_message_at", { ascending: false })
-        .limit(1)
         .maybeSingle();
 
       if (conversation) {
@@ -253,7 +314,7 @@ serve(async (req: Request) => {
           channel: "whatsapp",
           message_type: type,
           text:
-          body.rendered_text ??
+            body.rendered_text ??
             (type === "template"
               ? `Template: ${body.template_name}`
               : body.text ?? null),
@@ -270,13 +331,13 @@ serve(async (req: Request) => {
 
     return new Response(
       JSON.stringify({ success: true, meta_response: metaResponse }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
+      { status: 200 }
     );
   } catch (err) {
     console.error("[whatsapp-send] Fatal:", err);
     return new Response(
       JSON.stringify({ error: "Internal Server Error" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      { status: 500 }
     );
   }
 });
