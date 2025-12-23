@@ -1,4 +1,5 @@
 ///Users/air/dealership-ai-platform/src/types/database.ts
+/// src/types/database.ts
 
 // -------------------------------------------------------------
 // GLOBAL TYPES
@@ -45,7 +46,7 @@ export type OrganizationUser = {
 };
 
 // -------------------------------------------------------------
-// CONTACTS  ✅ UPDATED (PHASE 1)
+// CONTACTS
 // -------------------------------------------------------------
 export type Contact = {
   id: UUID;
@@ -53,12 +54,10 @@ export type Contact = {
 
   phone: string;
 
-  // Structured fields for Database UI
   first_name: string | null;
   last_name: string | null;
   model: string | null;
 
-  // Legacy / backward compatibility
   name: string | null;
   labels: Record<string, unknown> | null;
 
@@ -69,21 +68,30 @@ export type Contact = {
 // CONVERSATIONS + MESSAGES
 // -------------------------------------------------------------
 export type ConversationChannel = "web" | "whatsapp" | "internal";
+export type ConversationIntent =
+  | "sales"
+  | "service"
+  | "finance"
+  | "accessories"
+  | "general";
 
 export type Conversation = {
   id: UUID;
   organization_id: UUID;
-  contact_id: UUID;
+
+  contact_id: UUID | null; // ✅ nullable (important)
   assigned_to: UUID | null;
+
   ai_enabled: boolean;
+  intent?: ConversationIntent; // ✅ PHASE 1B FIX
+
   last_message_at: string | null;
   channel: ConversationChannel;
   sub_organization_id: UUID | null;
+
   created_at?: string;
 
-  // ✅ Added: joined contact (from select("*, contacts(*)"))
-  // We normalize it in the store to always be:
-  // conversation.contact = { phone, name, ... } | null
+  // Joined contact (normalized in store)
   contact?: Pick<
     Contact,
     "id" | "phone" | "name" | "first_name" | "last_name" | "model"
@@ -95,16 +103,21 @@ export type MessageSender = "user" | "bot" | "customer";
 export type Message = {
   id: UUID;
   conversation_id: UUID;
+
   sender: MessageSender;
   message_type: string;
+
   text: string | null;
   media_url: string | null;
-  created_at: string;
+  mime_type: string | null;
+
   channel: ConversationChannel;
   sub_organization_id: UUID | null;
-  mime_type: string | null;
+
   whatsapp_message_id: string | null;
   wa_received_at: string | null;
+
+  created_at: string;
 };
 
 // -------------------------------------------------------------
@@ -164,15 +177,15 @@ export type BotInstruction = {
 // WORKFLOWS
 // -------------------------------------------------------------
 export type Workflow = {
-  id: string;
-  organization_id: string;
-  sub_organization_id: string | null;
+  id: UUID;
+  organization_id: UUID;
+  sub_organization_id: UUID | null;
+
   name: string;
   description: string | null;
   trigger: any;
 
   mode: "auto" | "manual" | "smart" | "strict";
-
   is_active: boolean;
 
   created_at: string;
@@ -197,7 +210,7 @@ export type WorkflowLog = {
 };
 
 // -------------------------------------------------------------
-// CAMPAIGNS (BULK MESSAGING SYSTEM) ✅ UPDATED
+// CAMPAIGNS
 // -------------------------------------------------------------
 export type CampaignStatus =
   | "draft"
@@ -212,10 +225,8 @@ export type Campaign = {
   organization_id: UUID;
   sub_organization_id: UUID | null;
 
-  // Internal batch name (eg: "Dec 16 Batch 1")
   name: string;
-  whatsapp_template_id: UUID | null; // ✅ add this
-  // ✅ Template / use-case name (eg: "Zawl Altroz")
+  whatsapp_template_id: UUID | null;
   template_name: string | null;
 
   description: string | null;
@@ -262,17 +273,17 @@ export type CampaignMessage = {
 
   status: CampaignMessageStatus;
   error: string | null;
-  whatsapp_message_id: string | null;
 
+  whatsapp_message_id: string | null;
   dispatched_at: string | null;
   delivered_at: string | null;
+
   created_at?: string;
 };
 
 // -------------------------------------------------------------
-// AI HANDLER RESPONSES (PHASE 7B / 7C)
+// AI HANDLER RESPONSES
 // -------------------------------------------------------------
-
 export type AIReplyResponse = {
   conversation_id: UUID;
   ai_response?: string;
@@ -288,18 +299,12 @@ export type AIFollowupSuggestionResponse = {
 };
 
 // -------------------------------------------------------------
-// CONVERSATION AI META (FUTURE SAFE)
+// CONVERSATION META (FUTURE SAFE)
 // -------------------------------------------------------------
-
-export type ConversationHeat =
-  | "hot"
-  | "warm"
-  | "cold"
-  | "neutral";
-
+export type ConversationHeat = "hot" | "warm" | "cold" | "neutral";
 
 // -------------------------------------------------------------
-// DATABASE VIEW: CONTACT → CAMPAIGN SUMMARY (PHASE 1)
+// CONTACT → CAMPAIGN SUMMARY VIEW
 // -------------------------------------------------------------
 export type ContactCampaignSummary = {
   contact_id: UUID;
@@ -325,6 +330,7 @@ export type WhatsappSettings = {
   phone_number: string | null;
   api_token: string | null;
   verify_token: string | null;
+
   whatsapp_phone_id: string | null;
   whatsapp_business_id: string | null;
 
@@ -334,12 +340,16 @@ export type WhatsappSettings = {
   updated_at?: string;
 };
 
-export type WhatsappTemplateStatus = "draft" | "pending" | "approved" | "rejected";
+export type WhatsappTemplateStatus =
+  | "draft"
+  | "pending"
+  | "approved"
+  | "rejected";
 
 export type WhatsappTemplate = {
-  id: string;
-  organization_id: string;
-  sub_organization_id: string | null;
+  id: UUID;
+  organization_id: UUID;
+  sub_organization_id: UUID | null;
 
   name: string;
   category: string;
