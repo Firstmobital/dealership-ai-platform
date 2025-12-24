@@ -153,7 +153,7 @@ function App() {
           element={<SubOrganizationsPanel />}
         />
         <Route path="settings/ai-config" element={<AIConfigurationModule />} />
-        <Route path="wallet" element={<WalletPage />} />
+        <Route path="settings/wallet" element={<WalletPage />} />
         <Route
           path="unanswered"
           element={<UnansweredQuestionsModule />}

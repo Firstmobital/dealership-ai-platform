@@ -1,4 +1,5 @@
 // src/pages/settings/WalletPage.tsx
+//Users/air/dealership-ai-platform/src/pages/settings/WalletPage.tsx
 
 import { useEffect } from "react";
 import { AlertTriangle, XCircle, Wallet as WalletIcon } from "lucide-react";
