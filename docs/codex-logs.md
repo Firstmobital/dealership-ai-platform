@@ -336,3 +336,20 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 
 Result: Phase 2.3 is compile-safe, media UX-complete, and locked.  
 No database migrations, RLS changes, or Edge Function updates were required.
+
+## 2025-12-23 — Phase 3: Bot Personality System (Business Context + DOs/DON’Ts)
+
+- Removed legacy `bot_instructions` JSON rule system from ai-handler.
+- Extended `bot_personality` usage to include:
+  - business_context
+  - dos
+  - donts
+- Eliminated hardcoded greeting logic from ai-handler.
+- Rebuilt system prompt to:
+  - Inject Business Information directly into AI behavior.
+  - Enforce DOs and DON’Ts as strict rules overriding default AI behavior.
+  - Retain Tone, Language, Voice, Emoji, and Response Length controls.
+- Updated greeting behavior to be AI-generated based on business context.
+- Preserved existing RAG, campaign context, workflows, and NO_REPLY logic.
+
+Result: AI responses are now fully governed by human-readable business instructions with no JSON complexity.

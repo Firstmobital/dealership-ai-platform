@@ -156,14 +156,21 @@ export type UnansweredQuestion = {
 // -------------------------------------------------------------
 export type BotPersonality = {
   organization_id: UUID;
+  sub_organization_id: UUID | null;
+
   tone: string;
   language: string;
   short_responses: boolean;
   emoji_usage: boolean;
   gender_voice: string;
   fallback_message: string;
-  sub_organization_id: UUID | null;
+
+  // Phase 3
+  business_context: string;
+  dos: string;
+  donts: string;
 };
+
 
 export type BotInstruction = {
   id: UUID;

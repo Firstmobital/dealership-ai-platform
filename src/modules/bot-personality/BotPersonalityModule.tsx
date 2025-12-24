@@ -1,12 +1,5 @@
 ///Users/air/dealership-ai-platform/src/modules/bot-personality/BotPersonalityModule.tsx
 import { useEffect, useState } from "react";
-import {
-  Sparkles,
-  Languages,
-  MessageSquare,
-  Smile,
-  Save,
-} from "lucide-react";
 import toast from "react-hot-toast";
 
 import { supabase } from "../../lib/supabaseClient";
@@ -34,7 +27,11 @@ type PersonalityForm = {
   emoji_usage: boolean;
   gender_voice: string;
   fallback_message: string;
-  instructions: string;
+
+  // Phase 3
+  business_context: string;
+  dos: string;
+  donts: string;
 };
 
 /* ------------------------------------------------------------------ */
@@ -54,17 +51,12 @@ export function BotPersonalityModule() {
     short_responses: false,
     emoji_usage: true,
     gender_voice: "Neutral",
-    fallback_message: "I’m sorry, I don’t have enough information to answer that.",
-    instructions: JSON.stringify(
-      {
-        guidelines: [
-          "Always greet with dealership name",
-          "Ask for preferred model",
-        ],
-      },
-      null,
-      2
-    ),
+    fallback_message:
+      "I’m sorry, I don’t have enough information to answer that.",
+
+    business_context: "",
+    dos: "",
+    donts: "",
   });
 
   /* ------------------------------------------------------------------ */
@@ -90,18 +82,6 @@ export function BotPersonalityModule() {
 
       const { data: personality } = await personalityQuery.maybeSingle();
 
-      let instructionQuery = supabase
-        .from("bot_instructions")
-        .select("*")
-        .eq("organization_id", organizationId);
-
-      instructionQuery =
-        subOrgId === null
-          ? instructionQuery.is("sub_organization_id", null)
-          : instructionQuery.eq("sub_organization_id", subOrgId);
-
-      const { data: instructions } = await instructionQuery.maybeSingle();
-
       if (personality) {
         setForm((prev) => ({
           ...prev,
@@ -111,14 +91,11 @@ export function BotPersonalityModule() {
           emoji_usage: personality.emoji_usage,
           gender_voice: personality.gender_voice,
           fallback_message: personality.fallback_message,
-          response_length: personality.short_responses ? "Short" : prev.response_length,
-        }));
-      }
+          response_length: personality.short_responses ? "Short" : "Medium",
 
-      if (instructions) {
-        setForm((prev) => ({
-          ...prev,
-          instructions: JSON.stringify(instructions.rules, null, 2),
+          business_context: personality.business_context ?? "",
+          dos: personality.dos ?? "",
+          donts: personality.donts ?? "",
         }));
       }
     };
@@ -151,26 +128,14 @@ export function BotPersonalityModule() {
             emoji_usage: form.emoji_usage,
             gender_voice: form.gender_voice,
             fallback_message: form.fallback_message,
+            business_context: form.business_context,
+            dos: form.dos,
+            donts: form.donts,
           },
           { onConflict: "organization_id,sub_organization_id" }
         );
 
       if (personalityError) throw personalityError;
-
-      const parsedRules = JSON.parse(form.instructions || "{}");
-
-      const { error: instructionError } = await supabase
-        .from("bot_instructions")
-        .upsert(
-          {
-            organization_id: organizationId,
-            sub_organization_id: subOrgId,
-            rules: parsedRules,
-          },
-          { onConflict: "organization_id,sub_organization_id" }
-        );
-
-      if (instructionError) throw instructionError;
 
       toast.success("Bot personality saved successfully");
     } catch (err) {
@@ -186,7 +151,7 @@ export function BotPersonalityModule() {
   /* ------------------------------------------------------------------ */
 
   return (
-    <div className="grid grid-cols-3 gap-6">
+    <div className="grid grid-cols-2 gap-6">
       {/* LEFT — TONE & LANGUAGE */}
       <div className="rounded-xl border border-slate-200 bg-white p-6">
         <h2 className="text-sm font-semibold text-slate-900">
@@ -198,9 +163,7 @@ export function BotPersonalityModule() {
             <label className="text-xs font-medium text-slate-600">Tone</label>
             <select
               value={form.tone}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, tone: e.target.value }))
-              }
+              onChange={(e) => setForm((p) => ({ ...p, tone: e.target.value }))}
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             >
               {tones.map((t) => (
@@ -210,7 +173,9 @@ export function BotPersonalityModule() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-slate-600">Language</label>
+            <label className="text-xs font-medium text-slate-600">
+              Language
+            </label>
             <select
               value={form.language}
               onChange={(e) =>
@@ -243,9 +208,7 @@ export function BotPersonalityModule() {
 
       {/* MIDDLE — RESPONSE STYLE */}
       <div className="rounded-xl border border-slate-200 bg-white p-6">
-        <h2 className="text-sm font-semibold text-slate-900">
-          Response Style
-        </h2>
+        <h2 className="text-sm font-semibold text-slate-900">Response Style</h2>
 
         <div className="mt-4 space-y-4">
           <div>
@@ -292,43 +255,56 @@ export function BotPersonalityModule() {
       </div>
 
       {/* RIGHT — PREVIEW + SAVE */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6 flex flex-col">
-        <h2 className="text-sm font-semibold text-slate-900">Live Preview</h2>
+      <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-6">
+        <h3 className="text-sm font-semibold text-slate-900">
+          Business Information
+        </h3>
 
-        <div className="mt-4 text-sm space-y-3">
-          <div className="text-slate-500">Customer:</div>
-          <div className="rounded-md bg-slate-100 px-3 py-2">
-            Hi, I want to know the price
-          </div>
+        <p className="mt-1 text-xs text-slate-500">
+          This context is used by the AI to introduce the business, greet
+          customers, and respond correctly.
+        </p>
 
-          <div className="text-slate-500 mt-3">Bot:</div>
-          <div className="rounded-md bg-blue-50 px-3 py-2 text-blue-900">
-            {form.tone === "Friendly" ? "Sure 😊" : "Certainly."} How can I help you?
-          </div>
-        </div>
+        <textarea
+          value={form.business_context}
+          onChange={(e) =>
+            setForm((p) => ({ ...p, business_context: e.target.value }))
+          }
+          className="mt-3 h-40 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          placeholder="Describe your business, services, customers, and how the AI should represent you."
+        />
+      </div>
 
+      <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-6">
+        <h3 className="text-sm font-semibold text-slate-900">DOs</h3>
+
+        <textarea
+          value={form.dos}
+          onChange={(e) => setForm((p) => ({ ...p, dos: e.target.value }))}
+          className="mt-3 h-32 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          placeholder="What should the AI always do?"
+        />
+      </div>
+
+      <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-6">
+        <h3 className="text-sm font-semibold text-slate-900">DON’Ts</h3>
+
+        <textarea
+          value={form.donts}
+          onChange={(e) => setForm((p) => ({ ...p, donts: e.target.value }))}
+          className="mt-3 h-32 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          placeholder="What should the AI never do?"
+        />
+      </div>
+
+      <div className="col-span-2 flex justify-end">
         <button
           onClick={savePersonality}
           disabled={loading}
-          className="mt-auto rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded-md bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {loading ? "Saving..." : "Save Personality"}
         </button>
-      </div>
-
-      {/* ADVANCED JSON INSTRUCTIONS */}
-      <div className="col-span-3 rounded-xl border border-slate-200 bg-white p-6">
-        <h3 className="text-sm font-semibold text-slate-900">
-          Advanced Instructions (JSON)
-        </h3>
-
-        <textarea
-          value={form.instructions}
-          onChange={(e) =>
-            setForm((p) => ({ ...p, instructions: e.target.value }))
-          }
-          className="mt-3 h-64 w-full rounded-md border border-slate-300 bg-slate-50 px-4 py-3 font-mono text-xs"
-        />
       </div>
     </div>
   );
