@@ -1,24 +1,28 @@
 // supabase/functions/ai-handler/index.ts
 // deno-lint-ignore-file no-explicit-any
 // FORCE_DEPLOY_2025_12_16_FINAL
+// PHASE 4 — STEP 3 FINAL: AI CONFIG (OpenAI + Gemini) + USAGE LOGGING (charged_amount + estimated_cost)
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
+import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
 /* ============================================================================
    ENV
 ============================================================================ */
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 const AI_NO_REPLY_TOKEN = "<NO_REPLY>";
 
-if (!OPENAI_API_KEY || !PROJECT_URL || !SERVICE_ROLE_KEY) {
+if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
   console.error("[ai-handler] Missing required environment variables", {
-    hasOpenAI: !!OPENAI_API_KEY,
     hasProjectUrl: !!PROJECT_URL,
     hasServiceRoleKey: !!SERVICE_ROLE_KEY,
+    hasOpenAI: !!OPENAI_API_KEY,
+    hasGemini: !!GEMINI_API_KEY,
   });
 }
 
@@ -26,6 +30,7 @@ if (!OPENAI_API_KEY || !PROJECT_URL || !SERVICE_ROLE_KEY) {
    CLIENTS
 ============================================================================ */
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const gemini = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -139,6 +144,10 @@ async function safeChatCompletion(
   logger: ReturnType<typeof createLogger>,
   params: { systemPrompt: string; userMessage: string },
 ): Promise<string | null> {
+  // NOTE: This helper is kept for:
+  // - follow-up suggestion mode
+  // - workflow intent classification
+  // Main reply routing is handled by runAICompletion() below.
   try {
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -159,6 +168,258 @@ async function safeChatCompletion(
 function safeText(str: any): string {
   return typeof str === "string" ? str : "";
 }
+
+/* ============================================================================
+   PHASE 4 — PRICING (CUSTOMER) + COST (PLATFORM)
+============================================================================ */
+const MODEL_CHARGED_PRICE: Record<string, number> = {
+  "gpt-4o-mini": 2.5,
+
+  // You can expand this mapping as you add models in UI.
+  "gemini-2.5-pro": 3.0,
+  "gemini-1.5-flash": 2.0,
+};
+
+function getChargedAmountForModel(model: string): number {
+  return MODEL_CHARGED_PRICE[model] ?? 2.5;
+}
+
+function estimateActualCost(params: {
+  provider: "openai" | "gemini";
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}): number {
+  const { provider, model, inputTokens, outputTokens } = params;
+
+  // NOTE: these are approximations for internal profit analytics.
+  // You can refine later per model based on your true vendor price plan.
+
+  if (provider === "openai") {
+    if (model === "gpt-4o-mini") {
+      const cost =
+        (inputTokens / 1_000_000) * 0.15 +
+        (outputTokens / 1_000_000) * 0.60;
+      return Number(cost.toFixed(4));
+    }
+  }
+
+  if (provider === "gemini") {
+    if (model === "gemini-2.5-pro") {
+      const cost =
+        (inputTokens / 1_000_000) * 1.25 +
+        (outputTokens / 1_000_000) * 3.75;
+      return Number(cost.toFixed(4));
+    }
+
+    if (model === "gemini-1.5-flash") {
+      const cost =
+        (inputTokens / 1_000_000) * 0.35 +
+        (outputTokens / 1_000_000) * 1.05;
+      return Number(cost.toFixed(4));
+    }
+  }
+
+  return 0;
+}
+
+/* ============================================================================
+   PHASE 4 — AI SETTINGS (ORG → SUB-ORG OVERRIDE)
+============================================================================ */
+async function resolveAISettings(params: {
+  organizationId: string;
+  subOrganizationId: string | null;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<{
+  provider: "openai" | "gemini";
+  model: string;
+}> {
+  const { organizationId, subOrganizationId, logger } = params;
+
+  if (subOrganizationId) {
+    const { data } = await supabase
+      .from("ai_settings")
+      .select("provider, model")
+      .eq("organization_id", organizationId)
+      .eq("sub_organization_id", subOrganizationId)
+      .maybeSingle();
+
+    if (data?.provider && data?.model) {
+      return {
+        provider: data.provider,
+        model: data.model,
+      };
+    }
+  }
+
+  const { data: orgWide } = await supabase
+    .from("ai_settings")
+    .select("provider, model")
+    .eq("organization_id", organizationId)
+    .is("sub_organization_id", null)
+    .maybeSingle();
+
+  if (orgWide?.provider && orgWide?.model) {
+    return {
+      provider: orgWide.provider,
+      model: orgWide.model,
+    };
+  }
+
+  logger.warn("[ai-settings] fallback to default");
+  return {
+    provider: "openai",
+    model: "gpt-4o-mini",
+  };
+}
+
+/* ============================================================================
+   PHASE 4 — PROVIDER ROUTING COMPLETION
+============================================================================ */
+type AICompletionResult = {
+  text: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  provider: "openai" | "gemini";
+  model: string;
+};
+
+async function runOpenAICompletion(params: {
+  model: string;
+  systemPrompt: string;
+  userMessage: string;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<AICompletionResult | null> {
+  const { model, systemPrompt, userMessage, logger } = params;
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model,
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    });
+
+    const choice = resp.choices?.[0]?.message?.content?.trim() ?? null;
+
+    return {
+      text: choice,
+      inputTokens: resp.usage?.prompt_tokens ?? 0,
+      outputTokens: resp.usage?.completion_tokens ?? 0,
+      provider: "openai",
+      model,
+    };
+  } catch (err) {
+    logger.error("[openai] completion error", { error: err, model });
+    return null;
+  }
+}
+
+async function runGeminiCompletion(params: {
+  model: string;
+  systemPrompt: string;
+  userMessage: string;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<AICompletionResult | null> {
+  const { model, systemPrompt, userMessage, logger } = params;
+
+  if (!gemini) {
+    logger.warn("[gemini] missing GEMINI_API_KEY; falling back to OpenAI");
+    return null;
+  }
+
+  try {
+    const genModel = gemini.getGenerativeModel({
+      model,
+      systemInstruction: systemPrompt,
+    });
+
+    const resp = await genModel.generateContent(userMessage);
+    const text = resp.response.text()?.trim() ?? null;
+
+    const usage = resp.response.usageMetadata ?? {};
+
+    return {
+      text,
+      inputTokens: usage.promptTokenCount ?? 0,
+      outputTokens: usage.candidatesTokenCount ?? 0,
+      provider: "gemini",
+      model,
+    };
+  } catch (err) {
+    logger.error("[gemini] completion error", { error: err, model });
+    return null;
+  }
+}
+
+async function runAICompletion(params: {
+  provider: "openai" | "gemini";
+  model: string;
+  systemPrompt: string;
+  userMessage: string;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<AICompletionResult | null> {
+  if (params.provider === "gemini") {
+    const gem = await runGeminiCompletion(params);
+    if (gem) return gem;
+    // fallback to OpenAI if Gemini unavailable
+    return runOpenAICompletion({ ...params, provider: "openai" } as any);
+  }
+  return runOpenAICompletion(params);
+}
+
+/* ============================================================================
+   PHASE 4 — AI USAGE LOGGING
+============================================================================ */
+async function logAIUsage(params: {
+  organizationId: string;
+  subOrganizationId: string | null;
+  conversationId: string;
+  provider: "openai" | "gemini";
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  chargedAmount: number;
+  logger: ReturnType<typeof createLogger>;
+}) {
+  const {
+    organizationId,
+    subOrganizationId,
+    conversationId,
+    provider,
+    model,
+    inputTokens,
+    outputTokens,
+    estimatedCost,
+    chargedAmount,
+    logger,
+  } = params;
+
+  try {
+    const { error } = await supabase.from("ai_usage_logs").insert({
+      organization_id: organizationId,
+      sub_organization_id: subOrganizationId,
+      conversation_id: conversationId,
+
+      provider,
+      model,
+
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+
+      estimated_cost: estimatedCost,
+      charged_amount: chargedAmount,
+    });
+
+    if (error) logger.error("[ai-usage] insert failed", { error });
+  } catch (err) {
+    logger.error("[ai-usage] fatal error", { error: err });
+  }
+}
+
 /* ============================================================================
    PHASE 7A — CAMPAIGN CONTEXT HELPERS
 ============================================================================ */
@@ -322,6 +583,7 @@ async function logUnansweredQuestion(
     logger.error("[unanswered] fatal error", { error: err });
   }
 }
+
 /* ============================================================================
    RAG HELPER — SUB-ORG SCOPED + SEMANTIC FALLBACK
 ============================================================================ */
@@ -726,6 +988,7 @@ async function runSmartMode(
 ) {
   return executeStep(step, log, user_message, logger);
 }
+
 /* ============================================================================
    MAIN HANDLER
 ============================================================================ */
@@ -819,7 +1082,6 @@ serve(async (req: Request): Promise<Response> => {
 
     // 4) Load bot personality (sub-org first; fallback to org-wide)
     async function loadBotPersonality() {
-      // Try sub-org personality (if subOrg exists)
       if (subOrganizationId) {
         const { data } = await supabase
           .from("bot_personality")
@@ -833,7 +1095,6 @@ serve(async (req: Request): Promise<Response> => {
         if (data) return data;
       }
 
-      // Fallback to org-wide (sub_organization_id IS NULL)
       const { data: orgWide } = await supabase
         .from("bot_personality")
         .select(
@@ -909,7 +1170,6 @@ ${personality.donts || "- None specified."}
     }
 
     if (activeWorkflow) {
-      // load workflow to know mode + validate existence
       const wfRow = await safeSupabase<WorkflowRow>(
         "load_workflow_by_id",
         logger,
@@ -979,7 +1239,6 @@ ${personality.donts || "- None specified."}
         }
       }
 
-      // workflow active but no step -> do nothing
       return new Response(
         JSON.stringify({ conversation_id, skipped: true, reason: "Workflow active", request_id }),
         { headers: { "Content-Type": "application/json" } },
@@ -1029,7 +1288,6 @@ ${personality.donts || "- None specified."}
         logger,
       });
 
-      // Forced title match => reply with KB content directly
       if (resolved?.forced) {
         const reply = resolved.context;
 
@@ -1135,13 +1393,48 @@ FORMATTING & STYLE
 Respond now to the customer's latest message only.
 `.trim();
 
-    // 11) OpenAI response
-    let aiResponseText = await safeChatCompletion(logger, {
-      systemPrompt,
-      userMessage: user_message,
+    // 11) AI response (provider-aware, DB-driven)
+    const aiSettings = await resolveAISettings({
+      organizationId,
+      subOrganizationId,
+      logger,
     });
 
+    const aiResult = await runAICompletion({
+      provider: aiSettings.provider,
+      model: aiSettings.model,
+      systemPrompt,
+      userMessage: user_message,
+      logger,
+    });
+
+    let aiResponseText = aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
+
+    // ---- AI usage logging (profit + billing) ----
+    if (aiResult) {
+      const chargedAmount = getChargedAmountForModel(aiResult.model);
+
+      const estimatedCost = estimateActualCost({
+        provider: aiResult.provider,
+        model: aiResult.model,
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+      });
+
+      await logAIUsage({
+        organizationId,
+        subOrganizationId,
+        conversationId: conversation_id,
+        provider: aiResult.provider,
+        model: aiResult.model,
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        estimatedCost,
+        chargedAmount,
+        logger,
+      });
+    }
 
     // 12) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
