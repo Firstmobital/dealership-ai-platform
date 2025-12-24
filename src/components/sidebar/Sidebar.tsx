@@ -1,5 +1,3 @@
-// src/components/sidebar/Sidebar.tsx
-
 import {
   Building2,
   MessageCircle,
@@ -18,16 +16,12 @@ import {
 
 import { SidebarLink } from "./SidebarLink";
 import { useWalletStore } from "../../state/useWalletStore";
-import { getCurrentOrgRole } from "../../state/useOrganizationStore";
 
 export function Sidebar() {
-  const role = getCurrentOrgRole();
+  // 💰 Wallet state (single source of truth)
   const { walletStatus } = useWalletStore();
 
-  const canSeeWallet = ["admin", "owner", "manager"].includes(
-    (role ?? "").toLowerCase(),
-  );
-
+  // Badge based on derived wallet status
   const walletBadge =
     walletStatus === "critical" ? (
       <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
@@ -94,18 +88,17 @@ export function Sidebar() {
           label="AI Configuration"
         />
 
-        {canSeeWallet && (
-          <SidebarLink
-            to="/settings/wallet"
-            icon={Wallet}
-            label={
-              <>
-                <span>Wallet</span>
-                {walletBadge}
-              </>
-            }
-          />
-        )}
+        {/* 💰 Wallet — visible to all users in Phase 5.x */}
+        <SidebarLink
+          to="/settings/wallet"
+          icon={Wallet}
+          label={
+            <div className="flex items-center gap-2">
+              <span>Wallet</span>
+              {walletBadge}
+            </div>
+          }
+        />
 
         <SidebarLink
           to="/unanswered"

@@ -23,16 +23,13 @@ export type OrgState = {
   initialized: boolean;
 
   /* -------------------------------------------------------------------------- */
-  /* LEGACY / PUBLIC API (DO NOT BREAK)                                         */
+  /* ACTIONS                                                                    */
   /* -------------------------------------------------------------------------- */
   fetchOrganizations: () => Promise<void>;
   fetchSubOrganizations: (orgId: string) => Promise<void>;
   switchOrganization: (orgId: string | null) => void;
   switchSubOrganization: (subOrgId: string | null) => void;
 
-  /* -------------------------------------------------------------------------- */
-  /* STAGE 6E+                                                                  */
-  /* -------------------------------------------------------------------------- */
   hydrate: () => void;
   loadAll: () => Promise<void>;
 };
@@ -104,8 +101,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
     const organizations = data ?? [];
 
     const storedId = localStorage.getItem("selectedOrgId");
-    let selectedId =
-      get().selectedOrganizationId || storedId || null;
+    let selectedId = get().selectedOrganizationId || storedId || null;
 
     if (!selectedId && organizations.length > 0) {
       selectedId = organizations[0].id;
@@ -151,8 +147,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
     const subOrganizations = data ?? [];
 
     const storedId = localStorage.getItem("selectedSubOrgId");
-    let selectedId =
-      get().selectedSubOrganizationId || storedId || null;
+    let selectedId = get().selectedSubOrganizationId || storedId || null;
 
     if (!selectedId && subOrganizations.length > 0) {
       selectedId = subOrganizations[0].id;
@@ -164,17 +159,13 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
         : null;
 
     if (currentSubOrganization) {
-      localStorage.setItem(
-        "selectedSubOrgId",
-        currentSubOrganization.id
-      );
+      localStorage.setItem("selectedSubOrgId", currentSubOrganization.id);
     }
 
     set({
       subOrganizations,
       currentSubOrganization,
-      selectedSubOrganizationId:
-        currentSubOrganization?.id ?? null,
+      selectedSubOrganizationId: currentSubOrganization?.id ?? null,
       loading: false,
     });
   },
@@ -239,18 +230,3 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
     });
   },
 }));
-
-/* ============================================================================
-   🔐 ROLE SELECTOR — SINGLE SOURCE OF TRUTH
-   (USED BY WALLET, SETTINGS, ANALYTICS, ETC.)
-============================================================================ */
-export const getCurrentOrgRole = (): string | null => {
-  const state: any = useOrganizationStore.getState();
-
-  return (
-    state.currentOrganizationUser?.role ??
-    state.membership?.role ??
-    state.organizationUser?.role ??
-    null
-  );
-};
