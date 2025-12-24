@@ -87,6 +87,29 @@ async function classifyIntent(text: string) {
   }
 }
 
+async function triggerAIHandler(params: {
+  conversationId: string;
+  userMessage: string;
+}) {
+  try {
+    await fetch(`${PROJECT_URL}/functions/v1/ai-handler`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        conversation_id: params.conversationId,
+        user_message: params.userMessage,
+        mode: "reply",
+      }),
+    });
+  } catch (err) {
+    console.error("[whatsapp-inbound] ai-handler call failed", err);
+  }
+}
+
+
 /* =====================================================================================
    VERIFY
 ===================================================================================== */
@@ -196,6 +219,17 @@ async function processInboundMessage(
     whatsapp_message_id: msg.id,
     wa_received_at: new Date().toISOString(),
   });
+
+  /* ---------------- TRIGGER AI HANDLER ---------------- */
+if (text) {
+  convLogger.info("TRIGGER_AI_HANDLER");
+
+  await triggerAIHandler({
+    conversationId,
+    userMessage: text,
+  });
+}
+
 
   /* ---------------- INTENT TAGGING ---------------- */
   if (text) {

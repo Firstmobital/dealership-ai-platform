@@ -3,6 +3,9 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import type { Organization, SubOrganization } from "../types/database";
 
+/* ============================================================================
+   TYPES
+============================================================================ */
 export type OrgState = {
   /* -------------------------------------------------------------------------- */
   /* DATA                                                                       */
@@ -28,12 +31,15 @@ export type OrgState = {
   switchSubOrganization: (subOrgId: string | null) => void;
 
   /* -------------------------------------------------------------------------- */
-  /* STAGE 6E+                                                                   */
+  /* STAGE 6E+                                                                  */
   /* -------------------------------------------------------------------------- */
   hydrate: () => void;
   loadAll: () => Promise<void>;
 };
 
+/* ============================================================================
+   STORE
+============================================================================ */
 export const useOrganizationStore = create<OrgState>((set, get) => ({
   /* -------------------------------------------------------------------------- */
   /* INITIAL STATE                                                              */
@@ -97,7 +103,6 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
 
     const organizations = data ?? [];
 
-    // Resolve selected org ID
     const storedId = localStorage.getItem("selectedOrgId");
     let selectedId =
       get().selectedOrganizationId || storedId || null;
@@ -234,3 +239,18 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
     });
   },
 }));
+
+/* ============================================================================
+   🔐 ROLE SELECTOR — SINGLE SOURCE OF TRUTH
+   (USED BY WALLET, SETTINGS, ANALYTICS, ETC.)
+============================================================================ */
+export const getCurrentOrgRole = (): string | null => {
+  const state: any = useOrganizationStore.getState();
+
+  return (
+    state.currentOrganizationUser?.role ??
+    state.membership?.role ??
+    state.organizationUser?.role ??
+    null
+  );
+};

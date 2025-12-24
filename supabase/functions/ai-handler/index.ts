@@ -1,7 +1,7 @@
 // supabase/functions/ai-handler/index.ts
 // deno-lint-ignore-file no-explicit-any
-// FORCE_DEPLOY_2025_12_16_FINAL
-// PHASE 4 — STEP 3 FINAL: AI CONFIG (OpenAI + Gemini) + USAGE LOGGING (charged_amount + estimated_cost)
+// PHASE 5 — WALLET ENFORCEMENT FINAL
+// PART 1 / 4
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
@@ -18,7 +18,7 @@ const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 const AI_NO_REPLY_TOKEN = "<NO_REPLY>";
 
 if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
-  console.error("[ai-handler] Missing required environment variables", {
+  console.error("[ai-handler] Missing env vars", {
     hasProjectUrl: !!PROJECT_URL,
     hasServiceRoleKey: !!SERVICE_ROLE_KEY,
     hasOpenAI: !!OPENAI_API_KEY,
@@ -35,47 +35,9 @@ const gemini = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
-/* ============================================================================
-   PHASE 5 — WALLET HELPERS
-============================================================================ */
-async function loadWalletForOrg(organizationId: string) {
-  const { data, error } = await supabase
-    .from("wallets")
-    .select("id, balance, status")
-    .eq("organization_id", organizationId)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  if (data.status !== "active") return null;
-
-  return data;
-}
-
-async function createWalletDebit(params: {
-  walletId: string;
-  amount: number;
-  aiUsageId: string;
-}) {
-  const { data, error } = await supabase
-    .from("wallet_transactions")
-    .insert({
-      wallet_id: params.walletId,
-      type: "debit",
-      direction: "out",
-      amount: params.amount,
-      reference_type: "ai_usage",
-      reference_id: params.aiUsageId,
-    })
-    .select("id")
-    .single();
-
-  if (error) return null;
-  return data.id;
-}
-
 
 /* ============================================================================
-   LOGGING UTILITIES
+   LOGGING
 ============================================================================ */
 type LogContext = {
   request_id: string;
@@ -162,6 +124,87 @@ async function safeWhatsAppSend(
   }
 }
 
+function safeText(v: any): string {
+  return typeof v === "string" ? v : "";
+}
+
+/* ============================================================================
+   WALLET HELPERS — PHASE 5
+============================================================================ */
+async function loadWalletForOrg(organizationId: string) {
+  const { data, error } = await supabase
+    .from("wallets")
+    .select("id, balance, status")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  if (data.status !== "active") return null;
+
+  return data;
+}
+
+async function createWalletDebit(params: {
+  walletId: string;
+  amount: number;
+  aiUsageId: string;
+}) {
+  const { data, error } = await supabase
+    .from("wallet_transactions")
+    .insert({
+      wallet_id: params.walletId,
+      type: "debit",
+      direction: "out",
+      amount: params.amount,
+      reference_type: "ai_usage",
+      reference_id: params.aiUsageId,
+    })
+    .select("id")
+    .single();
+
+  if (error) return null;
+  return data.id;
+}
+
+/* ============================================================================
+   GREETING DETECTOR (HARD RULE)
+============================================================================ */
+function isGreetingMessage(input: string): boolean {
+  const t = (input || "").trim().toLowerCase();
+
+  const greetings = new Set([
+    "hi",
+    "hey",
+    "hello",
+    "hii",
+    "heyy",
+    "hlo",
+    "helo",
+    "yo",
+    "namaste",
+    "namaskar",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "gm",
+    "ga",
+    "ge",
+  ]);
+
+  if (greetings.has(t)) return true;
+  if (t.startsWith("hi ")) return true;
+  if (t.startsWith("hey ")) return true;
+  if (t.startsWith("hello ")) return true;
+  if (t.startsWith("namaste ")) return true;
+  if (t.startsWith("good morning")) return true;
+  if (t.startsWith("good afternoon")) return true;
+  if (t.startsWith("good evening")) return true;
+
+  return false;
+}
+/* ============================================================================
+   EMBEDDINGS + CHAT (SAFE)
+============================================================================ */
 async function safeEmbedding(
   logger: ReturnType<typeof createLogger>,
   input: string,
@@ -182,10 +225,7 @@ async function safeChatCompletion(
   logger: ReturnType<typeof createLogger>,
   params: { systemPrompt: string; userMessage: string },
 ): Promise<string | null> {
-  // NOTE: This helper is kept for:
-  // - follow-up suggestion mode
-  // - workflow intent classification
-  // Main reply routing is handled by runAICompletion() below.
+  // Used for: follow-up suggestion + workflow intent classification
   try {
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -203,17 +243,11 @@ async function safeChatCompletion(
   }
 }
 
-function safeText(str: any): string {
-  return typeof str === "string" ? str : "";
-}
-
 /* ============================================================================
    PHASE 4 — PRICING (CUSTOMER) + COST (PLATFORM)
 ============================================================================ */
 const MODEL_CHARGED_PRICE: Record<string, number> = {
   "gpt-4o-mini": 2.5,
-
-  // You can expand this mapping as you add models in UI.
   "gemini-2.5-pro": 3.0,
   "gemini-1.5-flash": 2.0,
 };
@@ -230,9 +264,7 @@ function estimateActualCost(params: {
 }): number {
   const { provider, model, inputTokens, outputTokens } = params;
 
-  // NOTE: these are approximations for internal profit analytics.
-  // You can refine later per model based on your true vendor price plan.
-
+  // Approx internal cost estimation for analytics (not customer billing).
   if (provider === "openai") {
     if (model === "gpt-4o-mini") {
       const cost =
@@ -283,10 +315,7 @@ async function resolveAISettings(params: {
       .maybeSingle();
 
     if (data?.provider && data?.model) {
-      return {
-        provider: data.provider,
-        model: data.model,
-      };
+      return { provider: data.provider, model: data.model };
     }
   }
 
@@ -298,17 +327,11 @@ async function resolveAISettings(params: {
     .maybeSingle();
 
   if (orgWide?.provider && orgWide?.model) {
-    return {
-      provider: orgWide.provider,
-      model: orgWide.model,
-    };
+    return { provider: orgWide.provider, model: orgWide.model };
   }
 
   logger.warn("[ai-settings] fallback to default");
-  return {
-    provider: "openai",
-    model: "gpt-4o-mini",
-  };
+  return { provider: "openai", model: "gpt-4o-mini" };
 }
 
 /* ============================================================================
@@ -340,10 +363,10 @@ async function runOpenAICompletion(params: {
       ],
     });
 
-    const choice = resp.choices?.[0]?.message?.content?.trim() ?? null;
+    const text = resp.choices?.[0]?.message?.content?.trim() ?? null;
 
     return {
-      text: choice,
+      text,
       inputTokens: resp.usage?.prompt_tokens ?? 0,
       outputTokens: resp.usage?.completion_tokens ?? 0,
       provider: "openai",
@@ -364,7 +387,7 @@ async function runGeminiCompletion(params: {
   const { model, systemPrompt, userMessage, logger } = params;
 
   if (!gemini) {
-    logger.warn("[gemini] missing GEMINI_API_KEY; falling back to OpenAI");
+    logger.warn("[gemini] missing GEMINI_API_KEY; fallback to OpenAI");
     return null;
   }
 
@@ -402,14 +425,13 @@ async function runAICompletion(params: {
   if (params.provider === "gemini") {
     const gem = await runGeminiCompletion(params);
     if (gem) return gem;
-    // fallback to OpenAI if Gemini unavailable
-    return runOpenAICompletion({ ...params, provider: "openai" } as any);
+    return runOpenAICompletion({ ...params, logger: params.logger } as any);
   }
   return runOpenAICompletion(params);
 }
 
 /* ============================================================================
-   PHASE 4 — AI USAGE LOGGING
+   PHASE 4 — AI USAGE LOGGING (helper, optional)
 ============================================================================ */
 async function logAIUsage(params: {
   organizationId: string;
@@ -441,13 +463,10 @@ async function logAIUsage(params: {
       organization_id: organizationId,
       sub_organization_id: subOrganizationId,
       conversation_id: conversationId,
-
       provider,
       model,
-
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-
       estimated_cost: estimatedCost,
       charged_amount: chargedAmount,
     });
@@ -457,9 +476,8 @@ async function logAIUsage(params: {
     logger.error("[ai-usage] fatal error", { error: err });
   }
 }
-
 /* ============================================================================
-   PHASE 7A — CAMPAIGN CONTEXT HELPERS
+   PHASE 7A — CAMPAIGN CONTEXT HELPERS (FIXED: NO last_delivered_at)
 ============================================================================ */
 async function fetchCampaignContextForContact(
   organizationId: string,
@@ -488,14 +506,13 @@ async function fetchCampaignContextForContact(
   const summary = await safeSupabase<{
     delivered_campaigns: string[] | null;
     failed_campaigns: string[] | null;
-    last_delivered_at: string | null;
   }>(
     "load_contact_campaign_summary",
     logger,
     () =>
       supabase
         .from("contact_campaign_summary")
-        .select("delivered_campaigns, failed_campaigns, last_delivered_at")
+        .select("delivered_campaigns, failed_campaigns")
         .eq("organization_id", organizationId)
         .eq("phone", contact.phone)
         .maybeSingle(),
@@ -505,22 +522,13 @@ async function fetchCampaignContextForContact(
     contact,
     delivered: summary?.delivered_campaigns ?? [],
     failed: summary?.failed_campaigns ?? [],
-    lastDeliveredAt: summary?.last_delivered_at ?? null,
   };
 }
 
 function buildCampaignContextText(ctx: any): string {
   if (!ctx) return "";
 
-  const { contact, delivered, failed, lastDeliveredAt } = ctx;
-
-  const daysAgo =
-    lastDeliveredAt
-      ? Math.floor(
-        (Date.now() - new Date(lastDeliveredAt).getTime()) /
-          (1000 * 60 * 60 * 24),
-      )
-      : null;
+  const { contact, delivered, failed } = ctx;
 
   return `
 CAMPAIGN HISTORY CONTEXT (IMPORTANT):
@@ -532,94 +540,57 @@ Customer:
 Campaign delivery history:
 - Delivered templates: ${delivered.length ? delivered.join(", ") : "None"}
 - Failed templates: ${failed.length ? failed.join(", ") : "None"}
-- Last campaign delivered: ${daysAgo !== null ? `${daysAgo} days ago` : "Never"}
 
 Rules you MUST follow:
 - Do NOT repeat offers/templates already delivered.
-- If the last campaign was delivered within 14 days, use a soft follow-up tone.
 - If multiple failures exist, acknowledge difficulty reaching the customer.
 `.trim();
 }
 
 /* ============================================================================
-   PHASE 7C — FOLLOW-UP SUGGESTION PROMPT (NO AUTO-SEND)
+   BOT PERSONALITY (ORG → SUB-ORG OVERRIDE)
 ============================================================================ */
-function buildFollowupSuggestionPrompt(params: {
-  campaignContextText: string;
-  personalityBlock: string;
+async function loadBotPersonality(params: {
+  organizationId: string;
+  subOrganizationId: string | null;
 }) {
-  return `
-You are an automotive dealership assistant.
+  const { organizationId, subOrganizationId } = params;
 
-Your task:
-- Suggest ONE short WhatsApp follow-up message.
-- This message will be reviewed by a human before sending.
-- DO NOT repeat offers already delivered.
-- DO NOT sound pushy or salesy.
-- Keep it friendly, human, and helpful.
-- 1–2 sentences maximum.
-
-------------------------
-CAMPAIGN HISTORY CONTEXT
-------------------------
-${params.campaignContextText || "No campaign history available."}
-
-------------------------
-STYLE RULES
-------------------------
-${params.personalityBlock || "- Neutral, polite tone"}
-
-Return ONLY the suggested message text.
-Do NOT include explanations.
-Do NOT ask multiple questions.
-`.trim();
-}
-
-/* ============================================================================
-   UNANSWERED QUESTION LOGGER
-============================================================================ */
-async function logUnansweredQuestion(
-  organizationId: string,
-  question: string,
-  logger: ReturnType<typeof createLogger>,
-) {
-  const q = question.trim();
-  if (!q) return;
-
-  try {
-    const { data: existing, error } = await supabase
-      .from("unanswered_questions")
-      .select("id, occurrences")
+  if (subOrganizationId) {
+    const { data } = await supabase
+      .from("bot_personality")
+      .select(
+        "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts",
+      )
       .eq("organization_id", organizationId)
-      .eq("question", q)
+      .eq("sub_organization_id", subOrganizationId)
       .maybeSingle();
 
-    if (error) {
-      logger.error("[unanswered] select error", { error });
-      return;
-    }
-
-    if (existing) {
-      const { error: updateError } = await supabase
-        .from("unanswered_questions")
-        .update({ occurrences: (existing.occurrences ?? 0) + 1 })
-        .eq("id", existing.id);
-
-      if (updateError) logger.error("[unanswered] update error", { error: updateError });
-    } else {
-      const { error: insertError } = await supabase
-        .from("unanswered_questions")
-        .insert({
-          organization_id: organizationId,
-          question: q,
-          occurrences: 1,
-        });
-
-      if (insertError) logger.error("[unanswered] insert error", { error: insertError });
-    }
-  } catch (err) {
-    logger.error("[unanswered] fatal error", { error: err });
+    if (data) return data;
   }
+
+  const { data: orgWide } = await supabase
+    .from("bot_personality")
+    .select(
+      "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts",
+    )
+    .eq("organization_id", organizationId)
+    .is("sub_organization_id", null)
+    .maybeSingle();
+
+  return (
+    orgWide ?? {
+      tone: "Professional",
+      language: "English",
+      short_responses: true,
+      emoji_usage: false,
+      gender_voice: "Neutral",
+      fallback_message: "I’m sorry, I don’t have enough information to answer that.",
+      business_context: "",
+      dos: "",
+      donts: "",
+    }
+  );
 }
 
 /* ============================================================================
@@ -768,7 +739,7 @@ type WorkflowLogRow = {
 };
 
 /* ============================================================================
-   TRIGGER DETECTION
+   WORKFLOW — TRIGGER DETECTION
 ============================================================================ */
 async function detectWorkflowTrigger(
   user_message: string,
@@ -854,7 +825,7 @@ async function detectWorkflowTrigger(
 }
 
 /* ============================================================================
-   WORKFLOW SESSION HELPERS
+   WORKFLOW — SESSION HELPERS
 ============================================================================ */
 async function loadActiveWorkflow(
   conversationId: string,
@@ -946,7 +917,7 @@ async function saveWorkflowProgress(
 }
 
 /* ============================================================================
-   STEP EXECUTION ENGINE
+   WORKFLOW — STEP EXECUTION ENGINE
 ============================================================================ */
 type StepResult = { output: string; end: boolean; nextStepNumber?: number };
 
@@ -994,7 +965,11 @@ async function executeStep(
     }
 
     case "end":
-      return { output: instructionText || "Workflow completed!", end: true, nextStepNumber: step.step_order };
+      return {
+        output: instructionText || "Workflow completed!",
+        end: true,
+        nextStepNumber: step.step_order,
+      };
 
     default:
       logger.warn("[workflow] unknown ai_action, falling back", { aiAction });
@@ -1012,7 +987,10 @@ async function runStrictMode(
   const expected = safeText(action.expected_user_input);
 
   if (expected && (!user_message || !user_message.trim())) {
-    return { output: "Please provide the required information to continue.", end: false } as StepResult;
+    return {
+      output: "Please provide the required information to continue.",
+      end: false,
+    } as StepResult;
   }
 
   return executeStep(step, log, user_message, logger);
@@ -1026,7 +1004,6 @@ async function runSmartMode(
 ) {
   return executeStep(step, log, user_message, logger);
 }
-
 /* ============================================================================
    MAIN HANDLER
 ============================================================================ */
@@ -1081,24 +1058,6 @@ serve(async (req: Request): Promise<Response> => {
     const channel = conv.channel || "web";
     const contactId = conv.contact_id;
 
-    // -----------------------------
-    // // PHASE 5 — WALLET BALANCE CHECK
-    // // -----------------------------
-
-    const wallet = await loadWalletForOrg(organizationId);
-    
-    if (!wallet) {
-      logger.error("[wallet] missing or inactive wallet");
-      return new Response(
-        JSON.stringify({
-          error: "Wallet not available",
-          error_code: "WALLET_NOT_AVAILABLE",
-          request_id,
-        }),
-        { status: 402 },
-      );
-    }
-
     const logger = createLogger({
       request_id,
       conversation_id,
@@ -1107,7 +1066,26 @@ serve(async (req: Request): Promise<Response> => {
       channel,
     });
 
-    // 2) Fetch contact phone once
+    // 2) Wallet (required for any AI call; greetings are free)
+    const wallet = await loadWalletForOrg(organizationId);
+    if (!wallet) {
+      logger.error("[wallet] missing or inactive wallet");
+      // Allow greeting reply even if wallet missing? You wanted greeting ALWAYS.
+      // But we can still allow greeting because it bypasses AI + wallet.
+      // We'll only block if not greeting.
+      if (!isGreetingMessage(user_message)) {
+        return new Response(
+          JSON.stringify({
+            error: "Wallet not available",
+            error_code: "WALLET_NOT_AVAILABLE",
+            request_id,
+          }),
+          { status: 402, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
+    // 3) Fetch contact phone (needed for WhatsApp sends, including greetings)
     let contactPhone: string | null = null;
     if (channel === "whatsapp" && contactId) {
       const contact = await safeSupabase<{ phone: string | null }>(
@@ -1123,61 +1101,15 @@ serve(async (req: Request): Promise<Response> => {
       contactPhone = contact?.phone ?? null;
     }
 
-    // 3) Campaign context
-    let campaignContextText = "";
-    if (contactId) {
-      const campaignCtx = await fetchCampaignContextForContact(organizationId, contactId, logger);
-      if (campaignCtx) {
-        campaignContextText = buildCampaignContextText(campaignCtx);
-        logger.debug("[ai-handler] campaign context injected", {
-          delivered: campaignCtx.delivered,
-          failed: campaignCtx.failed,
-        });
-      }
-    }
+    // 4) Personality (needed for greeting + fallback)
+    const personality = await loadBotPersonality({
+      organizationId,
+      subOrganizationId,
+    });
 
-    // 4) Load bot personality (sub-org first; fallback to org-wide)
-    async function loadBotPersonality() {
-      if (subOrganizationId) {
-        const { data } = await supabase
-          .from("bot_personality")
-          .select(
-            "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts",
-          )
-          .eq("organization_id", organizationId)
-          .eq("sub_organization_id", subOrganizationId)
-          .maybeSingle();
-
-        if (data) return data;
-      }
-
-      const { data: orgWide } = await supabase
-        .from("bot_personality")
-        .select(
-          "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts",
-        )
-        .eq("organization_id", organizationId)
-        .is("sub_organization_id", null)
-        .maybeSingle();
-
-      return (
-        orgWide ?? {
-          tone: "Professional",
-          language: "English",
-          short_responses: true,
-          emoji_usage: false,
-          gender_voice: "Neutral",
-          fallback_message: "I’m sorry, I don’t have enough information to answer that.",
-          business_context: "",
-          dos: "",
-          donts: "",
-        }
-      );
-    }
-
-    const personality = await loadBotPersonality();
     const fallbackMessage =
-      personality?.fallback_message ?? "I’m sorry, I don’t have enough information to answer that.";
+      personality?.fallback_message ??
+      "I’m sorry, I don’t have enough information to answer that.";
 
     const personaBlock = `
 Tone & Language:
@@ -1197,9 +1129,63 @@ DON’Ts (Strictly avoid):
 ${personality.donts || "- None specified."}
 `.trim();
 
-    // 5) Follow-up suggestion (NO send, NO DB write)
+    // ------------------------------------------------------------------
+    // HARD GREETING RULE (NO AI) — ALWAYS REPLY TO hi/hello/hey/namaste etc.
+    // ------------------------------------------------------------------
+    if (isGreetingMessage(user_message)) {
+      const greetText =
+        personality?.language?.toLowerCase?.().includes("hindi")
+          ? "Namaste 👋 Techwheels mein aapka swagat hai. Main aapki kaise madad kar sakta/ sakti hoon?"
+          : "Hello 👋 Welcome to Techwheels. How can I help you today?";
+
+      // Save bot message
+      await supabase.from("messages").insert({
+        conversation_id,
+        sender: "bot",
+        message_type: "text",
+        text: greetText,
+        channel,
+        sub_organization_id: subOrganizationId,
+      });
+
+      // Update conversation timestamp
+      await supabase
+        .from("conversations")
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", conversation_id);
+
+      // Send WhatsApp reply if WhatsApp
+      if (channel === "whatsapp" && contactPhone) {
+        await safeWhatsAppSend(logger, {
+          organization_id: organizationId,
+          sub_organization_id: subOrganizationId,
+          to: contactPhone,
+          type: "text",
+          text: greetText,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          ai_response: greetText,
+          request_id,
+          hard_greeting: true,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // 5) Follow-up suggestion mode (NO send, NO DB write)
     if (mode === "suggest_followup") {
       logger.info("[ai-handler] follow-up suggestion requested");
+
+      // Optional campaign context (best-effort)
+      let campaignContextText = "";
+      if (contactId) {
+        const campaignCtx = await fetchCampaignContextForContact(organizationId, contactId, logger);
+        if (campaignCtx) campaignContextText = buildCampaignContextText(campaignCtx);
+      }
 
       const prompt = buildFollowupSuggestionPrompt({
         campaignContextText,
@@ -1212,7 +1198,11 @@ ${personality.donts || "- None specified."}
       });
 
       return new Response(
-        JSON.stringify({ conversation_id, suggestion: suggestion?.trim() || "", request_id }),
+        JSON.stringify({
+          conversation_id,
+          suggestion: suggestion?.trim() || "",
+          request_id,
+        }),
         { headers: { "Content-Type": "application/json" } },
       );
     }
@@ -1241,7 +1231,10 @@ ${personality.donts || "- None specified."}
         const steps = await getWorkflowSteps(activeWorkflow.workflow_id!, logger);
 
         if (steps.length) {
-          const stepNum = Math.max(1, Math.min(activeWorkflow.current_step_number ?? 1, steps.length));
+          const stepNum = Math.max(
+            1,
+            Math.min(activeWorkflow.current_step_number ?? 1, steps.length),
+          );
           const step = steps[stepNum - 1];
 
           const stepResult =
@@ -1289,14 +1282,24 @@ ${personality.donts || "- None specified."}
           }
 
           return new Response(
-            JSON.stringify({ conversation_id, ai_response: reply, workflow_active: true, request_id }),
+            JSON.stringify({
+              conversation_id,
+              ai_response: reply,
+              workflow_active: true,
+              request_id,
+            }),
             { headers: { "Content-Type": "application/json" } },
           );
         }
       }
 
       return new Response(
-        JSON.stringify({ conversation_id, skipped: true, reason: "Workflow active", request_id }),
+        JSON.stringify({
+          conversation_id,
+          skipped: true,
+          reason: "Workflow active",
+          request_id,
+        }),
         { headers: { "Content-Type": "application/json" } },
       );
     }
@@ -1331,7 +1334,20 @@ ${personality.donts || "- None specified."}
         ?.map((m) => `${new Date(m.created_at).toISOString()} - ${m.sender}: ${m.text ?? ""}`)
         .join("\n") ?? "";
 
-    // 9) RAG
+    // 9) Campaign context (best-effort; fixed schema)
+    let campaignContextText = "";
+    if (contactId) {
+      const campaignCtx = await fetchCampaignContextForContact(organizationId, contactId, logger);
+      if (campaignCtx) {
+        campaignContextText = buildCampaignContextText(campaignCtx);
+        logger.debug("[ai-handler] campaign context injected", {
+          delivered: campaignCtx.delivered,
+          failed: campaignCtx.failed,
+        });
+      }
+    }
+
+    // 10) RAG
     let contextText = "No relevant dealership knowledge found.";
     const embedding = await safeEmbedding(logger, user_message);
 
@@ -1344,6 +1360,7 @@ ${personality.donts || "- None specified."}
         logger,
       });
 
+      // Forced KB hit: respond with KB chunks directly (no AI call)
       if (resolved?.forced) {
         const reply = resolved.context;
 
@@ -1372,7 +1389,12 @@ ${personality.donts || "- None specified."}
         }
 
         return new Response(
-          JSON.stringify({ conversation_id, ai_response: reply, request_id, forced_kb: true }),
+          JSON.stringify({
+            conversation_id,
+            ai_response: reply,
+            request_id,
+            forced_kb: true,
+          }),
           { headers: { "Content-Type": "application/json" } },
         );
       }
@@ -1380,7 +1402,7 @@ ${personality.donts || "- None specified."}
       if (resolved?.context) contextText = resolved.context;
     }
 
-    // 10) System prompt
+    // 11) System prompt
     const systemPrompt = `
 You are Techwheels AI — a professional automotive dealership assistant.
 
@@ -1449,13 +1471,14 @@ FORMATTING & STYLE
 Respond now to the customer's latest message only.
 `.trim();
 
-    // 11) AI response (provider-aware, DB-driven)
+    // 12) AI settings
     const aiSettings = await resolveAISettings({
       organizationId,
       subOrganizationId,
       logger,
     });
 
+    // 13) Run AI completion
     const aiResult = await runAICompletion({
       provider: aiSettings.provider,
       model: aiSettings.model,
@@ -1467,32 +1490,45 @@ Respond now to the customer's latest message only.
     let aiResponseText = aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
+    // 14) Wallet debit + AI usage log (only if AI was actually called)
     if (aiResult) {
       const chargedAmount = getChargedAmountForModel(aiResult.model);
-    
+
+      // If wallet missing earlier but we are here => block (since this is AI)
+      if (!wallet) {
+        return new Response(
+          JSON.stringify({
+            error: "Wallet not available",
+            error_code: "WALLET_NOT_AVAILABLE",
+            request_id,
+          }),
+          { status: 402, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       if (wallet.balance < chargedAmount) {
         logger.warn("[wallet] insufficient balance for AI call", {
           balance: wallet.balance,
           required: chargedAmount,
         });
-    
+
         return new Response(
           JSON.stringify({
             error: "Insufficient wallet balance",
             error_code: "LOW_WALLET_BALANCE",
             request_id,
           }),
-          { status: 402 },
+          { status: 402, headers: { "Content-Type": "application/json" } },
         );
       }
-    
+
       const estimatedCost = estimateActualCost({
         provider: aiResult.provider,
         model: aiResult.model,
         inputTokens: aiResult.inputTokens,
         outputTokens: aiResult.outputTokens,
       });
-    
+
       // 1) Insert AI usage log FIRST
       const { data: usage, error: usageError } = await supabase
         .from("ai_usage_logs")
@@ -1509,19 +1545,19 @@ Respond now to the customer's latest message only.
         })
         .select("id")
         .single();
-    
+
       if (usageError || !usage) {
         logger.error("[wallet] ai usage insert failed", { usageError });
         return new Response("AI usage logging failed", { status: 500 });
       }
-    
+
       // 2) Debit wallet
       const walletTxnId = await createWalletDebit({
         walletId: wallet.id,
         amount: chargedAmount,
         aiUsageId: usage.id,
       });
-    
+
       if (!walletTxnId) {
         logger.error("[wallet] debit failed");
         return new Response(
@@ -1530,21 +1566,20 @@ Respond now to the customer's latest message only.
             error_code: "WALLET_DEBIT_FAILED",
             request_id,
           }),
-          { status: 500 },
+          { status: 500, headers: { "Content-Type": "application/json" } },
         );
       }
-    
+
       // 3) Link usage → wallet transaction
       await supabase
         .from("ai_usage_logs")
         .update({ wallet_transaction_id: walletTxnId })
         .eq("id", usage.id);
-    }    
+    }
 
-
-    // 12) NO-REPLY handling (do NOT save message / do NOT send)
+    // 15) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
-      logger.info("[ai-handler] AI chose not to reply");
+      logger.info("[ai-handler] AI chose not to reply", { user_message });
 
       await supabase
         .from("conversations")
@@ -1557,12 +1592,12 @@ Respond now to the customer's latest message only.
       );
     }
 
-    // 13) Log unanswered fallback
+    // 16) Log unanswered fallback
     if (aiResponseText === fallbackMessage) {
       await logUnansweredQuestion(organizationId, user_message, logger);
     }
 
-    // 14) Save message + update conversation
+    // 17) Save message + update conversation
     await supabase.from("messages").insert({
       conversation_id,
       sender: "bot",
@@ -1577,7 +1612,7 @@ Respond now to the customer's latest message only.
       .update({ last_message_at: new Date().toISOString() })
       .eq("id", conversation_id);
 
-    // 15) WhatsApp send
+    // 18) WhatsApp send
     if (channel === "whatsapp" && contactPhone) {
       await safeWhatsAppSend(logger, {
         organization_id: organizationId,

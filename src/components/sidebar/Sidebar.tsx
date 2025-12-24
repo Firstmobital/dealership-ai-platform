@@ -13,11 +13,32 @@ import {
   BarChart3,
   FileText,
   Sparkles,
+  Wallet,
 } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
+import { useWalletStore } from "../../state/useWalletStore";
+import { getCurrentOrgRole } from "../../state/useOrganizationStore";
 
 export function Sidebar() {
+  const role = getCurrentOrgRole();
+  const { walletStatus } = useWalletStore();
+
+  const canSeeWallet = ["admin", "owner", "manager"].includes(
+    (role ?? "").toLowerCase(),
+  );
+
+  const walletBadge =
+    walletStatus === "critical" ? (
+      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+        CRITICAL
+      </span>
+    ) : walletStatus === "low" ? (
+      <span className="rounded-full bg-yellow-100 px-2 py-0.5 text-[10px] font-semibold text-yellow-700">
+        LOW
+      </span>
+    ) : null;
+
   return (
     <aside className="flex h-full w-60 flex-col border-r border-slate-200 bg-white px-4 py-5">
       {/* Brand */}
@@ -45,8 +66,11 @@ export function Sidebar() {
         <SidebarLink to="/workflows" icon={Workflow} label="Workflows" />
         <SidebarLink to="/campaigns" icon={Megaphone} label="Campaigns" />
         <SidebarLink to="/analytics" icon={BarChart3} label="Analytics" />
-        <SidebarLink to="/settings/whatsapp-templates" icon={FileText} label="WhatsApp Templates"/>
-
+        <SidebarLink
+          to="/settings/whatsapp-templates"
+          icon={FileText}
+          label="WhatsApp Templates"
+        />
 
         <div className="mt-4 border-t border-slate-200 pt-3 text-xs uppercase tracking-wide text-slate-500">
           Settings
@@ -57,13 +81,32 @@ export function Sidebar() {
           icon={PhoneCall}
           label="WhatsApp Settings"
         />
+
         <SidebarLink
           to="/settings/sub-orgs"
           icon={Building2}
           label="Divisions"
         />
-        <SidebarLink to="/settings/ai-config" icon={Sparkles} label="AI Configuration" />
-        
+
+        <SidebarLink
+          to="/settings/ai-config"
+          icon={Sparkles}
+          label="AI Configuration"
+        />
+
+        {canSeeWallet && (
+          <SidebarLink
+            to="/settings/wallet"
+            icon={Wallet}
+            label={
+              <>
+                <span>Wallet</span>
+                {walletBadge}
+              </>
+            }
+          />
+        )}
+
         <SidebarLink
           to="/unanswered"
           icon={HelpCircle}

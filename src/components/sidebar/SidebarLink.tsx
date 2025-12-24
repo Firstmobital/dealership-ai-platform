@@ -2,6 +2,7 @@
 
 import { NavLink } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 export function SidebarLink({
   to,
@@ -10,7 +11,7 @@ export function SidebarLink({
 }: {
   to: string;
   icon: LucideIcon;
-  label: string;
+  label: ReactNode;
 }) {
   return (
     <NavLink
@@ -25,7 +26,7 @@ export function SidebarLink({
       }
     >
       <Icon size={18} />
-      <span>{label}</span>
+      <span className="flex items-center gap-2">{label}</span>
     </NavLink>
   );
 }

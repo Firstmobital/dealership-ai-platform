@@ -28,6 +28,7 @@ import DatabasePage from "./modules/database/pages/DatabasePage";
 import { WhatsappOverviewPage } from "./modules/analytics/pages/WhatsappOverviewPage";
 import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesModule";
 import { AIConfigurationModule } from "./modules/settings/AIConfigurationModule";
+import WalletPage from "./pages/settings/WalletPage";
 
 
 /* -------------------------------------------------------------------------- */
@@ -152,6 +153,7 @@ function App() {
           element={<SubOrganizationsPanel />}
         />
         <Route path="settings/ai-config" element={<AIConfigurationModule />} />
+        <Route path="wallet" element={<WalletPage />} />
         <Route
           path="unanswered"
           element={<UnansweredQuestionsModule />}

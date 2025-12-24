@@ -503,3 +503,44 @@ Added database foundation for AI configuration and usage tracking.
 - MOD: src/components/sidebar/Sidebar.tsx
 - MOD: src/App.tsx
 - MOD: src/types/database.ts
+
+## 2025-12-24 — Phase 5.1: Wallet DB Foundation
+
+- Added `wallets` table (1 per organization) with balance + totals (credited/debited), currency, status, timestamps.
+- Added `wallet_transactions` append-only ledger with strict constraints and AI-debit linkage rules.
+- Linked `ai_usage_logs` to billing via `wallet_transaction_id` (1:1 enforced by unique index).
+- Added triggers:
+  - Auto-create wallet on new organization insert
+  - Prevent negative wallet balances on outgoing transactions
+  - Apply ledger entries to wallet balance/totals
+- Enabled RLS read policies for org members on wallets + wallet transactions; writes reserved for service role (Edge Functions).
+
+## 2025-12-25 — Phase 5.4 Step 1 (Wallet Thresholds)
+
+- Added low_balance_threshold and critical_balance_threshold to wallets table
+- Defaults: low = 50, critical = 10
+- Added sanity constraint (critical <= low)
+- No behavior change yet
+
+## 2025-12-25 — Phase 5.4 Step 2 (Wallet Store Enhancements)
+
+- Added centralized walletStatus computation (ok / low / critical / inactive / missing)
+- Wallet thresholds consumed from DB
+- Exposed clean Zustand store for UI reuse
+
+## 2025-12-25 — Phase 5.4 Step 3 (Wallet Page Alerts)
+
+- Added wallet alert banners (low / critical / inactive / missing)
+- Wallet page now reacts to walletStatus from store
+- No new logic added; reused centralized wallet computation
+
+## 2025-12-25 — Phase 5.5 Step 3
+- Finalized Wallet page alert UI
+- Handled missing / inactive / low / critical states
+- Aligned WalletPage with walletStatus logic
+
+## 2025-12-25 — Phase 5.5 Step 4
+- Polished global wallet alerts
+- Fixed SidebarLink to support ReactNode labels
+- Added LOW / CRITICAL wallet badge in sidebar
+- Ensured role-based visibility (admin/owner/manager)
