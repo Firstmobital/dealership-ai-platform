@@ -392,3 +392,10 @@ export type AIUsageLog = {
 
   created_at: string;
 };
+export type Wallet = {
+  id: UUID;
+  organization_id: UUID;
+  balance: number;
+  currency: string;
+  status: "active" | "suspended";
+};

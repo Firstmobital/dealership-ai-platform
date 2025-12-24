@@ -35,6 +35,44 @@ const gemini = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+/* ============================================================================
+   PHASE 5 — WALLET HELPERS
+============================================================================ */
+async function loadWalletForOrg(organizationId: string) {
+  const { data, error } = await supabase
+    .from("wallets")
+    .select("id, balance, status")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  if (data.status !== "active") return null;
+
+  return data;
+}
+
+async function createWalletDebit(params: {
+  walletId: string;
+  amount: number;
+  aiUsageId: string;
+}) {
+  const { data, error } = await supabase
+    .from("wallet_transactions")
+    .insert({
+      wallet_id: params.walletId,
+      type: "debit",
+      direction: "out",
+      amount: params.amount,
+      reference_type: "ai_usage",
+      reference_id: params.aiUsageId,
+    })
+    .select("id")
+    .single();
+
+  if (error) return null;
+  return data.id;
+}
+
 
 /* ============================================================================
    LOGGING UTILITIES
@@ -1043,6 +1081,24 @@ serve(async (req: Request): Promise<Response> => {
     const channel = conv.channel || "web";
     const contactId = conv.contact_id;
 
+    // -----------------------------
+    // // PHASE 5 — WALLET BALANCE CHECK
+    // // -----------------------------
+
+    const wallet = await loadWalletForOrg(organizationId);
+    
+    if (!wallet) {
+      logger.error("[wallet] missing or inactive wallet");
+      return new Response(
+        JSON.stringify({
+          error: "Wallet not available",
+          error_code: "WALLET_NOT_AVAILABLE",
+          request_id,
+        }),
+        { status: 402 },
+      );
+    }
+
     const logger = createLogger({
       request_id,
       conversation_id,
@@ -1411,30 +1467,80 @@ Respond now to the customer's latest message only.
     let aiResponseText = aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
-    // ---- AI usage logging (profit + billing) ----
     if (aiResult) {
       const chargedAmount = getChargedAmountForModel(aiResult.model);
-
+    
+      if (wallet.balance < chargedAmount) {
+        logger.warn("[wallet] insufficient balance for AI call", {
+          balance: wallet.balance,
+          required: chargedAmount,
+        });
+    
+        return new Response(
+          JSON.stringify({
+            error: "Insufficient wallet balance",
+            error_code: "LOW_WALLET_BALANCE",
+            request_id,
+          }),
+          { status: 402 },
+        );
+      }
+    
       const estimatedCost = estimateActualCost({
         provider: aiResult.provider,
         model: aiResult.model,
         inputTokens: aiResult.inputTokens,
         outputTokens: aiResult.outputTokens,
       });
-
-      await logAIUsage({
-        organizationId,
-        subOrganizationId,
-        conversationId: conversation_id,
-        provider: aiResult.provider,
-        model: aiResult.model,
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCost,
-        chargedAmount,
-        logger,
+    
+      // 1) Insert AI usage log FIRST
+      const { data: usage, error: usageError } = await supabase
+        .from("ai_usage_logs")
+        .insert({
+          organization_id: organizationId,
+          sub_organization_id: subOrganizationId,
+          conversation_id: conversation_id,
+          provider: aiResult.provider,
+          model: aiResult.model,
+          input_tokens: aiResult.inputTokens,
+          output_tokens: aiResult.outputTokens,
+          estimated_cost: estimatedCost,
+          charged_amount: chargedAmount,
+        })
+        .select("id")
+        .single();
+    
+      if (usageError || !usage) {
+        logger.error("[wallet] ai usage insert failed", { usageError });
+        return new Response("AI usage logging failed", { status: 500 });
+      }
+    
+      // 2) Debit wallet
+      const walletTxnId = await createWalletDebit({
+        walletId: wallet.id,
+        amount: chargedAmount,
+        aiUsageId: usage.id,
       });
-    }
+    
+      if (!walletTxnId) {
+        logger.error("[wallet] debit failed");
+        return new Response(
+          JSON.stringify({
+            error: "Wallet debit failed",
+            error_code: "WALLET_DEBIT_FAILED",
+            request_id,
+          }),
+          { status: 500 },
+        );
+      }
+    
+      // 3) Link usage → wallet transaction
+      await supabase
+        .from("ai_usage_logs")
+        .update({ wallet_transaction_id: walletTxnId })
+        .eq("id", usage.id);
+    }    
+
 
     // 12) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
