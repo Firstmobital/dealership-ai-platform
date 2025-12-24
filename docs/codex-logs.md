@@ -544,3 +544,8 @@ Added database foundation for AI configuration and usage tracking.
 - Fixed SidebarLink to support ReactNode labels
 - Added LOW / CRITICAL wallet badge in sidebar
 - Ensured role-based visibility (admin/owner/manager)
+
+## 2025-12-25 — Phase 5.5 Fix
+- Exported WalletTransaction type from useWalletStore
+- Fixed Vercel build failure (TS2305)
+- Wallet transactions UI now type-safe

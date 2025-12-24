@@ -2,6 +2,10 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
+/* ============================================================================
+   TYPES
+============================================================================ */
+
 export type WalletDbStatus = "active" | "inactive";
 
 export type WalletStatus = "missing" | "inactive" | "ok" | "low" | "critical";
@@ -20,6 +24,27 @@ export type Wallet = {
   created_at: string;
 };
 
+/* -------------------------------------------------------------------------- */
+/* WALLET TRANSACTIONS (🔥 MISSING TYPE — FIXES BUILD)                         */
+/* -------------------------------------------------------------------------- */
+export type WalletTransaction = {
+  id: string;
+  wallet_id: string;
+
+  type: "debit" | "credit";
+  direction: "in" | "out";
+
+  amount: number;
+
+  reference_type: "ai_usage" | "manual" | "adjustment";
+  reference_id: string | null;
+
+  created_at: string;
+};
+
+/* -------------------------------------------------------------------------- */
+/* ALERTS                                                                      */
+/* -------------------------------------------------------------------------- */
 export type WalletAlertType = "low" | "critical" | "inactive";
 
 export type WalletAlertLog = {
@@ -31,6 +56,10 @@ export type WalletAlertLog = {
   resolved_at: string | null;
   created_at: string;
 };
+
+/* ============================================================================
+   STORE STATE
+============================================================================ */
 
 type WalletState = {
   wallet: Wallet | null;
@@ -50,6 +79,10 @@ type WalletState = {
   syncAlerts: () => Promise<void>;
 };
 
+/* ============================================================================
+   HELPERS
+============================================================================ */
+
 function computeWalletStatus(wallet: Wallet | null): WalletStatus {
   if (!wallet) return "missing";
   if (wallet.status !== "active") return "inactive";
@@ -59,6 +92,10 @@ function computeWalletStatus(wallet: Wallet | null): WalletStatus {
 
   return "ok";
 }
+
+/* ============================================================================
+   STORE
+============================================================================ */
 
 export const useWalletStore = create<WalletState>((set, get) => ({
   wallet: null,
@@ -142,38 +179,30 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       loading: false,
     });
 
-    // Optional but helpful: keep DB alerts synced
-    // (safe: if RLS blocks inserts/updates, it will just log errors)
+    // Keep DB alerts in sync (safe + idempotent)
     await get().syncAlerts();
   },
 
   /* -------------------------------------------------------------------------- */
-  /* SYNC ALERTS (create/resolve)                                               */
+  /* SYNC ALERTS (CREATE / RESOLVE)                                             */
   /* -------------------------------------------------------------------------- */
   syncAlerts: async () => {
     const { wallet, walletStatus, activeAlerts } = get();
     if (!wallet) return;
 
     try {
-      // Desired alert type based on derived status
       const desiredType: WalletAlertType | null =
         walletStatus === "critical"
           ? "critical"
           : walletStatus === "low"
-            ? "low"
-            : walletStatus === "inactive"
-              ? "inactive"
-              : null;
+          ? "low"
+          : walletStatus === "inactive"
+          ? "inactive"
+          : null;
 
-      // 1) Resolve alerts that should no longer be active
-      // If wallet is OK, resolve low/critical (and inactive if active again)
-      const shouldResolveAll = desiredType === null;
-
-      // If desiredType is "critical", we should resolve "low" if it exists (upgrade)
-      // If desiredType is "low", we should resolve "critical" (should not happen logically, but safe)
       const resolveTypes = new Set<WalletAlertType>();
 
-      if (shouldResolveAll) {
+      if (!desiredType) {
         activeAlerts.forEach((a) => resolveTypes.add(a.alert_type));
       } else {
         activeAlerts.forEach((a) => {
@@ -182,7 +211,9 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       }
 
       for (const t of resolveTypes) {
-        const open = activeAlerts.find((a) => a.alert_type === t && !a.resolved_at);
+        const open = activeAlerts.find(
+          (a) => a.alert_type === t && !a.resolved_at,
+        );
         if (!open) continue;
 
         const { error } = await supabase
@@ -193,16 +224,19 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         if (error) console.error("[Wallet] resolve alert error:", error);
       }
 
-      // 2) Ensure the desired alert exists (only one open per type enforced by unique index)
       if (desiredType) {
-        const alreadyOpen = activeAlerts.some((a) => a.alert_type === desiredType && !a.resolved_at);
+        const alreadyOpen = activeAlerts.some(
+          (a) => a.alert_type === desiredType && !a.resolved_at,
+        );
 
         if (!alreadyOpen) {
-          const { error } = await supabase.from("wallet_alert_logs").insert({
-            organization_id: wallet.organization_id,
-            wallet_id: wallet.id,
-            alert_type: desiredType,
-          });
+          const { error } = await supabase
+            .from("wallet_alert_logs")
+            .insert({
+              organization_id: wallet.organization_id,
+              wallet_id: wallet.id,
+              alert_type: desiredType,
+            });
 
           if (error) console.error("[Wallet] create alert error:", error);
         }
