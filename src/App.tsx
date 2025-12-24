@@ -27,7 +27,7 @@ import { Toaster } from "react-hot-toast";
 import DatabasePage from "./modules/database/pages/DatabasePage";
 import { WhatsappOverviewPage } from "./modules/analytics/pages/WhatsappOverviewPage";
 import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesModule";
-
+import { AIConfigurationModule } from "./modules/settings/AIConfigurationModule";
 
 
 /* -------------------------------------------------------------------------- */
@@ -151,6 +151,7 @@ function App() {
           path="settings/sub-orgs"
           element={<SubOrganizationsPanel />}
         />
+        <Route path="settings/ai-config" element={<AIConfigurationModule />} />
         <Route
           path="unanswered"
           element={<UnansweredQuestionsModule />}

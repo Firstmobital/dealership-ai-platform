@@ -171,7 +171,6 @@ export type BotPersonality = {
   donts: string;
 };
 
-
 export type BotInstruction = {
   id: UUID;
   organization_id: UUID;
@@ -289,28 +288,6 @@ export type CampaignMessage = {
 };
 
 // -------------------------------------------------------------
-// AI HANDLER RESPONSES
-// -------------------------------------------------------------
-export type AIReplyResponse = {
-  conversation_id: UUID;
-  ai_response?: string;
-  no_reply?: boolean;
-  forced_kb?: boolean;
-  request_id: string;
-};
-
-export type AIFollowupSuggestionResponse = {
-  conversation_id: UUID;
-  suggestion: string;
-  request_id: string;
-};
-
-// -------------------------------------------------------------
-// CONVERSATION META (FUTURE SAFE)
-// -------------------------------------------------------------
-export type ConversationHeat = "hot" | "warm" | "cold" | "neutral";
-
-// -------------------------------------------------------------
 // CONTACT → CAMPAIGN SUMMARY VIEW
 // -------------------------------------------------------------
 export type ContactCampaignSummary = {
@@ -353,28 +330,65 @@ export type WhatsappTemplateStatus =
   | "approved"
   | "rejected";
 
-  export type WhatsappTemplate = {
-    id: UUID;
-    organization_id: UUID;
-    sub_organization_id: UUID | null;
-  
-    name: string;
-    category: string | null;
-    language: string | null;
-  
-    header_type: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | null;
-    header_text: string | null;
-  
-    body: string | null;
-    footer: string | null;
-  
-    status: WhatsappTemplateStatus;
-    meta_template_id: string | null;
-  
-    header_media_url: string | null;
-    header_media_mime: string | null;
-  
-    created_at: string;
-    updated_at: string;
-  };
-  
+export type WhatsappTemplate = {
+  id: UUID;
+  organization_id: UUID;
+  sub_organization_id: UUID | null;
+
+  name: string;
+  category: string | null;
+  language: string | null;
+
+  header_type: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | null;
+  header_text: string | null;
+
+  body: string | null;
+  footer: string | null;
+
+  status: WhatsappTemplateStatus;
+  meta_template_id: string | null;
+
+  header_media_url: string | null;
+  header_media_mime: string | null;
+
+  created_at: string;
+  updated_at: string;
+};
+
+// -------------------------------------------------------------
+// AI CONFIGURATION + USAGE (Phase 4)
+// -------------------------------------------------------------
+export type AIProvider = "openai" | "gemini";
+export type KBSearchType = "default" | "hybrid" | "title";
+
+export type AISettings = {
+  id: UUID;
+  organization_id: UUID;
+  sub_organization_id: UUID | null;
+
+  ai_enabled: boolean;
+  provider: AIProvider;
+  model: string;
+  kb_search_type: KBSearchType;
+
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AIUsageLog = {
+  id: UUID;
+  organization_id: UUID;
+  sub_organization_id: UUID | null;
+  conversation_id: UUID | null;
+  message_id: UUID | null;
+
+  provider: AIProvider | string;
+  model: string;
+
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost: number;
+
+  created_at: string;
+};

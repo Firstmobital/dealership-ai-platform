@@ -36,6 +36,18 @@ type BuilderState = {
 
 type Mode = "view" | "create";
 
+function safeFileNameFromUrl(url: string | null) {
+  if (!url) return null;
+  try {
+    const withoutQuery = (url.split("?")[0] ?? url).trim();
+    const parts = withoutQuery.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] ?? null;
+    return last ? decodeURIComponent(last) : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ========================================================================
    CSV HELPERS
 ========================================================================= */
@@ -153,7 +165,9 @@ export function CampaignsModule() {
 
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
-  const [mediaFileName, setMediaFileName] = useState<string | null>(null);
+  const [mediaPickedFileName, setMediaPickedFileName] = useState<string | null>(
+    null
+  );
   const [mediaUploadSuccess, setMediaUploadSuccess] = useState(false);
 
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
@@ -183,11 +197,16 @@ export function CampaignsModule() {
   useEffect(() => {
     setMediaUploading(false);
     setMediaError(null);
-    setMediaFileName(null);
+    setMediaPickedFileName(null);
     setMediaUploadSuccess(false);
     setMediaUrl(selectedTemplate?.header_media_url ?? null);
     setMediaMime(selectedTemplate?.header_media_mime ?? null);
   }, [selectedTemplate?.id]);
+
+  const attachedFileName = useMemo(
+    () => safeFileNameFromUrl(mediaUrl),
+    [mediaUrl]
+  );
 
   /* --------------------------------------------------------------------
      CSV PARSE
@@ -433,6 +452,18 @@ export function CampaignsModule() {
     setMediaUploadSuccess(false);
 
     const isImage = selectedTemplate.header_type === "IMAGE";
+    const isDoc = selectedTemplate.header_type === "DOCUMENT";
+
+    // hard validation (frontend)
+    if (isImage && !file.type.startsWith("image/")) {
+      setMediaError("Please upload a valid image file.");
+      return;
+    }
+    if (isDoc && file.type !== "application/pdf") {
+      setMediaError("Please upload a PDF document.");
+      return;
+    }
+
     const bucket = isImage
       ? "whatsapp-template-images"
       : "whatsapp-template-documents";
@@ -463,6 +494,7 @@ export function CampaignsModule() {
       setMediaUrl(data.publicUrl);
       setMediaMime(file.type);
       setMediaUploadSuccess(true);
+      setMediaPickedFileName(file.name);
 
       await fetchApprovedTemplates(currentOrganization.id);
     } catch (e: any) {
@@ -597,34 +629,69 @@ export function CampaignsModule() {
             {/* ==========================================================
                 TEMPLATE MEDIA (PHASE 2.3 FINAL UX)
             ========================================================== */}
-            {needsMedia && (
+            {needsMedia && selectedTemplate && (
               <div className="rounded-md border bg-slate-50 p-3 space-y-2">
-                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-                  {selectedTemplate?.header_type === "IMAGE" ? (
-                    <ImageIcon size={14} />
-                  ) : (
-                    <FileText size={14} />
-                  )}
-                  Template Media (
-                  {selectedTemplate?.header_type === "IMAGE" ? "Image" : "Document"}
-                  )
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    {selectedTemplate.header_type === "IMAGE" ? (
+                      <ImageIcon size={14} />
+                    ) : (
+                      <FileText size={14} />
+                    )}
+                    Template Media (
+                    {selectedTemplate.header_type === "IMAGE" ? "Image" : "PDF"}
+                    )
+                  </div>
+
+                  {mediaUrl ? (
+                    <div className="text-[11px] text-green-700 font-semibold">
+                      Already attached ✅
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="text-[11px] text-slate-600">
+                  This media is attached to the selected WhatsApp template and
+                  will be sent with every campaign message.
                 </div>
 
                 {mediaUrl ? (
-                  <div className="text-xs space-y-1">
-                    <div className="text-green-700 font-medium">
-                      Already attached ✅
-                    </div>
-                    <a
-                      href={mediaUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 underline"
-                    >
-                      Preview media
-                    </a>
+                  <div className="rounded-md border border-green-200 bg-white p-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs">
+                        <div className="font-medium text-slate-900">
+                          {attachedFileName ?? mediaPickedFileName ?? "Media"}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {mediaMime ?? ""}
+                        </div>
+                      </div>
 
-                    {selectedTemplate?.header_type === "IMAGE" ? (
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={mediaUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs hover:bg-slate-50"
+                        >
+                          Preview
+                        </a>
+
+                        <button
+                          type="button"
+                          disabled={mediaUploading || busy}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="inline-flex items-center gap-2 rounded-md bg-blue-600 text-white px-3 py-1.5 text-xs hover:bg-blue-700 disabled:opacity-60"
+                        >
+                          {mediaUploading ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : null}
+                          Replace
+                        </button>
+                      </div>
+                    </div>
+
+                    {selectedTemplate.header_type === "IMAGE" ? (
                       <img
                         src={mediaUrl}
                         alt="Template media preview"
@@ -633,31 +700,30 @@ export function CampaignsModule() {
                     ) : null}
                   </div>
                 ) : (
-                  <div className="text-xs text-slate-500">
-                    No media attached yet
+                  <div className="rounded-md border bg-white p-2">
+                    <div className="text-xs text-slate-600">
+                      No media attached yet.
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={mediaUploading || busy}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="mt-2 inline-flex items-center gap-2 rounded-md bg-blue-600 text-white px-3 py-2 text-xs hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {mediaUploading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : selectedTemplate.header_type === "IMAGE" ? (
+                        <ImageIcon size={14} />
+                      ) : (
+                        <FileText size={14} />
+                      )}
+                      Attach Media (
+                      {selectedTemplate.header_type === "IMAGE" ? "Image" : "PDF"}
+                      )
+                    </button>
                   </div>
                 )}
-
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    disabled={mediaUploading || busy}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex items-center gap-2 rounded-md bg-blue-600 text-white px-3 py-1.5 text-xs hover:bg-blue-700 disabled:opacity-60"
-                  >
-                    {mediaUrl ? "Replace media" : "Attach media"}
-                  </button>
-
-                  {mediaFileName ? (
-                    <span className="text-xs text-slate-500">
-                      {mediaFileName}
-                    </span>
-                  ) : null}
-                </div>
-
-                {mediaUploading ? (
-                  <div className="text-xs text-slate-500">Uploading media…</div>
-                ) : null}
 
                 {mediaUploadSuccess ? (
                   <div className="text-xs text-green-700">
@@ -674,14 +740,14 @@ export function CampaignsModule() {
                   type="file"
                   hidden
                   accept={
-                    selectedTemplate?.header_type === "IMAGE"
+                    selectedTemplate.header_type === "IMAGE"
                       ? "image/*"
                       : "application/pdf"
                   }
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    setMediaFileName(file.name);
+                    setMediaPickedFileName(file.name);
                     void uploadTemplateMedia(file);
                     e.currentTarget.value = "";
                   }}
@@ -713,7 +779,7 @@ export function CampaignsModule() {
               onChange={(e) => setTestPhone(e.target.value)}
               disabled={busy}
             />
-                        <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={launchNow}
                 disabled={busy}

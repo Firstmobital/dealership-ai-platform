@@ -1,16 +1,19 @@
 # Codex Implementation Log
 
 ## 2024-05-10
+
 - Initialized Joyz-style dealership AI platform repository structure.
 - Added architecture context documentation outlining modules, state stores, and backend functions.
 
 ## 2024-05-10 (Later)
+
 - Scaffolded Vite + React + Tailwind frontend with multi-module layout.
 - Implemented Zustand stores for auth, organizations, chats, knowledge base, workflows, and campaigns.
 - Added Supabase migrations covering organizations, conversations, knowledge base, workflows, and campaigns with pgvector support.
 - Created Supabase Edge Functions for WhatsApp webhook handling, AI engine orchestration, embedding pipeline, and campaign dispatching.
 
 ## 2024-05-11
+
 - Added guardrails to the `ai-test` edge function to surface missing OpenAI credentials early.
 - Documented local `.env.local` setup for supplying `OPENAI_API_KEY` to Supabase functions.
 - Updated `.gitignore` to exclude local OpenAI env files from version control.
@@ -26,6 +29,7 @@
 - Updated `src/App.tsx` routing to include the WhatsApp settings screen.
 
 ## 2025-11-19
+
 - Enhanced `whatsapp-inbound` edge function to handle image/document media from WhatsApp Cloud API.
 - Stored inbound WhatsApp media in a public Supabase Storage bucket (`whatsapp-media`) and attached `media_url` on `messages`.
 - Improved ai-handler integration with safe `user_message` construction for media-only messages and a user-friendly fallback response when AI fails.
@@ -38,26 +42,29 @@
 - Adds channel-aware guidelines (`whatsapp` vs `web/internal`) for answer formatting.
 - Keeps existing contract: `{ conversation_id, user_message, ai_response }` with no DB writes.
 
-
 ## 2025-11-22 — Stage 5C: WhatsApp pipeline sub-org audit
 
 - Verified whatsapp-inbound:
+
   - Resolves organization via whatsapp_settings.whatsapp_phone_id.
   - Resolves sub_organization_id using settings, classifier, or "general".
   - Upserts conversations and messages with correct organization_id and sub_organization_id.
   - Calls ai-handler using conversation_id.
 
 - Verified ai-handler:
+
   - Loads conversation to derive organization_id + sub_organization_id.
   - Scopes bot_personality, bot_instructions, and knowledge_articles by org + sub-org.
   - Inserts AI messages with sub_organization_id for both web and WhatsApp.
   - Calls whatsapp-send with organization_id + sub_organization_id for WhatsApp replies.
 
 - Verified whatsapp-send:
+
   - Resolves whatsapp_settings using (org, sub-org) with org-level fallback.
   - Sends outbound messages via correct Cloud API phone number per sub-org.
 
 - Frontend (ChatsModule + useChatStore) confirmed to:
+
   - Filter conversations/messages by org + sub-org.
   - Insert new messages with sub_organization_id.
   - Call whatsapp-send with both organization_id and sub_organization_id for WhatsApp chat replies.
@@ -105,6 +112,7 @@
 - Polished UX consistent with KB module.
 
 ## Step 4C – kb-save-from-unanswered Edge Function
+
 - Fully implemented unanswered → KB pipeline.
 - Loads unanswered question by org + sub-org.
 - Creates KB article with AI-generated summary.
@@ -147,6 +155,7 @@
   content column), aligning with the canonical messages schema.
 
 - Confirmed whatsapp-inbound stores:
+
   - conversation_id
   - sender = 'customer'
   - message_type
@@ -200,6 +209,7 @@
   blocked (HTTP 403); documented failure and proceeded with available tooling.
 
 ## 2025-12-03 – Readiness score + validation run
+
 - Added `docs/readiness-score-2025-12-03.md` capturing a 58/100 production readiness rating with scoring rationale, critical gaps, ## 2025-12-05 – Stage 6: DB & RLS Verification
 
 - Verified production schema for core tables:
@@ -214,8 +224,8 @@
 
 Result: Stage 6 – Steps 6.1 (DB consistency) and 6.2 (RLS hardening baseline) are complete. No new migrations required.
 and Supabase to-dos.
-- Re-ran lint/type-check and production build to validate current state after prior fixes.
 
+- Re-ran lint/type-check and production build to validate current state after prior fixes.
 
 ## 2025-12-05 – Stage 6: WhatsApp Webhook Cleanup
 
@@ -284,7 +294,6 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 - Prevents spammy or pushy behavior after campaign delivery.
 - Backend safely detects and suppresses message send.
 
-
 ## 2025-12-16 — Phase 7C: AI Follow-up Suggestions (Human-in-the-loop)
 
 - Added suggest_followup mode to ai-handler.
@@ -293,6 +302,7 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 - Enables human-reviewed, intelligent follow-ups.
 
 ## 2025-12-20 — Step 1: WhatsApp Templates (Draft CRUD)
+
 - Added whatsapp_templates table with org/sub-org scope + RLS policies
 - Added frontend Templates Manager UI (create/edit/delete draft templates)
 - Added Zustand store for template CRUD
@@ -314,6 +324,7 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
 - Added explicit `needsMedia` guard based on `whatsapp_templates.header_type` (IMAGE, DOCUMENT).
 
 - Finalized template-level media attachment UI:
+
   - Media section renders only for IMAGE/DOCUMENT templates.
   - Displays “Already attached ✅” state when `header_media_url` exists.
   - Added preview link for attached media.
@@ -321,6 +332,7 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
   - Added clear “Attach media / Replace media” action.
 
 - Implemented reliable media upload workflow:
+
   - IMAGE templates upload to `whatsapp-template-images` bucket.
   - DOCUMENT templates upload to `whatsapp-template-documents` bucket.
   - Media stored once per template (not per campaign).
@@ -328,6 +340,7 @@ Result: WhatsApp ingest pipeline is simpler, safer, and fully routed through `wh
     `header_media_mime`, and `updated_at`.
 
 - Added upload UX states:
+
   - Selected file name display.
   - Upload-in-progress indicator.
   - Success and error feedback.
@@ -353,3 +366,140 @@ No database migrations, RLS changes, or Edge Function updates were required.
 - Preserved existing RAG, campaign context, workflows, and NO_REPLY logic.
 
 Result: AI responses are now fully governed by human-readable business instructions with no JSON complexity.
+
+## 🔑 Phase 2.3 — Template Media Support (UX Hardening)
+
+**Date:** 2025-12-24  
+**Status:** ✅ Completed & Locked
+
+### Summary
+
+Hardened the Campaign Template Media flow to be fully production-safe, compile-safe, and user-clear without touching backend, DB, or dispatch logic.
+
+### Key Changes
+
+- Fixed `CampaignsModule` compile/runtime safety by adding strict null-guards for `selectedTemplate`
+- Media UI now renders **only** when template `header_type` is `IMAGE` or `DOCUMENT`
+- Added clear primary CTA: **Attach Media (Image / PDF)**
+- Implemented explicit media states:
+  - Uploading (spinner + disabled)
+  - Success feedback
+  - Error feedback
+- Added **“Already attached ✅”** indicator with filename + MIME
+- Added **Preview** button (image inline / document new tab)
+- Added explicit **Replace media** flow (no silent overwrite)
+- Enforced client-side file validation:
+  - IMAGE → `image/*`
+  - DOCUMENT → `application/pdf`
+- Added helper text clarifying template-level media attachment behavior
+
+### Explicit Non-Changes (Intentional)
+
+- No database schema changes
+- No Supabase migrations
+- No storage bucket or policy changes
+- No Edge Function updates
+- No campaign dispatch logic changes
+- No analytics changes
+
+### Files Modified
+
+- `src/modules/campaigns/CampaignsModule.tsx`
+
+### Supabase Impact
+
+- None
+
+### Phase Lock
+
+Phase 2.3 is complete and locked.  
+All media dispatch logic is deferred to **Phase 2.4**.
+
+Phase 2.4 — Campaign Dispatch Media Wiring
+
+Date: 2025-12-24
+Status: ✅ Completed & Locked
+
+Summary
+
+Completed end-to-end support for WhatsApp template media (IMAGE / DOCUMENT) during campaign dispatch, ensuring correct Meta payloads, variable rendering, and chat logging.
+
+Key Changes
+
+Added proper branching in campaign dispatch based on template header_type
+
+Enforced media presence for IMAGE / DOCUMENT templates
+
+Implemented correct Meta template payloads using:
+
+Header components (image / document)
+
+Body components (template variables)
+
+Fixed template variable rendering by converting variables into Meta body parameters
+
+Ensured correct component order: header → body
+
+Passed media metadata (media_url, mime_type, message_type) through dispatch
+
+Logged outbound media messages correctly in messages table
+
+Verified compatibility with existing chat UI rendering
+
+Files Modified
+
+supabase/functions/whatsapp-send/index.ts
+
+Database Impact
+
+No schema changes (existing columns reused)
+
+Non-Changes (Intentional)
+
+No retries or idempotency logic
+
+No analytics changes
+
+No billing or wallet logic
+
+No UI redesign
+
+Phase Lock
+
+Phase 2.4 is complete and locked.
+Campaign media dispatch is now production-ready.
+
+## Phase 4 — Step 1: AI Database Foundation
+
+**Date:** 2025-12-24  
+**Status:** ✅ Completed
+
+### Summary
+Added database foundation for AI configuration and usage tracking.
+
+### Changes
+- Created `ai_settings` table for per-organization AI configuration
+- Created `ai_usage_logs` table for AI usage tracking (billing-ready)
+- Added RLS policies for secure org-level access
+- No application logic changes in this step
+
+### Files
+- supabase/migrations/20251224001_create_ai_settings.sql
+- supabase/migrations/20251224002_create_ai_usage_logs.sql
+
+## 2025-12-24 — Phase 4 Step 2B: AI Configuration UI
+
+- Added new Settings screen: AI Configuration (division-aware).
+- Implemented Joyz-style card UI for:
+  - AI model selection (OpenAI + Gemini)
+  - Knowledge base search type selection (Default / Hybrid / Titles)
+- Added simple display-only pricing (₹ / conversation), computed as model + search add-on.
+- Implemented division override → org fallback banners (consistent with WhatsApp Settings UX).
+- Wired save/load to `ai_settings` using new Zustand store.
+
+### Files
+- NEW: src/modules/settings/AIConfigurationModule.tsx
+- NEW: src/state/useAISettingsStore.ts
+- MOD: src/components/sidebar/Sidebar.tsx
+- MOD: src/App.tsx
+- MOD: src/types/database.ts

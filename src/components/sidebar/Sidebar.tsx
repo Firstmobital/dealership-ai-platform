@@ -12,6 +12,7 @@ import {
   Database,
   BarChart3,
   FileText,
+  Sparkles,
 } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
@@ -61,6 +62,8 @@ export function Sidebar() {
           icon={Building2}
           label="Divisions"
         />
+        <SidebarLink to="/settings/ai-config" icon={Sparkles} label="AI Configuration" />
+        
         <SidebarLink
           to="/unanswered"
           icon={HelpCircle}

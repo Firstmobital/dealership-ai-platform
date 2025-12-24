@@ -45,7 +45,7 @@ type SendBody = {
   template_name?: string;
   template_language?: string;
   template_variables?: string[];
-  template_components?: any[] | null; // ← Phase 2.4
+  template_components?: any[] | null;
 
   // direct media
   image_url?: string;
@@ -54,7 +54,7 @@ type SendBody = {
   document_url?: string;
   filename?: string;
 
-  // logging helpers (Phase 2.4)
+  // logging helpers
   message_type?: MessageType;
   media_url?: string | null;
   mime_type?: string | null;
@@ -91,6 +91,32 @@ async function resolveWhatsappSettings(
 }
 
 /* ===========================================================================
+   BUILD TEMPLATE COMPONENTS (Phase 2.4)
+=========================================================================== */
+
+function buildTemplateComponents(body: SendBody): any[] {
+  const components: any[] = [];
+
+  // 1️⃣ Header components (image / document) — already built upstream
+  if (Array.isArray(body.template_components)) {
+    components.push(...body.template_components);
+  }
+
+  // 2️⃣ Body parameters (variables)
+  if (Array.isArray(body.template_variables) && body.template_variables.length) {
+    components.push({
+      type: "body",
+      parameters: body.template_variables.map((v) => ({
+        type: "text",
+        text: String(v ?? ""),
+      })),
+    });
+  }
+
+  return components;
+}
+
+/* ===========================================================================
    BUILD WHATSAPP PAYLOAD
 =========================================================================== */
 
@@ -110,7 +136,7 @@ function buildWhatsappPayload(body: SendBody) {
     return { ...payload, text: { body: body.text.trim() } };
   }
 
-  /* ---------------- TEMPLATE (Phase 2.4) ---------------- */
+  /* ---------------- TEMPLATE ---------------- */
   if (type === "template") {
     if (!body.template_name || !body.template_language) {
       throw new Error("Missing template_name or template_language");
@@ -121,7 +147,7 @@ function buildWhatsappPayload(body: SendBody) {
       template: {
         name: body.template_name,
         language: { code: body.template_language },
-        components: body.template_components ?? [],
+        components: buildTemplateComponents(body),
       },
     };
   }
@@ -157,6 +183,7 @@ function buildWhatsappPayload(body: SendBody) {
 
   throw new Error(`Unsupported type: ${type}`);
 }
+
 /* ===========================================================================
    MAIN HANDLER
 =========================================================================== */
@@ -226,7 +253,7 @@ serve(async (req: Request) => {
       metaResponse?.message_id ??
       null;
 
-    /* ---------------- CHAT LOGGING (FIXED) ---------------- */
+    /* ---------------- CHAT LOGGING ---------------- */
 
     if (contactId) {
       const { data: conversation } = await supabase
@@ -242,13 +269,10 @@ serve(async (req: Request) => {
           conversation_id: conversation.id,
           sender: "bot",
           channel: "whatsapp",
-
           message_type: body.message_type ?? type,
           text: type === "text" ? body.text ?? null : null,
-
           media_url: body.media_url ?? null,
           mime_type: body.mime_type ?? null,
-
           whatsapp_message_id: waMessageId,
           sub_organization_id: conversation.sub_organization_id,
         });
