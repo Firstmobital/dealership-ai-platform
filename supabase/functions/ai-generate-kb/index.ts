@@ -1,5 +1,4 @@
 // supabase/functions/ai-generate-kb/index.ts
-// deno-lint-ignore-file no-explicit-any
 
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
@@ -70,7 +69,6 @@ function createLogger(request_id: string, org_id?: string | null) {
 /* =====================================================================================
    SAFE HELPERS
 ===================================================================================== */
-
 async function safeSupabase<T>(
   logger: ReturnType<typeof createLogger>,
   label: string,
@@ -104,6 +102,24 @@ async function safeFileDownload(
   } catch (err) {
     logger.error("FILE_DOWNLOAD_FATAL", { error: err });
     return null;
+  }
+}
+
+async function setProcessingError(
+  logger: ReturnType<typeof createLogger>,
+  article_id: string | null,
+  message: string
+) {
+  if (!article_id) return;
+  try {
+    await supabase
+      .from("knowledge_articles")
+      .update({
+        processing_error: message,
+      })
+      .eq("id", article_id);
+  } catch (err) {
+    logger.error("FAILED_TO_SET_PROCESSING_ERROR", { error: String(err) });
   }
 }
 
@@ -145,7 +161,7 @@ function chunkText(text: string, maxChars = 1200, maxChunks = 200): string[] {
 }
 
 /* =====================================================================================
-   FILE → TEXT EXTRACTION
+   FILE → TEXT EXTRACTION (OpenAI-assisted for binary files)
 ===================================================================================== */
 function isExcelMime(mimeType: string) {
   const m = (mimeType || "").toLowerCase();
@@ -171,13 +187,13 @@ async function extractTextFromFile(
 
   const mimeType = mime || (blob as any).type || "application/octet-stream";
 
-  // Plain text
+  // Plain text files (csv/text)
   if (mimeType.startsWith("text/")) {
     const t = await blob.text();
     return { text: t?.trim() || null, mimeType };
   }
 
-  // Requires OpenAI for PDF/Excel binary extraction (your existing approach)
+  // Binary file extraction requires OpenAI
   if (!openai) {
     logger.error("OPENAI_REQUIRED_FOR_FILE_EXTRACTION");
     return { text: null, mimeType };
@@ -268,9 +284,7 @@ async function embedChunks(
    MAIN HANDLER
 ===================================================================================== */
 serve(async (req: Request): Promise<Response> => {
-  if (req.method === "OPTIONS") {
-    return cors(new Response("ok", { status: 200 }));
-  }
+  if (req.method === "OPTIONS") return cors(new Response("ok", { status: 200 }));
 
   const request_id = crypto.randomUUID();
   const logger = createLogger(request_id);
@@ -284,57 +298,121 @@ serve(async (req: Request): Promise<Response> => {
     );
   }
 
+  let articleIdForError: string | null = null;
+
+  // ✅ NEW: track old file in replace mode (for auto-delete)
+  let oldFileBucket: string | null = null;
+  let oldFilePath: string | null = null;
+
   try {
     const body = await req.json().catch(() => null);
 
     if (!body?.organization_id) {
       return cors(
-        new Response(JSON.stringify({ error: "Missing organization_id", request_id }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        })
+        new Response(
+          JSON.stringify({ error: "Missing organization_id", request_id }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
       );
     }
 
     const orgId = String(body.organization_id).trim();
     const subOrgId = body.sub_organization_id ?? null;
+
     const sourceType = (body.source_type ?? "text") as string;
-    const title = body.title?.trim?.() || "Untitled article";
+    const incomingTitle = body.title?.trim?.() || "Untitled article";
 
-    logger.info("Start KB generation", { orgId, subOrgId, sourceType });
+    // Replace mode
+    const replaceArticleId = body.article_id
+      ? String(body.article_id).trim()
+      : null;
 
-    // File metadata (only relevant when sourceType === "file")
+    // File metadata (only for file sources)
     const file_bucket = body.file_bucket ?? null;
     const file_path = body.file_path ?? null;
     const mime_type = body.mime_type ?? null;
     const original_filename = body.original_filename ?? null;
 
-    let fullText = "";
-    let resolvedMime = mime_type || "application/octet-stream";
+    logger.info("Start KB generation", {
+      orgId,
+      subOrgId,
+      sourceType,
+      replace: !!replaceArticleId,
+    });
 
     /* ============================================
-       SOURCE TYPE = TEXT
+       REPLACE MODE: validate article belongs to org
     ============================================ */
-    if (sourceType === "text") {
-      if (!body.content?.trim?.()) {
+    let existingTitle: string | null = null;
+    if (replaceArticleId) {
+      // ✅ CHANGED: also select file_bucket, file_path
+      const existing = await safeSupabase<any>(
+        logger,
+        "knowledge_articles.select(existing)",
+        () =>
+          supabase
+            .from("knowledge_articles")
+            .select("id, organization_id, title, file_bucket, file_path")
+            .eq("id", replaceArticleId)
+            .single()
+      );
+
+      if (!existing || existing.organization_id !== orgId) {
         return cors(
-          new Response(JSON.stringify({ error: "Missing text content", request_id }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          })
+          new Response(
+            JSON.stringify({
+              error: "Invalid article_id for this organization",
+              request_id,
+            }),
+            { status: 403, headers: { "Content-Type": "application/json" } }
+          )
         );
       }
-      fullText = body.content.trim();
+
+      articleIdForError = existing.id;
+      existingTitle = existing.title ?? null;
+
+      // ✅ NEW: capture old file references for deletion AFTER success
+      oldFileBucket = existing.file_bucket ?? null;
+      oldFilePath = existing.file_path ?? null;
+
+      // Clear previous error state early (we'll set again if something fails)
+      await supabase
+        .from("knowledge_articles")
+        .update({ processing_error: null })
+        .eq("id", replaceArticleId);
     }
 
     /* ============================================
-       SOURCE TYPE = FILE
+       Build fullText from source
     ============================================ */
-    if (sourceType === "file") {
+    let fullText = "";
+    let resolvedMime = mime_type || "application/octet-stream";
+
+    if (sourceType === "text") {
+      if (!body.content?.trim?.()) {
+        return cors(
+          new Response(
+            JSON.stringify({ error: "Missing text content", request_id }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }
+          )
+        );
+      }
+      fullText = body.content.trim();
+    } else if (sourceType === "file") {
       if (!file_bucket || !file_path) {
         return cors(
           new Response(
-            JSON.stringify({ error: "Missing file_bucket or file_path", request_id }),
+            JSON.stringify({
+              error: "Missing file_bucket or file_path",
+              request_id,
+            }),
             { status: 400, headers: { "Content-Type": "application/json" } }
           )
         );
@@ -349,8 +427,10 @@ serve(async (req: Request): Promise<Response> => {
       resolvedMime = mimeType;
 
       if (!text) {
+        const msg = "Text extraction failed";
+        await setProcessingError(logger, articleIdForError, msg);
         return cors(
-          new Response(JSON.stringify({ error: "Text extraction failed", request_id }), {
+          new Response(JSON.stringify({ error: msg, request_id }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           })
@@ -359,19 +439,28 @@ serve(async (req: Request): Promise<Response> => {
 
       fullText = text;
 
-      // ✅ Excel disclaimer (applies to Excel/CSV only)
+      // Excel disclaimer only (as requested)
       if (isExcelMime(resolvedMime)) {
         fullText +=
           "\n\nPrices and schemes are subject to change at the time of booking.";
       }
+    } else {
+      return cors(
+        new Response(
+          JSON.stringify({ error: "Invalid source_type", request_id }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      );
     }
 
-    /* ============================================
-       VALIDATE
-    ============================================ */
     if (!fullText.trim()) {
+      const msg = "Empty content";
+      await setProcessingError(logger, articleIdForError, msg);
       return cors(
-        new Response(JSON.stringify({ error: "Empty content", request_id }), {
+        new Response(JSON.stringify({ error: msg, request_id }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         })
@@ -383,8 +472,10 @@ serve(async (req: Request): Promise<Response> => {
     ============================================ */
     const chunks = chunkText(fullText);
     if (chunks.length === 0) {
+      const msg = "Chunking failed";
+      await setProcessingError(logger, articleIdForError, msg);
       return cors(
-        new Response(JSON.stringify({ error: "Chunking failed", request_id }), {
+        new Response(JSON.stringify({ error: msg, request_id }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         })
@@ -396,8 +487,10 @@ serve(async (req: Request): Promise<Response> => {
     ============================================ */
     const vectors = await embedChunks(logger, chunks);
     if (!vectors || vectors.length !== chunks.length) {
+      const msg = "Embedding generation failed";
+      await setProcessingError(logger, articleIdForError, msg);
       return cors(
-        new Response(JSON.stringify({ error: "Embedding generation failed", request_id }), {
+        new Response(JSON.stringify({ error: msg, request_id }), {
           status: 500,
           headers: { "Content-Type": "application/json" },
         })
@@ -405,75 +498,145 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     /* ============================================
-       INSERT ARTICLE — STORE FULL CONTENT + METADATA
-       (uses the new columns you migrated in Step 2)
+       INSERT / UPDATE ARTICLE
     ============================================ */
     const nowIso = new Date().toISOString();
+    let articleId: string;
 
-    const insertPayload: any = {
-      organization_id: orgId,
-      sub_organization_id: subOrgId,
-      title,
-      description: null,
+    if (replaceArticleId) {
+      // ✅ REPLACE MODE:
+      // 1) Delete old chunks
+      const { error: delErr } = await supabase
+        .from("knowledge_chunks")
+        .delete()
+        .eq("article_id", replaceArticleId);
 
-      // existing field used by your app:
-      content: fullText,
+      if (delErr) {
+        const msg = `Failed to delete old chunks: ${
+          delErr.message ?? "unknown"
+        }`;
+        await setProcessingError(logger, replaceArticleId, msg);
+        return cors(
+          new Response(JSON.stringify({ error: msg, request_id }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
 
-      // new fields from migration:
-      source_type: sourceType,
-      file_bucket: sourceType === "file" ? file_bucket : null,
-      file_path: sourceType === "file" ? file_path : null,
-      mime_type: sourceType === "file" ? resolvedMime : null,
-      original_filename: sourceType === "file" ? original_filename : null,
-      raw_content: fullText,
-      last_processed_at: nowIso,
-      processing_error: null,
-    };
+      // 2) Update the article content + metadata
+      const updatePayload: any = {
+        sub_organization_id: subOrgId,
+        title: incomingTitle || existingTitle || "Untitled article",
+        content: fullText,
 
-    const article = await safeSupabase<{ id: string }>(
-      logger,
-      "knowledge_articles.insert",
-      () =>
-        supabase
-          .from("knowledge_articles")
-          .insert(insertPayload)
-          .select("id")
-          .single()
-    );
+        // metadata columns
+        source_type: sourceType,
+        file_bucket: sourceType === "file" ? file_bucket : null,
+        file_path: sourceType === "file" ? file_path : null,
+        mime_type: sourceType === "file" ? resolvedMime : null,
+        original_filename: sourceType === "file" ? original_filename : null,
 
-    if (!article) {
-      return cors(
-        new Response(JSON.stringify({ error: "Failed to create article", request_id }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        })
+        raw_content: fullText,
+        last_processed_at: nowIso,
+        processing_error: null,
+      };
+
+      const updated = await safeSupabase<{ id: string }>(
+        logger,
+        "knowledge_articles.update(replace)",
+        () =>
+          supabase
+            .from("knowledge_articles")
+            .update(updatePayload)
+            .eq("id", replaceArticleId)
+            .select("id")
+            .single()
       );
+
+      if (!updated) {
+        const msg = "Failed to update article (replace mode)";
+        await setProcessingError(logger, replaceArticleId, msg);
+        return cors(
+          new Response(JSON.stringify({ error: msg, request_id }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      articleId = updated.id;
+      articleIdForError = articleId;
+    } else {
+      // ✅ CREATE MODE:
+      const insertPayload: any = {
+        organization_id: orgId,
+        sub_organization_id: subOrgId,
+        title: incomingTitle,
+        description: null,
+
+        content: fullText,
+
+        // metadata columns
+        source_type: sourceType,
+        file_bucket: sourceType === "file" ? file_bucket : null,
+        file_path: sourceType === "file" ? file_path : null,
+        mime_type: sourceType === "file" ? resolvedMime : null,
+        original_filename: sourceType === "file" ? original_filename : null,
+
+        raw_content: fullText,
+        last_processed_at: nowIso,
+        processing_error: null,
+      };
+
+      const created = await safeSupabase<{ id: string }>(
+        logger,
+        "knowledge_articles.insert",
+        () =>
+          supabase
+            .from("knowledge_articles")
+            .insert(insertPayload)
+            .select("id")
+            .single()
+      );
+
+      if (!created) {
+        const msg = "Failed to create article";
+        return cors(
+          new Response(JSON.stringify({ error: msg, request_id }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      articleId = created.id;
+      articleIdForError = articleId;
     }
 
     /* ============================================
        INSERT CHUNKS + EMBEDDINGS
     ============================================ */
     const records = chunks.map((chunk, i) => ({
-      article_id: article.id,
+      article_id: articleId,
       chunk,
       embedding: vectors[i],
     }));
 
-    const { error: chunkError } = await supabase.from("knowledge_chunks").insert(records);
+    const { error: chunkError } = await supabase
+      .from("knowledge_chunks")
+      .insert(records);
 
     if (chunkError) {
       logger.error("KB_CHUNKS_INSERT_ERROR", {
         error: chunkError,
-        article_id: article.id,
+        article_id: articleId,
       });
 
-      // mark processing error on the article for visibility
-      await supabase
-        .from("knowledge_articles")
-        .update({
-          processing_error: `Failed to insert chunks: ${chunkError.message ?? "unknown"}`,
-        })
-        .eq("id", article.id);
+      const msg = `Failed to insert chunks: ${
+        chunkError.message ?? "unknown"
+      }`;
+      await setProcessingError(logger, articleId, msg);
 
       return cors(
         new Response(
@@ -487,33 +650,83 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    logger.info("KB article created", {
-      article_id: article.id,
+    /* ============================================
+       ✅ NEW: AUTO-DELETE OLD STORAGE FILE (best-effort)
+       Only after successful replace + successful chunk insert
+    ============================================ */
+    if (
+      replaceArticleId &&
+      oldFileBucket &&
+      oldFilePath &&
+      sourceType === "file"
+    ) {
+      // Avoid deleting if same file path (rare but safe)
+      const newBucket = file_bucket ?? null;
+      const newPath = file_path ?? null;
+
+      const isSame =
+        oldFileBucket === newBucket && oldFilePath === newPath;
+
+      if (!isSame) {
+        try {
+          const { error: rmErr } = await supabase.storage
+            .from(oldFileBucket)
+            .remove([oldFilePath]);
+
+          if (rmErr) {
+            logger.warn("OLD_FILE_DELETE_FAILED", {
+              bucket: oldFileBucket,
+              path: oldFilePath,
+              error: rmErr,
+            });
+          } else {
+            logger.info("OLD_FILE_DELETED", {
+              bucket: oldFileBucket,
+              path: oldFilePath,
+            });
+          }
+        } catch (err) {
+          logger.warn("OLD_FILE_DELETE_FATAL", {
+            bucket: oldFileBucket,
+            path: oldFilePath,
+            error: String(err),
+          });
+        }
+      }
+    }
+
+    logger.info("KB article processed", {
+      article_id: articleId,
       chunks: records.length,
       sourceType,
-      file_bucket: sourceType === "file" ? file_bucket : null,
-      file_path: sourceType === "file" ? file_path : null,
+      replace: !!replaceArticleId,
     });
 
     return cors(
       new Response(
         JSON.stringify({
           success: true,
-          article_id: article.id,
+          article_id: articleId,
           chunks: records.length,
+          replaced: !!replaceArticleId,
           request_id,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       )
     );
   } catch (err) {
-    logger.error("FATAL", { error: String(err) });
+    const msg = String(err);
+    logger.error("FATAL", { error: msg });
+    await setProcessingError(logger, articleIdForError, msg);
 
     return cors(
-      new Response(JSON.stringify({ error: "Internal Server Error", request_id }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      })
+      new Response(
+        JSON.stringify({ error: "Internal Server Error", request_id }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
     );
   }
 });

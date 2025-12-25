@@ -25,22 +25,33 @@ type KnowledgeBaseState = {
   selectedArticle: KnowledgeArticle | null;
   searchTerm: string;
 
-  // Actions
   fetchArticles: () => Promise<void>;
+
   createArticleFromText: (params: {
     title: string;
     content: string;
   }) => Promise<void>;
+
   createArticleFromFile: (params: {
     file: File;
     title?: string;
   }) => Promise<void>;
+
+  replaceFileForArticle: (params: {
+    article: KnowledgeArticle;
+    file: File;
+  }) => Promise<void>;
+
+  downloadOriginalFile: (article: KnowledgeArticle) => Promise<void>;
+
   updateArticle: (params: {
     id: string;
     title: string;
     content: string;
   }) => Promise<void>;
+
   deleteArticle: (articleId: string) => Promise<void>;
+
   setSelectedArticle: (article: KnowledgeArticle | null) => void;
   setSearchTerm: (term: string) => void;
 };
@@ -60,7 +71,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSearchTerm: (term) => set({ searchTerm: term }),
 
   /* -----------------------------------------------------------
-     FETCH ARTICLES (ORG + SUB-ORG FALLBACK)
+     FETCH ARTICLES
   ----------------------------------------------------------- */
   fetchArticles: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
@@ -68,10 +79,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     const { searchTerm } = get();
 
     if (!currentOrganization) {
-      set({
-        error: "Select an organization to view its knowledge base.",
-        articles: [],
-      });
+      set({ articles: [], error: null });
       return;
     }
 
@@ -84,7 +92,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .eq("organization_id", currentOrganization.id)
         .order("created_at", { ascending: false });
 
-      // Sub-organization fallback logic
       if (activeSubOrg) {
         query = query.or(
           `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
@@ -92,60 +99,36 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       }
 
       const { data, error } = await query;
-
-      if (error) {
-        console.error("[KB] fetchArticles error:", error);
-        set({
-          loading: false,
-          error: error.message ?? "Failed to load knowledge base.",
-          articles: [],
-        });
-        return;
-      }
+      if (error) throw error;
 
       let articles = (data ?? []) as KnowledgeArticle[];
 
-      // Client-side search
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
-        articles = articles.filter((a) => {
-          const title = (a.title ?? "").toLowerCase();
-          const content = (a.content ?? "").toLowerCase();
-          return title.includes(term) || content.includes(term);
-        });
+        articles = articles.filter(
+          (a) =>
+            a.title?.toLowerCase().includes(term) ||
+            a.content?.toLowerCase().includes(term)
+        );
       }
 
-      set({
-        loading: false,
-        error: null,
-        articles,
-      });
+      set({ articles, loading: false });
     } catch (err: any) {
-      console.error("[KB] fetchArticles exception:", err);
       set({
         loading: false,
-        error: err?.message ?? "Unexpected error while loading KB.",
-        articles: [],
+        error: err?.message ?? "Failed to load knowledge base",
       });
     }
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM TEXT (UNCHANGED LOGIC)
+     CREATE FROM TEXT
   ----------------------------------------------------------- */
   createArticleFromText: async ({ title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
-    if (!currentOrganization) {
-      set({ error: "Select an organization before adding knowledge." });
-      return;
-    }
-
-    if (!content.trim()) {
-      set({ error: "Content cannot be empty." });
-      return;
-    }
+    if (!currentOrganization) return;
 
     set({ uploading: true, error: null });
 
@@ -160,47 +143,29 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         },
       });
 
-      if (error) {
-        console.error("[KB] createArticleFromText error:", error);
-        set({
-          uploading: false,
-          error: error.message ?? "Failed to ingest knowledge text.",
-        });
-        return;
-      }
+      if (error) throw error;
 
       await get().fetchArticles();
-      set({ uploading: false, error: null });
+      set({ uploading: false });
     } catch (err: any) {
-      console.error("[KB] createArticleFromText exception:", err);
       set({
         uploading: false,
-        error: err?.message ?? "Unexpected error while ingesting knowledge.",
+        error: err?.message ?? "Failed to create article",
       });
     }
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM FILE (PDF / EXCEL)
+     CREATE FROM FILE
   ----------------------------------------------------------- */
   createArticleFromFile: async ({ file, title }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
-    if (!currentOrganization) {
-      set({ error: "Select an organization before uploading knowledge files." });
-      return;
-    }
-
-    if (!file) {
-      set({ error: "No file selected." });
-      return;
-    }
+    if (!currentOrganization) return;
 
     if (!ALLOWED_FILE_TYPES.includes(file.type)) {
-      set({
-        error: "Only PDF, Excel, or CSV files are allowed.",
-      });
+      set({ error: "Unsupported file type" });
       return;
     }
 
@@ -211,7 +176,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const safeName = file.name.replace(/\s+/g, "_");
       const path = `kb/${currentOrganization.id}/${Date.now()}-${safeName}`;
 
-      /* ---------- Upload to Storage ---------- */
       const { error: uploadError } = await supabase.storage
         .from(bucket)
         .upload(path, file, {
@@ -219,16 +183,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           upsert: false,
         });
 
-      if (uploadError) {
-        console.error("[KB] File upload error:", uploadError);
-        set({
-          uploading: false,
-          error: uploadError.message ?? "Failed to upload knowledge file.",
-        });
-        return;
-      }
+      if (uploadError) throw uploadError;
 
-      /* ---------- Invoke KB ingestion ---------- */
       const { error: invokeError } = await supabase.functions.invoke(
         "ai-generate-kb",
         {
@@ -245,40 +201,105 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         }
       );
 
-      if (invokeError) {
-        console.error("[KB] createArticleFromFile invoke error:", invokeError);
-        set({
-          uploading: false,
-          error:
-            invokeError.message ??
-            "Failed to ingest knowledge from the file.",
-        });
-        return;
-      }
+      if (invokeError) throw invokeError;
 
       await get().fetchArticles();
-      set({ uploading: false, error: null });
+      set({ uploading: false });
     } catch (err: any) {
-      console.error("[KB] createArticleFromFile exception:", err);
       set({
         uploading: false,
-        error:
-          err?.message ??
-          "Unexpected error while ingesting knowledge from file.",
+        error: err?.message ?? "Failed to upload file",
       });
     }
   },
 
   /* -----------------------------------------------------------
-     UPDATE ARTICLE (TEXT ONLY)
+     REPLACE FILE FOR ARTICLE
+  ----------------------------------------------------------- */
+  replaceFileForArticle: async ({ article, file }) => {
+    const { currentOrganization } = useOrganizationStore.getState();
+
+    if (!currentOrganization || article.source_type !== "file") return;
+
+    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+      set({ error: "Unsupported file type" });
+      return;
+    }
+
+    set({ uploading: true, error: null });
+
+    try {
+      const bucket = "knowledge-base";
+      const safeName = file.name.replace(/\s+/g, "_");
+      const path = `kb/${currentOrganization.id}/${Date.now()}-${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(path, file, {
+          contentType: file.type,
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { error: invokeError } = await supabase.functions.invoke(
+        "ai-generate-kb",
+        {
+          body: {
+            organization_id: currentOrganization.id,
+            article_id: article.id, // 🔥 REPLACE MODE
+            source_type: "file",
+            title: article.title,
+            file_bucket: bucket,
+            file_path: path,
+            mime_type: file.type,
+            original_filename: file.name,
+          },
+        }
+      );
+
+      if (invokeError) throw invokeError;
+
+      await get().fetchArticles();
+      set({ uploading: false });
+    } catch (err: any) {
+      set({
+        uploading: false,
+        error: err?.message ?? "Failed to replace file",
+      });
+    }
+  },
+
+  /* -----------------------------------------------------------
+     DOWNLOAD ORIGINAL FILE
+  ----------------------------------------------------------- */
+  downloadOriginalFile: async (article) => {
+    if (!article.file_bucket || !article.file_path) {
+      set({ error: "File not available" });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.storage
+        .from(article.file_bucket)
+        .createSignedUrl(article.file_path, 60);
+
+      if (error || !data?.signedUrl) throw error;
+
+      window.open(data.signedUrl, "_blank");
+    } catch (err: any) {
+      set({
+        error: err?.message ?? "Failed to download file",
+      });
+    }
+  },
+
+  /* -----------------------------------------------------------
+     UPDATE TEXT ARTICLE
   ----------------------------------------------------------- */
   updateArticle: async ({ id, title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
-
-    if (!currentOrganization) {
-      set({ error: "Select an organization first." });
-      return;
-    }
+    if (!currentOrganization) return;
 
     set({ loading: true, error: null });
 
@@ -289,22 +310,14 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .eq("id", id)
         .eq("organization_id", currentOrganization.id);
 
-      if (error) {
-        console.error("[KB] updateArticle error:", error);
-        set({
-          loading: false,
-          error: error.message ?? "Failed to update article.",
-        });
-        return;
-      }
+      if (error) throw error;
 
       await get().fetchArticles();
-      set({ loading: false, error: null });
+      set({ loading: false });
     } catch (err: any) {
-      console.error("[KB] updateArticle exception:", err);
       set({
         loading: false,
-        error: err?.message ?? "Unexpected error while updating article.",
+        error: err?.message ?? "Failed to update article",
       });
     }
   },
@@ -312,13 +325,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   /* -----------------------------------------------------------
      DELETE ARTICLE
   ----------------------------------------------------------- */
-  deleteArticle: async (articleId: string) => {
+  deleteArticle: async (articleId) => {
     const { currentOrganization } = useOrganizationStore.getState();
-
-    if (!currentOrganization) {
-      set({ error: "Select an organization first." });
-      return;
-    }
+    if (!currentOrganization) return;
 
     set({ loading: true, error: null });
 
@@ -329,22 +338,14 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .eq("id", articleId)
         .eq("organization_id", currentOrganization.id);
 
-      if (error) {
-        console.error("[KB] deleteArticle error:", error);
-        set({
-          loading: false,
-          error: error.message ?? "Failed to delete article.",
-        });
-        return;
-      }
+      if (error) throw error;
 
       await get().fetchArticles();
-      set({ loading: false, error: null });
+      set({ loading: false, selectedArticle: null });
     } catch (err: any) {
-      console.error("[KB] deleteArticle exception:", err);
       set({
         loading: false,
-        error: err?.message ?? "Unexpected error while deleting article.",
+        error: err?.message ?? "Failed to delete article",
       });
     }
   },
