@@ -4,6 +4,19 @@ import { useOrganizationStore } from "./useOrganizationStore";
 import { useSubOrganizationStore } from "./useSubOrganizationStore";
 import type { KnowledgeArticle } from "../types/database";
 
+/* -----------------------------------------------------------
+   CONSTANTS
+----------------------------------------------------------- */
+const ALLOWED_FILE_TYPES = [
+  "application/pdf",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+];
+
+/* -----------------------------------------------------------
+   TYPES
+----------------------------------------------------------- */
 type KnowledgeBaseState = {
   articles: KnowledgeArticle[];
   loading: boolean;
@@ -32,6 +45,9 @@ type KnowledgeBaseState = {
   setSearchTerm: (term: string) => void;
 };
 
+/* -----------------------------------------------------------
+   STORE
+----------------------------------------------------------- */
 export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   articles: [],
   loading: false,
@@ -44,8 +60,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSearchTerm: (term) => set({ searchTerm: term }),
 
   /* -----------------------------------------------------------
-   * FETCH ARTICLES (ORG + DIVISION FALLBACK)
-   * -----------------------------------------------------------*/
+     FETCH ARTICLES (ORG + SUB-ORG FALLBACK)
+  ----------------------------------------------------------- */
   fetchArticles: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -68,13 +84,12 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .eq("organization_id", currentOrganization.id)
         .order("created_at", { ascending: false });
 
-      // ✅ Division selected → include division + org articles
+      // Sub-organization fallback logic
       if (activeSubOrg) {
         query = query.or(
           `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
         );
       }
-      // ✅ ALL divisions → no sub-org filter at all
 
       const { data, error } = await query;
 
@@ -90,9 +105,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
 
       let articles = (data ?? []) as KnowledgeArticle[];
 
-      /* -------------------------------------------------------
-       * CLIENT SEARCH (UNCHANGED)
-       * ------------------------------------------------------- */
+      // Client-side search
       if (searchTerm.trim()) {
         const term = searchTerm.toLowerCase();
         articles = articles.filter((a) => {
@@ -118,8 +131,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * CREATE FROM TEXT (UNCHANGED)
-   * -----------------------------------------------------------*/
+     CREATE FROM TEXT (UNCHANGED LOGIC)
+  ----------------------------------------------------------- */
   createArticleFromText: async ({ title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -168,8 +181,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * CREATE FROM FILE (UNCHANGED)
-   * -----------------------------------------------------------*/
+     CREATE FROM FILE (PDF / EXCEL)
+  ----------------------------------------------------------- */
   createArticleFromFile: async ({ file, title }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
@@ -184,19 +197,30 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       return;
     }
 
+    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+      set({
+        error: "Only PDF, Excel, or CSV files are allowed.",
+      });
+      return;
+    }
+
     set({ uploading: true, error: null });
 
     try {
       const bucket = "knowledge-base";
       const safeName = file.name.replace(/\s+/g, "_");
-      const path = `${currentOrganization.id}/${Date.now()}-${safeName}`;
+      const path = `kb/${currentOrganization.id}/${Date.now()}-${safeName}`;
 
+      /* ---------- Upload to Storage ---------- */
       const { error: uploadError } = await supabase.storage
         .from(bucket)
-        .upload(path, file);
+        .upload(path, file, {
+          contentType: file.type,
+          upsert: false,
+        });
 
       if (uploadError) {
-        console.error("[KB] createArticleFromFile upload error:", uploadError);
+        console.error("[KB] File upload error:", uploadError);
         set({
           uploading: false,
           error: uploadError.message ?? "Failed to upload knowledge file.",
@@ -204,6 +228,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         return;
       }
 
+      /* ---------- Invoke KB ingestion ---------- */
       const { error: invokeError } = await supabase.functions.invoke(
         "ai-generate-kb",
         {
@@ -214,9 +239,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
             title: title || file.name,
             file_bucket: bucket,
             file_path: path,
-            mime_type: file.type || null,
+            mime_type: file.type,
+            original_filename: file.name,
           },
-        },
+        }
       );
 
       if (invokeError) {
@@ -224,7 +250,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         set({
           uploading: false,
           error:
-            invokeError.message ?? "Failed to ingest knowledge from the file.",
+            invokeError.message ??
+            "Failed to ingest knowledge from the file.",
         });
         return;
       }
@@ -243,8 +270,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * UPDATE ARTICLE (UNCHANGED)
-   * -----------------------------------------------------------*/
+     UPDATE ARTICLE (TEXT ONLY)
+  ----------------------------------------------------------- */
   updateArticle: async ({ id, title, content }) => {
     const { currentOrganization } = useOrganizationStore.getState();
 
@@ -283,8 +310,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-   * DELETE ARTICLE (UNCHANGED)
-   * -----------------------------------------------------------*/
+     DELETE ARTICLE
+  ----------------------------------------------------------- */
   deleteArticle: async (articleId: string) => {
     const { currentOrganization } = useOrganizationStore.getState();
 

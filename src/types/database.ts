@@ -124,14 +124,27 @@ export type Message = {
 // KNOWLEDGE BASE + RAG
 // -------------------------------------------------------------
 export type KnowledgeArticle = {
-  id: UUID;
-  organization_id: UUID;
+  id: string;
+  organization_id: string;
+  sub_organization_id: string | null;
+
   title: string;
   description: string | null;
+
+  // core content
   content: string;
+
+  // ✅ NEW (from migration)
+  source_type: "text" | "file";
+  file_bucket: string | null;
+  file_path: string | null;
+  mime_type: string | null;
+  original_filename: string | null;
+  raw_content: string | null;
+  last_processed_at: string | null;
+  processing_error: string | null;
+
   created_at: string;
-  updated_at: string;
-  sub_organization_id: UUID | null;
 };
 
 export type KnowledgeChunk = {

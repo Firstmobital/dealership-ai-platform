@@ -1,9 +1,9 @@
 // src/modules/knowledge-base/KnowledgeBaseModule.tsx
 // FULL + FINAL — Tier 4
 // Bright CRM Knowledge Base UI
-// Logic untouched + Division fallback UX
+// PDF + Excel enabled, URL deferred
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FileText,
   Loader2,
@@ -11,7 +11,6 @@ import {
   Trash2,
   X,
   Plus,
-  Link,
   File,
   Pencil,
 } from "lucide-react";
@@ -26,12 +25,10 @@ import type { KnowledgeArticle } from "../../types/database";
  * -----------------------------------------------------------*/
 function AddNewArticleDropdown({
   onManual,
-  onUrl,
-  onPdf,
+  onFile,
 }: {
   onManual: () => void;
-  onUrl: () => void;
-  onPdf: () => void;
+  onFile: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -46,7 +43,7 @@ function AddNewArticleDropdown({
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-40 rounded-md border border-slate-200 bg-white shadow-lg">
+        <div className="absolute right-0 mt-2 w-44 rounded-md border border-slate-200 bg-white shadow-lg">
           <button
             onClick={() => {
               setOpen(false);
@@ -55,29 +52,18 @@ function AddNewArticleDropdown({
             className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100"
           >
             <FileText size={16} />
-            Manual
+            Manual Text
           </button>
 
           <button
             onClick={() => {
               setOpen(false);
-              onUrl();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100"
-          >
-            <Link size={16} />
-            URL
-          </button>
-
-          <button
-            onClick={() => {
-              setOpen(false);
-              onPdf();
+              onFile();
             }}
             className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-slate-100"
           >
             <File size={16} />
-            PDF
+            PDF / Excel
           </button>
         </div>
       )}
@@ -92,9 +78,11 @@ export function KnowledgeBaseModule() {
   const {
     articles,
     loading,
+    uploading,
     error,
     fetchArticles,
     createArticleFromText,
+    createArticleFromFile,
     updateArticle,
     deleteArticle,
     selectedArticle,
@@ -105,6 +93,8 @@ export function KnowledgeBaseModule() {
 
   const { currentOrganization } = useOrganizationStore();
   const { activeSubOrg } = useSubOrganizationStore();
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showManualForm, setShowManualForm] = useState(false);
   const [manualTitle, setManualTitle] = useState("");
@@ -137,7 +127,7 @@ export function KnowledgeBaseModule() {
   }, [articles, activeSubOrg]);
 
   /* -----------------------------------------------------------
-   * Create / Update
+   * Create / Update (Manual)
    * -----------------------------------------------------------*/
   async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -156,11 +146,25 @@ export function KnowledgeBaseModule() {
       });
     }
 
+    resetManualForm();
+  }
+
+  function resetManualForm() {
     setShowManualForm(false);
     setEditMode(false);
     setManualTitle("");
     setManualContent("");
     setSelectedArticle(null);
+  }
+
+  /* -----------------------------------------------------------
+   * File Upload
+   * -----------------------------------------------------------*/
+  async function handleFileSelected(file: File) {
+    await createArticleFromFile({
+      file,
+      title: file.name,
+    });
   }
 
   /* -----------------------------------------------------------
@@ -173,9 +177,11 @@ export function KnowledgeBaseModule() {
   }
 
   /* -----------------------------------------------------------
-   * Edit
+   * Edit (TEXT ONLY)
    * -----------------------------------------------------------*/
   function handleEdit(article: KnowledgeArticle) {
+    if (article.source_type !== "text") return;
+
     setManualTitle(article.title);
     setManualContent(article.content);
     setEditMode(true);
@@ -193,7 +199,7 @@ export function KnowledgeBaseModule() {
         <div>
           <h1 className="text-xl font-semibold">Knowledge Base</h1>
           <p className="text-sm text-slate-500">
-            Your AI training library — manage articles and knowledge.
+            AI training library — text, PDFs, and Excel files.
           </p>
         </div>
 
@@ -204,8 +210,20 @@ export function KnowledgeBaseModule() {
             setManualTitle("");
             setManualContent("");
           }}
-          onUrl={() => alert("URL ingestion coming soon")}
-          onPdf={() => alert("PDF ingestion coming soon")}
+          onFile={() => fileInputRef.current?.click()}
+        />
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.xls,.xlsx,.csv"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleFileSelected(file);
+            e.target.value = "";
+          }}
         />
       </div>
 
@@ -232,10 +250,10 @@ export function KnowledgeBaseModule() {
             Articles ({orderedArticles.length})
           </h2>
 
-          {loading ? (
+          {loading || uploading ? (
             <div className="flex items-center gap-2 py-6 text-slate-500">
               <Loader2 size={16} className="animate-spin" />
-              Loading articles...
+              Processing…
             </div>
           ) : orderedArticles.length === 0 ? (
             <p className="py-6 text-sm text-slate-500">
@@ -264,31 +282,39 @@ export function KnowledgeBaseModule() {
                       <div>
                         <p className="font-medium">{a.title}</p>
 
-                        {activeSubOrg && (
-                          <span
-                            className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] ${
-                              isLocal
-                                ? "bg-green-50 text-green-700"
-                                : "bg-amber-50 text-amber-700"
-                            }`}
-                          >
-                            {isLocal
-                              ? "This Division"
-                              : "From Organization"}
+                        <div className="mt-1 flex gap-2">
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
+                            {a.source_type === "file" ? "PDF / Excel" : "Text"}
                           </span>
-                        )}
+
+                          {activeSubOrg && (
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] ${
+                                isLocal
+                                  ? "bg-green-50 text-green-700"
+                                  : "bg-amber-50 text-amber-700"
+                              }`}
+                            >
+                              {isLocal
+                                ? "This Division"
+                                : "From Organization"}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleEdit(a);
-                          }}
-                          className="text-slate-400 hover:text-blue-600"
-                        >
-                          <Pencil size={15} />
-                        </button>
+                        {a.source_type === "text" && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEdit(a);
+                            }}
+                            className="text-slate-400 hover:text-blue-600"
+                          >
+                            <Pencil size={15} />
+                          </button>
+                        )}
 
                         <button
                           onClick={(e) => {
@@ -325,12 +351,7 @@ export function KnowledgeBaseModule() {
                     {editMode ? "Edit Article" : "New Article"}
                   </h2>
                   <button
-                    onClick={() => {
-                      setShowManualForm(false);
-                      setEditMode(false);
-                      setManualTitle("");
-                      setManualContent("");
-                    }}
+                    onClick={resetManualForm}
                     className="text-slate-400 hover:text-slate-600"
                   >
                     <X size={20} />

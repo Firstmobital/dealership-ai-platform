@@ -45,16 +45,24 @@ const cors = (res: Response) => {
 function createLogger(request_id: string, org_id?: string | null) {
   return {
     info(msg: string, extra: any = {}) {
-      console.log(JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }));
+      console.log(
+        JSON.stringify({ level: "info", request_id, org_id, msg, ...extra })
+      );
     },
     warn(msg: string, extra: any = {}) {
-      console.warn(JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }));
+      console.warn(
+        JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra })
+      );
     },
     error(msg: string, extra: any = {}) {
-      console.error(JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }));
+      console.error(
+        JSON.stringify({ level: "error", request_id, org_id, msg, ...extra })
+      );
     },
     debug(msg: string, extra: any = {}) {
-      console.log(JSON.stringify({ level: "debug", request_id, org_id, msg, ...extra }));
+      console.log(
+        JSON.stringify({ level: "debug", request_id, org_id, msg, ...extra })
+      );
     },
   };
 }
@@ -78,25 +86,6 @@ async function safeSupabase<T>(
   } catch (err) {
     logger.error(`[supabase] ${label} fatal`, { error: err });
     return null;
-  }
-}
-
-async function safeOpenAI(
-  logger: ReturnType<typeof createLogger>,
-  params: any
-): Promise<{ ok: boolean; text?: string; error?: string }> {
-  if (!openai) {
-    logger.error("OpenAI unavailable");
-    return { ok: false, error: "OPENAI_NOT_AVAILABLE" };
-  }
-
-  try {
-    const resp = await openai.chat.completions.create(params);
-    const text = resp.choices?.[0]?.message?.content?.trim() ?? "";
-    return { ok: true, text };
-  } catch (err) {
-    logger.error("OpenAI fatal", { error: err });
-    return { ok: false, error: "OPENAI_REQUEST_FAILED" };
   }
 }
 
@@ -158,37 +147,50 @@ function chunkText(text: string, maxChars = 1200, maxChunks = 200): string[] {
 /* =====================================================================================
    FILE → TEXT EXTRACTION
 ===================================================================================== */
+function isExcelMime(mimeType: string) {
+  const m = (mimeType || "").toLowerCase();
+  return (
+    m.includes("spreadsheet") ||
+    m.includes("excel") ||
+    m.includes("application/vnd.ms-excel") ||
+    m.includes(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ) ||
+    m.includes("text/csv")
+  );
+}
+
 async function extractTextFromFile(
   logger: ReturnType<typeof createLogger>,
   bucket: string,
   path: string,
   mime: string | null
-): Promise<string | null> {
+): Promise<{ text: string | null; mimeType: string }> {
   const blob = await safeFileDownload(logger, bucket, path);
-  if (!blob) return null;
+  if (!blob) return { text: null, mimeType: mime || "application/octet-stream" };
 
   const mimeType = mime || (blob as any).type || "application/octet-stream";
 
   // Plain text
   if (mimeType.startsWith("text/")) {
-    return await blob.text();
+    const t = await blob.text();
+    return { text: t?.trim() || null, mimeType };
   }
 
-  // Requires OpenAI
+  // Requires OpenAI for PDF/Excel binary extraction (your existing approach)
   if (!openai) {
     logger.error("OPENAI_REQUIRED_FOR_FILE_EXTRACTION");
-    return null;
+    return { text: null, mimeType };
   }
 
   const sizeMB = (blob.size ?? 0) / (1024 * 1024);
   if (sizeMB > 20) {
     logger.warn("FILE_TOO_LARGE", { sizeMB });
-    return null;
+    return { text: null, mimeType };
   }
 
   const uint8 = new Uint8Array(await blob.arrayBuffer());
   const filename = path.split("/").pop() || "document";
-
   const fileForOpenAI = new File([uint8], filename, { type: mimeType });
 
   let uploaded;
@@ -199,7 +201,7 @@ async function extractTextFromFile(
     });
   } catch (err) {
     logger.error("OPENAI_FILE_UPLOAD_ERROR", { error: err });
-    return null;
+    return { text: null, mimeType };
   }
 
   try {
@@ -211,7 +213,9 @@ async function extractTextFromFile(
           content: [
             {
               type: "input_text",
-              text: "Extract readable text only. No comments. Return up to 20000 characters.",
+              text:
+                "Extract readable text only. Preserve tables as readable lines. " +
+                "No commentary. Return up to 20000 characters.",
             },
             { type: "input_file", file_id: uploaded.id },
           ],
@@ -227,10 +231,11 @@ async function extractTextFromFile(
       }
     }
 
-    return extracted.trim().slice(0, 20000);
+    const text = extracted.trim().slice(0, 20000);
+    return { text: text || null, mimeType };
   } catch (err) {
     logger.error("OPENAI_EXTRACTION_ERROR", { error: err });
-    return null;
+    return { text: null, mimeType };
   }
 }
 
@@ -291,20 +296,27 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    const orgId = body.organization_id.trim();
+    const orgId = String(body.organization_id).trim();
     const subOrgId = body.sub_organization_id ?? null;
-    const sourceType = body.source_type;
-    const title = body.title?.trim() || "Untitled article";
+    const sourceType = (body.source_type ?? "text") as string;
+    const title = body.title?.trim?.() || "Untitled article";
 
     logger.info("Start KB generation", { orgId, subOrgId, sourceType });
 
+    // File metadata (only relevant when sourceType === "file")
+    const file_bucket = body.file_bucket ?? null;
+    const file_path = body.file_path ?? null;
+    const mime_type = body.mime_type ?? null;
+    const original_filename = body.original_filename ?? null;
+
     let fullText = "";
+    let resolvedMime = mime_type || "application/octet-stream";
 
     /* ============================================
        SOURCE TYPE = TEXT
     ============================================ */
     if (sourceType === "text") {
-      if (!body.content?.trim()) {
+      if (!body.content?.trim?.()) {
         return cors(
           new Response(JSON.stringify({ error: "Missing text content", request_id }), {
             status: 400,
@@ -319,9 +331,6 @@ serve(async (req: Request): Promise<Response> => {
        SOURCE TYPE = FILE
     ============================================ */
     if (sourceType === "file") {
-      const { file_bucket, file_path, mime_type } =
-        body || {};
-
       if (!file_bucket || !file_path) {
         return cors(
           new Response(
@@ -331,7 +340,14 @@ serve(async (req: Request): Promise<Response> => {
         );
       }
 
-      const text = await extractTextFromFile(logger, file_bucket, file_path, mime_type);
+      const { text, mimeType } = await extractTextFromFile(
+        logger,
+        file_bucket,
+        file_path,
+        mime_type
+      );
+      resolvedMime = mimeType;
+
       if (!text) {
         return cors(
           new Response(JSON.stringify({ error: "Text extraction failed", request_id }), {
@@ -340,7 +356,14 @@ serve(async (req: Request): Promise<Response> => {
           })
         );
       }
+
       fullText = text;
+
+      // ✅ Excel disclaimer (applies to Excel/CSV only)
+      if (isExcelMime(resolvedMime)) {
+        fullText +=
+          "\n\nPrices and schemes are subject to change at the time of booking.";
+      }
     }
 
     /* ============================================
@@ -374,34 +397,46 @@ serve(async (req: Request): Promise<Response> => {
     const vectors = await embedChunks(logger, chunks);
     if (!vectors || vectors.length !== chunks.length) {
       return cors(
-        new Response(
-          JSON.stringify({ error: "Embedding generation failed", request_id }),
-          {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          }
-        )
+        new Response(JSON.stringify({ error: "Embedding generation failed", request_id }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        })
       );
     }
 
     /* ============================================
-       INSERT ARTICLE — STORE FULL CONTENT
+       INSERT ARTICLE — STORE FULL CONTENT + METADATA
+       (uses the new columns you migrated in Step 2)
     ============================================ */
+    const nowIso = new Date().toISOString();
+
+    const insertPayload: any = {
+      organization_id: orgId,
+      sub_organization_id: subOrgId,
+      title,
+      description: null,
+
+      // existing field used by your app:
+      content: fullText,
+
+      // new fields from migration:
+      source_type: sourceType,
+      file_bucket: sourceType === "file" ? file_bucket : null,
+      file_path: sourceType === "file" ? file_path : null,
+      mime_type: sourceType === "file" ? resolvedMime : null,
+      original_filename: sourceType === "file" ? original_filename : null,
+      raw_content: fullText,
+      last_processed_at: nowIso,
+      processing_error: null,
+    };
+
     const article = await safeSupabase<{ id: string }>(
       logger,
       "knowledge_articles.insert",
       () =>
         supabase
           .from("knowledge_articles")
-          .insert({
-            organization_id: orgId,
-            sub_organization_id: subOrgId,
-            title,
-            description: null,
-
-            // ⭐ IMPORTANT: store EXACT full content
-            content: fullText,
-          })
+          .insert(insertPayload)
           .select("id")
           .single()
     );
@@ -424,15 +459,21 @@ serve(async (req: Request): Promise<Response> => {
       embedding: vectors[i],
     }));
 
-    const { error: chunkError } = await supabase
-      .from("knowledge_chunks")
-      .insert(records);
+    const { error: chunkError } = await supabase.from("knowledge_chunks").insert(records);
 
     if (chunkError) {
       logger.error("KB_CHUNKS_INSERT_ERROR", {
         error: chunkError,
         article_id: article.id,
       });
+
+      // mark processing error on the article for visibility
+      await supabase
+        .from("knowledge_articles")
+        .update({
+          processing_error: `Failed to insert chunks: ${chunkError.message ?? "unknown"}`,
+        })
+        .eq("id", article.id);
 
       return cors(
         new Response(
@@ -441,10 +482,7 @@ serve(async (req: Request): Promise<Response> => {
             details: chunkError,
             request_id,
           }),
-          {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          }
+          { status: 500, headers: { "Content-Type": "application/json" } }
         )
       );
     }
@@ -452,6 +490,9 @@ serve(async (req: Request): Promise<Response> => {
     logger.info("KB article created", {
       article_id: article.id,
       chunks: records.length,
+      sourceType,
+      file_bucket: sourceType === "file" ? file_bucket : null,
+      file_path: sourceType === "file" ? file_path : null,
     });
 
     return cors(
