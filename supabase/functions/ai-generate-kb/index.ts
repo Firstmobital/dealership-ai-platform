@@ -252,7 +252,7 @@ async function extractTextFromFile(
   } catch (err) {
     logger.error("OPENAI_EXTRACTION_ERROR", { error: err });
     return { text: null, mimeType };
-  }
+  }  
 }
 
 /* =====================================================================================
@@ -440,10 +440,7 @@ serve(async (req: Request): Promise<Response> => {
       fullText = text;
 
       // Excel disclaimer only (as requested)
-      if (isExcelMime(resolvedMime)) {
-        fullText +=
-          "\n\nPrices and schemes are subject to change at the time of booking.";
-      }
+  
     } else {
       return cors(
         new Response(
