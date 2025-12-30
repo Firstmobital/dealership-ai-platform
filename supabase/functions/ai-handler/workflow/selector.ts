@@ -1,43 +1,46 @@
-export async function selectNextStepSmart({
-    workflow,
-    steps,
-    state,
-    userMessage,
-    openai,
-  }) {
-    const prompt = `
-  You are executing a dealership workflow.
-  
-  Workflow description:
-  ${workflow.description}
-  
-  Steps:
-  ${steps.map(s => `${s.step_order}. ${s.action.ai_action}: ${s.action.instruction_text || ""}`).join("\n")}
-  
-  Current variables:
-  ${JSON.stringify(state.variables)}
-  
-  User message:
-  "${userMessage}"
-  
-  Rules:
-  - Skip steps already logically completed
-  - Do not repeat questions
-  - Choose the most relevant next step
-  - Return ONLY JSON
-  
-  { "next_step": number, "reason": string }
-  `;
-  
-    const resp = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-    });
-  
-    const parsed = JSON.parse(resp.choices[0].message.content);
-  
-    return steps.find(s => s.step_order === parsed.next_step);
+// supabase/functions/ai-handler/workflow/selector.ts
+
+/**
+ * Select the next workflow step in a simple, deterministic manner.
+ *
+ * IMPORTANT DESIGN:
+ * - No AI-based step selection
+ * - No step type inference
+ * - No keyword guessing
+ *
+ * Steps are executed strictly in step_order sequence.
+ * The AI's intelligence is used ONLY to generate replies,
+ * not to decide control flow.
+ */
+
+export function selectNextStep({
+  steps,
+  state,
+}: {
+  steps: Array<{
+    id: string;
+    step_order: number;
+    instruction_text: string;
+  }>;
+  state: {
+    current_step: number;
+    completed?: boolean;
+  };
+}) {
+  // If workflow is already marked completed, do nothing
+  if (state.completed) {
+    return null;
   }
-  
+
+  // Steps are 1-based indexed (step_order)
+  const nextStep = steps.find(
+    (step) => step.step_order === state.current_step,
+  );
+
+  // If no step exists at this index, workflow is complete
+  if (!nextStep) {
+    return null;
+  }
+
+  return nextStep;
+}

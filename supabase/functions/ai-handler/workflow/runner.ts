@@ -1,48 +1,71 @@
-import { selectNextStepSmart } from "./selector.ts";
+// supabase/functions/ai-handler/workflow/runner.ts
+
+import { selectNextStep } from "./selector.ts";
 import { executeStep } from "./executor.ts";
 import { loadState, saveState } from "./state.ts";
 
+/**
+ * Runs a workflow for a given conversation.
+ *
+ * Design principles:
+ * - Steps are executed sequentially
+ * - Each step contains only instruction_text (guidance)
+ * - AI intelligence is used ONLY to generate replies (outside this file)
+ * - No AI-based step selection
+ * - No strict vs smart modes
+ */
 export async function runWorkflow({
   workflow,
   steps,
   conversationId,
   userMessage,
-  openai,
   supabase,
 }: {
-  workflow: any;
-  steps: any[];
+  workflow: {
+    id: string;
+    name?: string;
+  };
+  steps: Array<{
+    id: string;
+    step_order: number;
+    instruction_text: string;
+  }>;
   conversationId: string;
   userMessage: string;
-  openai: any;
   supabase: any;
 }) {
+  // 1️⃣ Load existing workflow state (or initialize)
   const state = await loadState(conversationId, workflow.id, supabase);
 
-  let nextStep;
+  // 2️⃣ Select next step deterministically
+  const nextStep = selectNextStep({
+    steps,
+    state,
+  });
 
-  if (workflow.mode === "strict") {
-    nextStep = steps.find(
-      (s) => s.step_order === state.current_step,
-    );
-  } else {
-    nextStep = await selectNextStepSmart({
-      workflow,
-      steps,
-      state,
-      userMessage,
-      openai,
+  // 3️⃣ If no step remains, workflow is complete
+  if (!nextStep) {
+    await saveState({
+      conversationId,
+      workflowId: workflow.id,
+      nextStep: state.current_step,
+      variables: state.variables,
+      reason: "Workflow completed",
+      completed: true,
+      supabase,
     });
+
+    return null;
   }
 
-  if (!nextStep) return null;
-
+  // 4️⃣ Execute step (execution is lightweight, AI reply already generated)
   const result = await executeStep({
     step: nextStep,
     state,
     userMessage,
   });
 
+  // 5️⃣ Persist updated workflow state
   await saveState({
     conversationId,
     workflowId: workflow.id,
@@ -53,5 +76,6 @@ export async function runWorkflow({
     supabase,
   });
 
+  // 6️⃣ Return execution result
   return result;
 }

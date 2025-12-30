@@ -58,16 +58,24 @@ function createLogger(ctx: LogContext) {
 
   return {
     info(message: string, extra: Record<string, any> = {}) {
-      console.log(JSON.stringify({ level: "info", message, ...base, ...extra }));
+      console.log(
+        JSON.stringify({ level: "info", message, ...base, ...extra })
+      );
     },
     warn(message: string, extra: Record<string, any> = {}) {
-      console.warn(JSON.stringify({ level: "warn", message, ...base, ...extra }));
+      console.warn(
+        JSON.stringify({ level: "warn", message, ...base, ...extra })
+      );
     },
     error(message: string, extra: Record<string, any> = {}) {
-      console.error(JSON.stringify({ level: "error", message, ...base, ...extra }));
+      console.error(
+        JSON.stringify({ level: "error", message, ...base, ...extra })
+      );
     },
     debug(message: string, extra: Record<string, any> = {}) {
-      console.log(JSON.stringify({ level: "debug", message, ...base, ...extra }));
+      console.log(
+        JSON.stringify({ level: "debug", message, ...base, ...extra })
+      );
     },
   };
 }
@@ -78,7 +86,7 @@ function createLogger(ctx: LogContext) {
 async function safeSupabase<T>(
   opName: string,
   logger: ReturnType<typeof createLogger>,
-  fn: () => Promise<{ data: T | null; error: any }>,
+  fn: () => Promise<{ data: T | null; error: any }>
 ): Promise<T | null> {
   try {
     const { data, error } = await fn();
@@ -95,7 +103,7 @@ async function safeSupabase<T>(
 
 async function safeWhatsAppSend(
   logger: ReturnType<typeof createLogger>,
-  payload: any,
+  payload: any
 ): Promise<boolean> {
   try {
     const res = await fetch(`${PROJECT_URL}/functions/v1/whatsapp-send`, {
@@ -207,7 +215,7 @@ function isGreetingMessage(input: string): boolean {
 ============================================================================ */
 async function safeEmbedding(
   logger: ReturnType<typeof createLogger>,
-  input: string,
+  input: string
 ): Promise<number[] | null> {
   try {
     const resp = await openai.embeddings.create({
@@ -223,7 +231,7 @@ async function safeEmbedding(
 
 async function safeChatCompletion(
   logger: ReturnType<typeof createLogger>,
-  params: { systemPrompt: string; userMessage: string },
+  params: { systemPrompt: string; userMessage: string }
 ): Promise<string | null> {
   // Used for: follow-up suggestion + workflow intent classification
   try {
@@ -268,8 +276,7 @@ function estimateActualCost(params: {
   if (provider === "openai") {
     if (model === "gpt-4o-mini") {
       const cost =
-        (inputTokens / 1_000_000) * 0.15 +
-        (outputTokens / 1_000_000) * 0.60;
+        (inputTokens / 1_000_000) * 0.15 + (outputTokens / 1_000_000) * 0.6;
       return Number(cost.toFixed(4));
     }
   }
@@ -277,15 +284,13 @@ function estimateActualCost(params: {
   if (provider === "gemini") {
     if (model === "gemini-2.5-pro") {
       const cost =
-        (inputTokens / 1_000_000) * 1.25 +
-        (outputTokens / 1_000_000) * 3.75;
+        (inputTokens / 1_000_000) * 1.25 + (outputTokens / 1_000_000) * 3.75;
       return Number(cost.toFixed(4));
     }
 
     if (model === "gemini-1.5-flash") {
       const cost =
-        (inputTokens / 1_000_000) * 0.35 +
-        (outputTokens / 1_000_000) * 1.05;
+        (inputTokens / 1_000_000) * 0.35 + (outputTokens / 1_000_000) * 1.05;
       return Number(cost.toFixed(4));
     }
   }
@@ -482,7 +487,7 @@ async function logAIUsage(params: {
 async function fetchCampaignContextForContact(
   organizationId: string,
   contactId: string,
-  logger: ReturnType<typeof createLogger>,
+  logger: ReturnType<typeof createLogger>
 ) {
   const contact = await safeSupabase<{
     id: string;
@@ -490,15 +495,12 @@ async function fetchCampaignContextForContact(
     last_name: string | null;
     model: string | null;
     phone: string | null;
-  }>(
-    "load_contact_for_campaign_context",
-    logger,
-    () =>
-      supabase
-        .from("contacts")
-        .select("id, first_name, last_name, model, phone")
-        .eq("id", contactId)
-        .maybeSingle(),
+  }>("load_contact_for_campaign_context", logger, () =>
+    supabase
+      .from("contacts")
+      .select("id, first_name, last_name, model, phone")
+      .eq("id", contactId)
+      .maybeSingle()
   );
 
   if (!contact || !contact.phone) return null;
@@ -506,16 +508,13 @@ async function fetchCampaignContextForContact(
   const summary = await safeSupabase<{
     delivered_campaigns: string[] | null;
     failed_campaigns: string[] | null;
-  }>(
-    "load_contact_campaign_summary",
-    logger,
-    () =>
-      supabase
-        .from("contact_campaign_summary")
-        .select("delivered_campaigns, failed_campaigns")
-        .eq("organization_id", organizationId)
-        .eq("phone", contact.phone)
-        .maybeSingle(),
+  }>("load_contact_campaign_summary", logger, () =>
+    supabase
+      .from("contact_campaign_summary")
+      .select("delivered_campaigns, failed_campaigns")
+      .eq("organization_id", organizationId)
+      .eq("phone", contact.phone)
+      .maybeSingle()
   );
 
   return {
@@ -560,7 +559,7 @@ async function loadBotPersonality(params: {
     const { data } = await supabase
       .from("bot_personality")
       .select(
-        "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts",
+        "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts"
       )
       .eq("organization_id", organizationId)
       .eq("sub_organization_id", subOrganizationId)
@@ -572,7 +571,7 @@ async function loadBotPersonality(params: {
   const { data: orgWide } = await supabase
     .from("bot_personality")
     .select(
-      "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts",
+      "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts"
     )
     .eq("organization_id", organizationId)
     .is("sub_organization_id", null)
@@ -585,7 +584,8 @@ async function loadBotPersonality(params: {
       short_responses: true,
       emoji_usage: false,
       gender_voice: "Neutral",
-      fallback_message: "I’m sorry, I don’t have enough information to answer that.",
+      fallback_message:
+        "I’m sorry, I don’t have enough information to answer that.",
       business_context: "",
       dos: "",
       donts: "",
@@ -603,7 +603,8 @@ async function resolveKnowledgeContext(params: {
   subOrganizationId: string | null;
   logger: ReturnType<typeof createLogger>;
 }): Promise<{ context: string; forced: boolean } | null> {
-  const { embedding, userMessage, organizationId, subOrganizationId, logger } = params;
+  const { embedding, userMessage, organizationId, subOrganizationId, logger } =
+    params;
 
   // PASS 1 — TITLE MATCH (HIGH PRECISION)
   const keywords = userMessage
@@ -611,7 +612,9 @@ async function resolveKnowledgeContext(params: {
     .replace(/[^a-z0-9\s]/g, "")
     .split(" ")
     .filter(
-      (w) => w.length >= 3 && !["who", "what", "is", "are", "the", "this", "that"].includes(w),
+      (w) =>
+        w.length >= 3 &&
+        !["who", "what", "is", "are", "the", "this", "that"].includes(w)
     );
 
   logger.debug("[rag] title keywords", { keywords });
@@ -634,7 +637,10 @@ async function resolveKnowledgeContext(params: {
     if (data?.length) {
       titleMatches = data.filter((a) => {
         if (!subOrganizationId) return true;
-        return a.sub_organization_id === null || a.sub_organization_id === subOrganizationId;
+        return (
+          a.sub_organization_id === null ||
+          a.sub_organization_id === subOrganizationId
+        );
       });
       if (titleMatches.length) break;
     }
@@ -655,16 +661,22 @@ async function resolveKnowledgeContext(params: {
         title: article.title,
       });
 
-      return { context: chunks.map((c: any) => c.chunk).join("\n\n"), forced: true };
+      return {
+        context: chunks.map((c: any) => c.chunk).join("\n\n"),
+        forced: true,
+      };
     }
   }
 
   // PASS 2 — SEMANTIC SEARCH (VECTOR)
-  const { data: matches, error: matchErr } = await supabase.rpc("match_knowledge_chunks", {
-    query_embedding: embedding,
-    match_count: 15,
-    match_threshold: 0.05,
-  });
+  const { data: matches, error: matchErr } = await supabase.rpc(
+    "match_knowledge_chunks",
+    {
+      query_embedding: embedding,
+      match_count: 15,
+      match_threshold: 0.05,
+    }
+  );
 
   if (matchErr || !matches?.length) {
     logger.debug("[rag] no semantic matches");
@@ -685,9 +697,12 @@ async function resolveKnowledgeContext(params: {
       .filter((a: any) => {
         if (a.organization_id !== organizationId) return false;
         if (!subOrganizationId) return true;
-        return a.sub_organization_id === null || a.sub_organization_id === subOrganizationId;
+        return (
+          a.sub_organization_id === null ||
+          a.sub_organization_id === subOrganizationId
+        );
       })
-      .map((a: any) => a.id),
+      .map((a: any) => a.id)
   );
 
   const filtered = matches.filter((m: any) => allowedIds.has(m.article_id));
@@ -697,7 +712,10 @@ async function resolveKnowledgeContext(params: {
   }
 
   logger.info("[rag] semantic KB used", {
-    matches: filtered.map((m: any) => ({ article_id: m.article_id, similarity: m.similarity })),
+    matches: filtered.map((m: any) => ({
+      article_id: m.article_id,
+      similarity: m.similarity,
+    })),
   });
 
   return {
@@ -722,13 +740,6 @@ type WorkflowRow = {
   is_active: boolean | null;
 };
 
-type WorkflowStepRow = {
-  id: string;
-  workflow_id: string | null;
-  step_order: number;
-  action: any; // { ai_action, instruction_text, expected_user_input, metadata }
-};
-
 type WorkflowLogRow = {
   id: string;
   workflow_id: string | null;
@@ -745,7 +756,7 @@ async function detectWorkflowTrigger(
   user_message: string,
   organizationId: string,
   subOrgId: string | null,
-  logger: ReturnType<typeof createLogger>,
+  logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowRow | null> {
   const workflows = await safeSupabase<WorkflowRow[]>(
     "load_workflows",
@@ -753,9 +764,11 @@ async function detectWorkflowTrigger(
     () =>
       supabase
         .from("workflows")
-        .select("id, organization_id, sub_organization_id, trigger, mode, is_active")
+        .select(
+          "id, organization_id, sub_organization_id, trigger, mode, is_active"
+        )
         .eq("organization_id", organizationId)
-        .eq("is_active", true),
+        .eq("is_active", true)
   );
 
   if (!workflows?.length) {
@@ -774,7 +787,11 @@ async function detectWorkflowTrigger(
 
     if (triggerType === "keyword") {
       const keywords: string[] = trigger.keywords ?? [];
-      if (keywords.some((k) => lowerMsg.includes((k ?? "").toString().toLowerCase()))) {
+      if (
+        keywords.some((k) =>
+          lowerMsg.includes((k ?? "").toString().toLowerCase())
+        )
+      ) {
         logger.info("[workflow] keyword trigger matched", {
           workflow_id: wf.id,
           trigger_keywords: keywords,
@@ -795,18 +812,25 @@ async function detectWorkflowTrigger(
             {
               role: "system",
               content: `Classify user intent into EXACTLY one of: ${intents.join(
-                ", ",
+                ", "
               )}. Return only that word.`,
             },
             { role: "user", content: user_message },
           ],
         });
 
-        const intent = resp.choices?.[0]?.message?.content?.trim().toLowerCase() ?? "";
-        logger.debug("[workflow] intent classification result", { intent, intents });
+        const intent =
+          resp.choices?.[0]?.message?.content?.trim().toLowerCase() ?? "";
+        logger.debug("[workflow] intent classification result", {
+          intent,
+          intents,
+        });
 
         if (intents.map((i) => i.toLowerCase()).includes(intent)) {
-          logger.info("[workflow] intent trigger matched", { workflow_id: wf.id, intent });
+          logger.info("[workflow] intent trigger matched", {
+            workflow_id: wf.id,
+            intent,
+          });
           return wf;
         }
       } catch (err) {
@@ -829,7 +853,7 @@ async function detectWorkflowTrigger(
 ============================================================================ */
 async function loadActiveWorkflow(
   conversationId: string,
-  logger: ReturnType<typeof createLogger>,
+  logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowLogRow | null> {
   const data = await safeSupabase<WorkflowLogRow>(
     "load_active_workflow",
@@ -837,10 +861,12 @@ async function loadActiveWorkflow(
     () =>
       supabase
         .from("workflow_logs")
-        .select("id, workflow_id, conversation_id, current_step_number, variables, completed")
+        .select(
+          "id, workflow_id, conversation_id, current_step_number, variables, completed"
+        )
         .eq("conversation_id", conversationId)
         .eq("completed", false)
-        .maybeSingle(),
+        .maybeSingle()
   );
 
   if (!data) return null;
@@ -856,7 +882,7 @@ async function loadActiveWorkflow(
 async function startWorkflow(
   workflowId: string,
   conversationId: string,
-  logger: ReturnType<typeof createLogger>,
+  logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowLogRow | null> {
   const data = await safeSupabase<WorkflowLogRow>(
     "start_workflow",
@@ -871,20 +897,34 @@ async function startWorkflow(
           variables: {},
           completed: false,
         })
-        .select("id, workflow_id, conversation_id, current_step_number, variables, completed")
-        .single(),
+        .select(
+          "id, workflow_id, conversation_id, current_step_number, variables, completed"
+        )
+        .single()
   );
 
   if (!data) return null;
 
-  logger.info("[workflow] started", { workflow_id: workflowId, log_id: data.id });
+  logger.info("[workflow] started", {
+    workflow_id: workflowId,
+    log_id: data.id,
+  });
 
   return { ...data, current_step_number: 1, variables: {}, completed: false };
 }
 
+type WorkflowStepRow = {
+  id: string;
+  workflow_id: string;
+  step_order: number;
+  action: {
+    instruction_text?: string;
+  } | null;
+};
+
 async function getWorkflowSteps(
   workflowId: string,
-  logger: ReturnType<typeof createLogger>,
+  logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowStepRow[]> {
   const data = await safeSupabase<WorkflowStepRow[]>(
     "get_workflow_steps",
@@ -894,7 +934,7 @@ async function getWorkflowSteps(
         .from("workflow_steps")
         .select("*")
         .eq("workflow_id", workflowId)
-        .order("step_order", { ascending: true }),
+        .order("step_order", { ascending: true })
   );
 
   return (data ?? []) as WorkflowStepRow[];
@@ -905,105 +945,23 @@ async function saveWorkflowProgress(
   nextStep: number,
   vars: Record<string, any>,
   completed: boolean,
-  logger: ReturnType<typeof createLogger>,
+  logger: ReturnType<typeof createLogger>
 ) {
   const { error } = await supabase
     .from("workflow_logs")
     .update({ current_step_number: nextStep, variables: vars, completed })
     .eq("id", logId);
 
-  if (error) logger.error("[workflow] save progress error", { error, log_id: logId });
-  else logger.debug("[workflow] progress saved", { log_id: logId, nextStep, completed });
+  if (error)
+    logger.error("[workflow] save progress error", { error, log_id: logId });
+  else
+    logger.debug("[workflow] progress saved", {
+      log_id: logId,
+      nextStep,
+      completed,
+    });
 }
 
-/* ============================================================================
-   WORKFLOW — STEP EXECUTION ENGINE
-============================================================================ */
-type StepResult = { output: string; end: boolean; nextStepNumber?: number };
-
-async function executeStep(
-  step: WorkflowStepRow,
-  log: WorkflowLogRow,
-  user_message: string,
-  logger: ReturnType<typeof createLogger>,
-): Promise<StepResult> {
-  const action = step.action ?? {};
-  const aiAction = action.ai_action ?? "ask_question";
-  const instructionText = safeText(action.instruction_text);
-  const expectedKey = safeText(action.expected_user_input);
-  const metadata = action.metadata ?? {};
-
-  logger.debug("[workflow] execute step", { step_order: step.step_order, aiAction });
-
-  switch (aiAction) {
-    case "ask_question":
-    case "give_information":
-    case "use_knowledge_base":
-      return { output: instructionText, end: false };
-
-    case "save_user_response": {
-      const key = expectedKey || "value";
-      log.variables[key] = user_message;
-      return { output: instructionText || "Noted.", end: false };
-    }
-
-    case "branch": {
-      const rule = metadata.rule ?? {};
-      const field = rule.field;
-      const value = rule.value;
-      const goto = Number(rule.goto_step ?? 0);
-
-      if (field && goto > 0 && log.variables[field] == value) {
-        return {
-          output: safeText(rule.goto_text) || instructionText || "Okay.",
-          end: false,
-          nextStepNumber: goto,
-        };
-      }
-
-      return { output: instructionText || "Continuing…", end: false };
-    }
-
-    case "end":
-      return {
-        output: instructionText || "Workflow completed!",
-        end: true,
-        nextStepNumber: step.step_order,
-      };
-
-    default:
-      logger.warn("[workflow] unknown ai_action, falling back", { aiAction });
-      return { output: instructionText || "Okay.", end: false };
-  }
-}
-
-async function runStrictMode(
-  step: WorkflowStepRow,
-  log: WorkflowLogRow,
-  user_message: string,
-  logger: ReturnType<typeof createLogger>,
-) {
-  const action = step.action ?? {};
-  const expected = safeText(action.expected_user_input);
-
-  if (expected && (!user_message || !user_message.trim())) {
-    return {
-      output: "Please provide the required information to continue.",
-      end: false,
-    } as StepResult;
-  }
-
-  return executeStep(step, log, user_message, logger);
-}
-
-async function runSmartMode(
-  step: WorkflowStepRow,
-  log: WorkflowLogRow,
-  user_message: string,
-  logger: ReturnType<typeof createLogger>,
-) {
-  return executeStep(step, log, user_message, logger);
-}
 /* ============================================================================
    MAIN HANDLER
 ============================================================================ */
@@ -1039,19 +997,19 @@ serve(async (req: Request): Promise<Response> => {
       contact_id: string | null;
       sub_organization_id: string | null;
       ai_enabled: boolean | null;
-    }>(
-      "load_conversation",
-      baseLogger,
-      () =>
-        supabase
-          .from("conversations")
-          .select("id, organization_id, channel, contact_id, sub_organization_id, ai_enabled")
-          .eq("id", conversation_id)
-          .maybeSingle(),
+    }>("load_conversation", baseLogger, () =>
+      supabase
+        .from("conversations")
+        .select(
+          "id, organization_id, channel, contact_id, sub_organization_id, ai_enabled"
+        )
+        .eq("id", conversation_id)
+        .maybeSingle()
     );
 
     if (!conv) return new Response("Conversation not found", { status: 404 });
-    if (conv.ai_enabled === false) return new Response("AI disabled", { status: 200 });
+    if (conv.ai_enabled === false)
+      return new Response("AI disabled", { status: 200 });
 
     const organizationId = conv.organization_id;
     const subOrganizationId = conv.sub_organization_id ?? null;
@@ -1080,7 +1038,7 @@ serve(async (req: Request): Promise<Response> => {
             error_code: "WALLET_NOT_AVAILABLE",
             request_id,
           }),
-          { status: 402, headers: { "Content-Type": "application/json" } },
+          { status: 402, headers: { "Content-Type": "application/json" } }
         );
       }
     }
@@ -1096,7 +1054,7 @@ serve(async (req: Request): Promise<Response> => {
             .from("contacts")
             .select("phone")
             .eq("id", contactId)
-            .maybeSingle(),
+            .maybeSingle()
       );
       contactPhone = contact?.phone ?? null;
     }
@@ -1133,10 +1091,9 @@ ${personality.donts || "- None specified."}
     // HARD GREETING RULE (NO AI) — ALWAYS REPLY TO hi/hello/hey/namaste etc.
     // ------------------------------------------------------------------
     if (isGreetingMessage(user_message)) {
-      const greetText =
-        personality?.language?.toLowerCase?.().includes("hindi")
-          ? "Namaste 👋 Techwheels mein aapka swagat hai. Main aapki kaise madad kar sakta/ sakti hoon?"
-          : "Hello 👋 Welcome to Techwheels. How can I help you today?";
+      const greetText = personality?.language?.toLowerCase?.().includes("hindi")
+        ? "Namaste 👋 Techwheels mein aapka swagat hai. Main aapki kaise madad kar sakta/ sakti hoon?"
+        : "Hello 👋 Welcome to Techwheels. How can I help you today?";
 
       // Save bot message
       await supabase.from("messages").insert({
@@ -1172,7 +1129,7 @@ ${personality.donts || "- None specified."}
           request_id,
           hard_greeting: true,
         }),
-        { headers: { "Content-Type": "application/json" } },
+        { headers: { "Content-Type": "application/json" } }
       );
     }
 
@@ -1183,8 +1140,13 @@ ${personality.donts || "- None specified."}
       // Optional campaign context (best-effort)
       let campaignContextText = "";
       if (contactId) {
-        const campaignCtx = await fetchCampaignContextForContact(organizationId, contactId, logger);
-        if (campaignCtx) campaignContextText = buildCampaignContextText(campaignCtx);
+        const campaignCtx = await fetchCampaignContextForContact(
+          organizationId,
+          contactId,
+          logger
+        );
+        if (campaignCtx)
+          campaignContextText = buildCampaignContextText(campaignCtx);
       }
 
       const prompt = buildFollowupSuggestionPrompt({
@@ -1203,104 +1165,7 @@ ${personality.donts || "- None specified."}
           suggestion: suggestion?.trim() || "",
           request_id,
         }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    // 6) Workflow engine (session)
-    let activeWorkflow = await loadActiveWorkflow(conversation_id, logger);
-
-    if (!activeWorkflow) {
-      const wf = await detectWorkflowTrigger(user_message, organizationId, subOrganizationId, logger);
-      if (wf) activeWorkflow = await startWorkflow(wf.id, conversation_id, logger);
-    }
-
-    if (activeWorkflow) {
-      const wfRow = await safeSupabase<WorkflowRow>(
-        "load_workflow_by_id",
-        logger,
-        () =>
-          supabase
-            .from("workflows")
-            .select("id, mode")
-            .eq("id", activeWorkflow!.workflow_id)
-            .maybeSingle(),
-      );
-
-      if (wfRow) {
-        const steps = await getWorkflowSteps(activeWorkflow.workflow_id!, logger);
-
-        if (steps.length) {
-          const stepNum = Math.max(
-            1,
-            Math.min(activeWorkflow.current_step_number ?? 1, steps.length),
-          );
-          const step = steps[stepNum - 1];
-
-          const stepResult =
-            wfRow.mode === "strict"
-              ? await runStrictMode(step, activeWorkflow, user_message, logger)
-              : await runSmartMode(step, activeWorkflow, user_message, logger);
-
-          const nextStep =
-            stepResult.nextStepNumber ?? (activeWorkflow.current_step_number ?? 1) + 1;
-
-          const finished = stepResult.end || nextStep > steps.length;
-
-          await saveWorkflowProgress(
-            activeWorkflow.id,
-            nextStep,
-            activeWorkflow.variables,
-            finished,
-            logger,
-          );
-
-          const reply = stepResult.output || fallbackMessage;
-
-          await supabase.from("messages").insert({
-            conversation_id,
-            sender: "bot",
-            message_type: "text",
-            text: reply,
-            channel,
-            sub_organization_id: subOrganizationId,
-          });
-
-          await supabase
-            .from("conversations")
-            .update({ last_message_at: new Date().toISOString() })
-            .eq("id", conversation_id);
-
-          if (channel === "whatsapp" && contactPhone) {
-            await safeWhatsAppSend(logger, {
-              organization_id: organizationId,
-              sub_organization_id: subOrganizationId,
-              to: contactPhone,
-              type: "text",
-              text: reply,
-            });
-          }
-
-          return new Response(
-            JSON.stringify({
-              conversation_id,
-              ai_response: reply,
-              workflow_active: true,
-              request_id,
-            }),
-            { headers: { "Content-Type": "application/json" } },
-          );
-        }
-      }
-
-      return new Response(
-        JSON.stringify({
-          conversation_id,
-          skipped: true,
-          reason: "Workflow active",
-          request_id,
-        }),
-        { headers: { "Content-Type": "application/json" } },
+        { headers: { "Content-Type": "application/json" } }
       );
     }
 
@@ -1317,27 +1182,33 @@ ${personality.donts || "- None specified."}
     // 8) Load conversation history
     const recentMessages = await safeSupabase<
       { sender: string; text: string | null; created_at: string }[]
-    >(
-      "load_recent_messages",
-      logger,
-      () =>
-        supabase
-          .from("messages")
-          .select("sender, text, created_at")
-          .eq("conversation_id", conversation_id)
-          .order("created_at", { ascending: true })
-          .limit(20),
+    >("load_recent_messages", logger, () =>
+      supabase
+        .from("messages")
+        .select("sender, text, created_at")
+        .eq("conversation_id", conversation_id)
+        .order("created_at", { ascending: true })
+        .limit(20)
     );
 
     const historyText =
       recentMessages
-        ?.map((m) => `${new Date(m.created_at).toISOString()} - ${m.sender}: ${m.text ?? ""}`)
+        ?.map(
+          (m) =>
+            `${new Date(m.created_at).toISOString()} - ${m.sender}: ${
+              m.text ?? ""
+            }`
+        )
         .join("\n") ?? "";
 
     // 9) Campaign context (best-effort; fixed schema)
     let campaignContextText = "";
     if (contactId) {
-      const campaignCtx = await fetchCampaignContextForContact(organizationId, contactId, logger);
+      const campaignCtx = await fetchCampaignContextForContact(
+        organizationId,
+        contactId,
+        logger
+      );
       if (campaignCtx) {
         campaignContextText = buildCampaignContextText(campaignCtx);
         logger.debug("[ai-handler] campaign context injected", {
@@ -1360,46 +1231,52 @@ ${personality.donts || "- None specified."}
         logger,
       });
 
-      // Forced KB hit: respond with KB chunks directly (no AI call)
-      if (resolved?.forced) {
-        const reply = resolved.context;
-
-        await supabase.from("messages").insert({
-          conversation_id,
-          sender: "bot",
-          message_type: "text",
-          text: reply,
-          channel,
-          sub_organization_id: subOrganizationId,
-        });
-
-        await supabase
-          .from("conversations")
-          .update({ last_message_at: new Date().toISOString() })
-          .eq("id", conversation_id);
-
-        if (channel === "whatsapp" && contactPhone) {
-          await safeWhatsAppSend(logger, {
-            organization_id: organizationId,
-            sub_organization_id: subOrganizationId,
-            to: contactPhone,
-            type: "text",
-            text: reply,
-          });
-        }
-
-        return new Response(
-          JSON.stringify({
-            conversation_id,
-            ai_response: reply,
-            request_id,
-            forced_kb: true,
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
+      // KB context is NEVER a direct reply
+      if (resolved?.context) {
+        contextText = resolved.context;
       }
+    }
 
-      if (resolved?.context) contextText = resolved.context;
+    // ------------------------------------------------------------------
+    // WORKFLOW CONTEXT (GUIDANCE ONLY — NO EXECUTION)
+    // ------------------------------------------------------------------
+    let workflowInstructionText = "";
+
+    const activeWorkflow = await loadActiveWorkflow(conversation_id, logger);
+
+    let resolvedWorkflow = activeWorkflow;
+
+    if (!resolvedWorkflow) {
+      const wf = await detectWorkflowTrigger(
+        user_message,
+        organizationId,
+        subOrganizationId,
+        logger
+      );
+
+      if (wf) {
+        resolvedWorkflow = await startWorkflow(wf.id, conversation_id, logger);
+      }
+    }
+
+    if (resolvedWorkflow) {
+      const steps = await getWorkflowSteps(
+        resolvedWorkflow.workflow_id!,
+        logger
+      );
+
+      if (steps?.length) {
+        const index = Math.max(
+          0,
+          Math.min(
+            (resolvedWorkflow.current_step_number ?? 1) - 1,
+            steps.length - 1
+          )
+        );
+
+        const step = steps[index];
+        workflowInstructionText = safeText(step.action?.instruction_text);
+      }
     }
 
     // 11) System prompt
@@ -1425,12 +1302,35 @@ BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ------------------------
 ${personaBlock}
 
+------------------------
+WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
+------------------------
+${workflowInstructionText || "No active workflow guidance."}
+
+IMPORTANT:
+- The workflow step is a GOAL, not a sentence to repeat.
+- Respond naturally in your own words.
+EACH TIME.
+- Do NOT mention workflows, steps, or instructions.
+- Ask at most ONE relevant question if needed.
+
+
 These rules OVERRIDE default AI behavior.
 
 ------------------------
 KNOWLEDGE CONTEXT (MOST IMPORTANT)
 ------------------------
 ${contextText}
+
+------------------------
+KNOWLEDGE USAGE RULES (CRITICAL)
+------------------------
+- The knowledge context is reference material ONLY.
+- NEVER copy or paste it verbatim.
+- ALWAYS summarize, rephrase, and explain in your own words.
+- Use bullet points where helpful.
+- Answer like a dealership executive, not a document.
+
 
 ------------------------
 CAMPAIGN HISTORY CONTEXT
@@ -1502,7 +1402,7 @@ Respond now to the customer's latest message only.
             error_code: "WALLET_NOT_AVAILABLE",
             request_id,
           }),
-          { status: 402, headers: { "Content-Type": "application/json" } },
+          { status: 402, headers: { "Content-Type": "application/json" } }
         );
       }
 
@@ -1518,7 +1418,7 @@ Respond now to the customer's latest message only.
             error_code: "LOW_WALLET_BALANCE",
             request_id,
           }),
-          { status: 402, headers: { "Content-Type": "application/json" } },
+          { status: 402, headers: { "Content-Type": "application/json" } }
         );
       }
 
@@ -1566,7 +1466,7 @@ Respond now to the customer's latest message only.
             error_code: "WALLET_DEBIT_FAILED",
             request_id,
           }),
-          { status: 500, headers: { "Content-Type": "application/json" } },
+          { status: 500, headers: { "Content-Type": "application/json" } }
         );
       }
 
@@ -1576,6 +1476,7 @@ Respond now to the customer's latest message only.
         .update({ wallet_transaction_id: walletTxnId })
         .eq("id", usage.id);
     }
+
 
     // 15) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
@@ -1588,7 +1489,28 @@ Respond now to the customer's latest message only.
 
       return new Response(
         JSON.stringify({ conversation_id, no_reply: true, request_id }),
-        { headers: { "Content-Type": "application/json" } },
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // --------------------------------------------------
+    // WORKFLOW PROGRESSION (ADVANCE STEP AFTER AI REPLY)
+    // --------------------------------------------------
+    if (resolvedWorkflow) {
+      const steps = await getWorkflowSteps(
+        resolvedWorkflow.workflow_id!,
+        logger
+      );
+
+      const nextStep = (resolvedWorkflow.current_step_number ?? 1) + 1;
+      const completed = nextStep > steps.length;
+
+      await saveWorkflowProgress(
+        resolvedWorkflow.id,
+        nextStep,
+        resolvedWorkflow.variables ?? {},
+        completed,
+        logger
       );
     }
 
@@ -1624,8 +1546,12 @@ Respond now to the customer's latest message only.
     }
 
     return new Response(
-      JSON.stringify({ conversation_id, ai_response: aiResponseText, request_id }),
-      { headers: { "Content-Type": "application/json" } },
+      JSON.stringify({
+        conversation_id,
+        ai_response: aiResponseText,
+        request_id,
+      }),
+      { headers: { "Content-Type": "application/json" } }
     );
   } catch (err: any) {
     console.error("[ai-handler] Fatal error", err);
@@ -1636,7 +1562,7 @@ Respond now to the customer's latest message only.
         error_code: "INTERNAL_ERROR",
         request_id,
       }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
+      { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
 });

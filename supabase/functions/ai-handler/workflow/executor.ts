@@ -1,3 +1,5 @@
+// supabase/functions/ai-handler/workflow/executor.ts
+
 export type StepResult = {
   output: string;
   nextStep: number;
@@ -6,54 +8,48 @@ export type StepResult = {
   reason: string;
 };
 
+/**
+ * Executes a workflow step.
+ *
+ * IMPORTANT DESIGN:
+ * - Steps contain ONLY instruction_text (guidance)
+ * - AI reply generation happens OUTSIDE this file
+ * - Executor only:
+ *   - Advances step
+ *   - Preserves variables
+ *   - Marks completion
+ *
+ * No step types.
+ * No branching.
+ * No AI decisions.
+ */
 export async function executeStep(params: {
-  step: any;
-  state: any;
+  step: {
+    step_order: number;
+    instruction_text: string;
+  };
+  state: {
+    current_step: number;
+    variables: Record<string, any>;
+  };
   userMessage: string;
 }): Promise<StepResult> {
-  const { step, state, userMessage } = params;
-  const action = step.action || {};
+  const { step, state } = params;
 
-  let nextStep = step.step_order + 1;
-  let variables = { ...state.variables };
-  let completed = false;
-  let reason = "Sequential step";
+  // Clone variables safely (reserved for future use)
+  const variables = { ...state.variables };
 
-  switch (action.ai_action) {
-    case "ask_question":
-    case "give_information":
-      break;
-
-    case "save_user_response":
-      if (action.expected_user_input) {
-        variables[action.expected_user_input] = userMessage;
-        reason = `Saved variable ${action.expected_user_input}`;
-      }
-      break;
-
-    case "branch":
-      const rule = action.metadata?.rule;
-      if (
-        rule &&
-        variables[rule.field] === rule.value &&
-        rule.goto_step
-      ) {
-        nextStep = rule.goto_step;
-        reason = `Branch matched: ${rule.field}=${rule.value}`;
-      }
-      break;
-
-    case "end":
-      completed = true;
-      reason = "Workflow ended";
-      break;
-  }
+  // Move to next sequential step
+  const nextStep = step.step_order + 1;
 
   return {
-    output: action.instruction_text || "",
+    // IMPORTANT:
+    // output is NOT used as the customer reply anymore
+    // AI reply is generated elsewhere
+    output: "",
     nextStep,
     variables,
-    completed,
-    reason,
+    completed: false,
+    reason: "Advanced to next sequential step",
   };
 }
