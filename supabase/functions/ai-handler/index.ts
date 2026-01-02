@@ -137,6 +137,40 @@ function safeText(v: any): string {
 }
 
 /* ============================================================================
+   CHAT HISTORY → LLM MESSAGES (STATEFUL FIX)
+============================================================================ */
+type ChatMsg = { role: "user" | "assistant"; content: string };
+
+function toChatRole(sender: string): "user" | "assistant" {
+  const s = (sender || "").toLowerCase();
+  if (s === "bot" || s === "assistant" || s === "agent") return "assistant";
+  return "user"; // customer
+}
+
+function buildChatMessagesFromHistory(
+  rows: { sender: string; text: string | null }[],
+  latestUserMessage: string
+): ChatMsg[] {
+  const msgs: ChatMsg[] = [];
+
+  for (const r of rows) {
+    const content = (r.text ?? "").trim();
+    if (!content) continue;
+    msgs.push({ role: toChatRole(r.sender), content });
+  }
+
+  // If inbound user message was already inserted before ai-handler runs,
+  // it will already be the last "user" message. Avoid duplicate.
+  const last = msgs[msgs.length - 1];
+  if (!last || !(last.role === "user" && last.content === latestUserMessage)) {
+    msgs.push({ role: "user", content: latestUserMessage });
+  }
+
+  // Keep a stable window
+  return msgs.slice(-20);
+}
+
+/* ============================================================================
    WALLET HELPERS — PHASE 5
 ============================================================================ */
 async function loadWalletForOrg(organizationId: string) {
@@ -353,10 +387,10 @@ type AICompletionResult = {
 async function runOpenAICompletion(params: {
   model: string;
   systemPrompt: string;
-  userMessage: string;
+  historyMessages: ChatMsg[];
   logger: ReturnType<typeof createLogger>;
 }): Promise<AICompletionResult | null> {
-  const { model, systemPrompt, userMessage, logger } = params;
+  const { model, systemPrompt, historyMessages, logger } = params;
 
   try {
     const resp = await openai.chat.completions.create({
@@ -364,7 +398,7 @@ async function runOpenAICompletion(params: {
       temperature: 0.3,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
+        ...historyMessages,
       ],
     });
 
@@ -383,13 +417,14 @@ async function runOpenAICompletion(params: {
   }
 }
 
+
 async function runGeminiCompletion(params: {
   model: string;
   systemPrompt: string;
-  userMessage: string;
+  historyMessages: ChatMsg[];
   logger: ReturnType<typeof createLogger>;
 }): Promise<AICompletionResult | null> {
-  const { model, systemPrompt, userMessage, logger } = params;
+  const { model, systemPrompt, historyMessages, logger } = params;
 
   if (!gemini) {
     logger.warn("[gemini] missing GEMINI_API_KEY; fallback to OpenAI");
@@ -402,7 +437,16 @@ async function runGeminiCompletion(params: {
       systemInstruction: systemPrompt,
     });
 
-    const resp = await genModel.generateContent(userMessage);
+    // Gemini format: role "user" / "model"
+    const history = historyMessages.slice(0, -1).map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+
+    const lastUser = historyMessages[historyMessages.length - 1]?.content ?? "";
+
+    const chat = genModel.startChat({ history });
+    const resp = await chat.sendMessage(lastUser);
     const text = resp.response.text()?.trim() ?? null;
 
     const usage = resp.response.usageMetadata ?? {};
@@ -424,15 +468,15 @@ async function runAICompletion(params: {
   provider: "openai" | "gemini";
   model: string;
   systemPrompt: string;
-  userMessage: string;
+  historyMessages: ChatMsg[];
   logger: ReturnType<typeof createLogger>;
 }): Promise<AICompletionResult | null> {
   if (params.provider === "gemini") {
     const gem = await runGeminiCompletion(params);
     if (gem) return gem;
-    return runOpenAICompletion({ ...params, logger: params.logger } as any);
+    return runOpenAICompletion(params as any);
   }
-  return runOpenAICompletion(params);
+  return runOpenAICompletion(params as any);
 }
 
 /* ============================================================================
@@ -962,6 +1006,30 @@ async function saveWorkflowProgress(
     });
 }
 
+async function logUnansweredQuestion(params: {
+  organization_id: string
+  conversation_id: string
+  question: string
+  ai_response?: string
+}) {
+  try {
+    const { error } = await supabase
+      .from("unanswered_questions")
+      .insert({
+        organization_id: params.organization_id,
+        conversation_id: params.conversation_id,
+        question: params.question,
+        ai_response: params.ai_response ?? null,
+      })
+
+    if (error) {
+      console.error("[unanswered_questions] insert failed", error)
+    }
+  } catch (err) {
+    console.error("[unanswered_questions] fatal", err)
+  }
+}
+
 /* ============================================================================
    MAIN HANDLER
 ============================================================================ */
@@ -1191,15 +1259,10 @@ ${personality.donts || "- None specified."}
         .limit(20)
     );
 
-    const historyText =
-      recentMessages
-        ?.map(
-          (m) =>
-            `${new Date(m.created_at).toISOString()} - ${m.sender}: ${
-              m.text ?? ""
-            }`
-        )
-        .join("\n") ?? "";
+    const historyMessages = buildChatMessagesFromHistory(
+      (recentMessages ?? []).map((m) => ({ sender: m.sender, text: m.text })),
+      user_message
+    );    
 
     // 9) Campaign context (best-effort; fixed schema)
     let campaignContextText = "";
@@ -1338,11 +1401,6 @@ CAMPAIGN HISTORY CONTEXT
 ${campaignContextText || "No prior campaign history available."}
 
 ------------------------
-CONVERSATION HISTORY
-------------------------
-${historyText || "No previous messages."}
-
-------------------------
 RESPONSE DECISION RULES (CRITICAL)
 ------------------------
 You are allowed to intentionally NOT reply.
@@ -1383,9 +1441,10 @@ Respond now to the customer's latest message only.
       provider: aiSettings.provider,
       model: aiSettings.model,
       systemPrompt,
-      userMessage: user_message,
+      historyMessages,
       logger,
     });
+    
 
     let aiResponseText = aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
@@ -1516,7 +1575,12 @@ Respond now to the customer's latest message only.
 
     // 16) Log unanswered fallback
     if (aiResponseText === fallbackMessage) {
-      await logUnansweredQuestion(organizationId, user_message, logger);
+      await logUnansweredQuestion({
+        organization_id: organizationId,
+        conversation_id,
+        question: user_message,
+        ai_response: aiResponseText,
+      });      
     }
 
     // 17) Save message + update conversation
