@@ -1,3 +1,4 @@
+// supabase/functions/whatsapp-inbound/index.ts
 // deno-lint-ignore-file no-explicit-any
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
@@ -109,6 +110,73 @@ async function triggerAIHandler(params: {
   }
 }
 
+/* =====================================================================================
+   CAMPAIGN DELIVERY RECEIPTS (PHASE C)
+===================================================================================== */
+async function processStatusReceipt(
+  status: any,
+  value: any,
+  baseLogger: ReturnType<typeof createLogger>,
+) {
+  const phoneNumberId = value?.metadata?.phone_number_id;
+  if (!phoneNumberId) return;
+
+  const settings = await supabase
+    .from("whatsapp_settings")
+    .select("organization_id, sub_organization_id")
+    .eq("whatsapp_phone_id", phoneNumberId)
+    .neq("is_active", false)
+    .limit(1)
+    .maybeSingle();
+
+  if (!settings.data) return;
+
+  const orgId = settings.data.organization_id;
+  const logger = baseLogger.with({ organization_id: orgId });
+
+  const waId = status.id;
+  if (!waId) return;
+
+  const ts = new Date(Number(status.timestamp) * 1000).toISOString();
+
+  let patch: Record<string, any> = {};
+
+  switch (status.status) {
+    case "sent":
+      patch = { status: "sent", dispatched_at: ts };
+      break;
+    case "delivered":
+    case "read":
+      patch = { status: "delivered", delivered_at: ts };
+      break;
+    case "failed":
+      patch = {
+        status: "failed",
+        failure_reason: status.errors?.[0]?.title ?? "unknown",
+      };
+      break;
+    default:
+      return;
+  }
+
+  const { data, error } = await supabase
+    .from("campaign_messages")
+    .update(patch)
+    .eq("organization_id", orgId)
+    .eq("whatsapp_message_id", waId)
+    .select("id, campaign_id")
+    .limit(50);
+
+  if (error) {
+    logger.error("[campaign] receipt update failed", { error, waId });
+  } else if (data?.length) {
+    logger.info("[campaign] receipt updated", {
+      waId,
+      status: patch.status,
+      updated: data.length,
+    });
+  }
+}
 
 /* =====================================================================================
    VERIFY
@@ -127,7 +195,7 @@ async function verifyWebhook(req: Request) {
 }
 
 /* =====================================================================================
-   MAIN INBOUND HANDLER
+   MAIN INBOUND MESSAGE HANDLER (UNCHANGED)
 ===================================================================================== */
 async function processInboundMessage(
   msg: any,
@@ -155,7 +223,6 @@ async function processInboundMessage(
 
   const name = value.contacts?.[0]?.profile?.name ?? null;
 
-  /* ---------------- CONTACT UPSERT (SAFE) ---------------- */
   const contact = await supabase
     .from("contacts")
     .upsert(
@@ -168,7 +235,6 @@ async function processInboundMessage(
   if (!contact.data) return;
   const contactId = contact.data.id;
 
-  /* ---------------- SINGLE CONVERSATION ---------------- */
   const existingConv = await supabase
     .from("conversations")
     .select("*")
@@ -207,7 +273,6 @@ async function processInboundMessage(
 
   const convLogger = logger.with({ conversation_id: conversationId });
 
-  /* ---------------- MESSAGE INSERT ---------------- */
   const text = msg.text?.body ?? null;
 
   await supabase.from("messages").insert({
@@ -220,19 +285,10 @@ async function processInboundMessage(
     wa_received_at: new Date().toISOString(),
   });
 
-  /* ---------------- TRIGGER AI HANDLER ---------------- */
-if (text) {
-  convLogger.info("TRIGGER_AI_HANDLER");
-
-  await triggerAIHandler({
-    conversationId,
-    userMessage: text,
-  });
-}
-
-
-  /* ---------------- INTENT TAGGING ---------------- */
   if (text) {
+    convLogger.info("TRIGGER_AI_HANDLER");
+    await triggerAIHandler({ conversationId, userMessage: text });
+
     const intent = await classifyIntent(text);
     await supabase
       .from("conversations")
@@ -252,11 +308,16 @@ serve(async (req) => {
 
   try {
     if (req.method === "GET") return verifyWebhook(req);
-    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    if (req.method !== "POST")
+      return new Response("Method not allowed", { status: 405 });
 
     const body = await req.json();
+
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {
+        for (const st of change.value?.statuses ?? []) {
+          await processStatusReceipt(st, change.value, logger);
+        }
         for (const msg of change.value?.messages ?? []) {
           await processInboundMessage(msg, change.value, logger);
         }

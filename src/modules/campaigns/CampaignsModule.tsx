@@ -64,16 +64,25 @@ function mapCsvRowsToObjects(
   headers: string[],
   rows: string[][]
 ): ParsedCsvRow[] {
+  const varHeaders = headers.filter((h) => h !== "phone");
+
   return rows
     .map((cols) => {
-      const obj: Record<string, string> = {};
-      headers.forEach((h, i) => (obj[h] = String(cols[i] ?? "").trim()));
-      const phone = String(obj.phone ?? "").trim();
-      delete obj.phone;
-      return phone ? { phone, variables: obj } : null;
+      const phoneIndex = headers.indexOf("phone");
+      const phone = String(cols[phoneIndex] ?? "").trim();
+      if (!phone) return null;
+
+      const variables: Record<string, string> = {};
+      varHeaders.forEach((h, idx) => {
+        const colIndex = headers.indexOf(h);
+        variables[String(idx + 1)] = String(cols[colIndex] ?? "").trim();
+      });
+
+      return { phone, variables };
     })
     .filter(Boolean) as ParsedCsvRow[];
 }
+
 
 /* ========================================================================
    TEMPLATE PREVIEW
@@ -114,6 +123,18 @@ function WhatsAppPreviewCard({
     </div>
   );
 }
+
+
+function extractMaxTemplateVarIndex(body: string): number {
+  const matches = body.match(/{{\s*(\d+)\s*}}/g) ?? [];
+  let max = 0;
+  for (const m of matches) {
+    const n = Number(m.replace(/\D/g, ""));
+    if (n > max) max = n;
+  }
+  return max;
+}
+
 
 /* ========================================================================
    COMPONENT
@@ -211,25 +232,43 @@ export function CampaignsModule() {
   /* --------------------------------------------------------------------
      CSV PARSE
   -------------------------------------------------------------------- */
+
   useEffect(() => {
     if (!csvText.trim()) {
       setParsedRows([]);
       setCsvErrors([]);
       return;
     }
-
+  
     const { headers, rows } = parseSimpleCsv(csvText);
     const errors: string[] = [];
-
-    if (!headers.includes("phone"))
+  
+    if (!headers.includes("phone")) {
       errors.push("CSV must include phone column");
-
+    }
+  
     const mapped = mapCsvRowsToObjects(headers, rows);
-    if (!mapped.length) errors.push("No valid rows");
-
+    if (!mapped.length) {
+      errors.push("No valid rows");
+    }
+  
+    // ✅ TEMPLATE VARIABLE VALIDATION (PHASE C – CORRECT SCOPE)
+    const neededVars = extractMaxTemplateVarIndex(
+      selectedTemplate?.body ?? ""
+    );
+  
+    const providedVars = headers.filter((h) => h !== "phone").length;
+  
+    if (neededVars > providedVars) {
+      errors.push(
+        `Template requires ${neededVars} variables ({{1}}..{{${neededVars}}}) but CSV provides only ${providedVars}.`
+      );
+    }
+  
     setParsedRows(mapped);
     setCsvErrors(errors);
-  }, [csvText]);
+  }, [csvText, selectedTemplate?.body]);
+  
 
   /* --------------------------------------------------------------------
      DERIVED

@@ -653,8 +653,14 @@ function normalizeForMatch(s: string): string {
 
 function containsPhrase(haystack: string, needle: string): boolean {
   if (!needle || needle.length < 3) return false;
-  return haystack.includes(needle);
+
+  // Enforce word-boundary matching to avoid partial hits
+  // e.g. "punch" should NOT match "puncher"
+  const h = ` ${haystack} `;
+  const n = ` ${needle} `;
+  return h.includes(n);
 }
+
 
 async function resolveKnowledgeContext(params: {
   userMessage: string;
@@ -1368,7 +1374,9 @@ ${personality.donts || "- None specified."}
         );
 
         const step = steps[index];
-        workflowInstructionText = safeText(step.action?.instruction_text);
+        workflowInstructionText = safeText(
+          (step as any).instruction_text ?? step.action?.instruction_text
+        );        
       }
     }
 
@@ -1443,6 +1451,21 @@ KNOWLEDGE USAGE RULES (CRITICAL)
 CAMPAIGN HISTORY CONTEXT
 ------------------------
 ${campaignContextText || "No prior campaign history available."}
+
+------------------------
+MODEL & OFFER SAFETY RULE (CRITICAL)
+------------------------
+- NEVER suggest or assume a specific Tata model
+  (Nexon, Punch, Harrier, Safari, etc.)
+  unless ONE of the following is true:
+  1) The customer explicitly mentioned that model, OR
+  2) The Knowledge Context above explicitly discusses that model.
+- If the customer intent is unclear, ask ONE clarifying question
+  (example: "Are you asking about Nexon, Punch, Harrier, or Safari?")
+- Do NOT guess.
+- Do NOT recommend.
+- Do NOT upsell without explicit customer intent.
+
 
 ------------------------
 RESPONSE DECISION RULES (CRITICAL)
