@@ -60,6 +60,23 @@ function createLogger(request_id: string, org_id?: string | null) {
 }
 
 /* =====================================================================================
+   PHASE 6 — KEYWORDS (STRICT KB MATCHING SUPPORT)
+===================================================================================== */
+function normalizeKeywords(input: any): string[] {
+  // Accept either an array (preferred) or a comma-separated string
+  const arr: any[] = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+    ? input.split(",")
+    : [];
+
+  return arr
+    .map((k) => String(k ?? "").trim())
+    .filter((k) => k.length >= 2)
+    .slice(0, 50);
+}
+
+/* =====================================================================================
    SAFE HELPERS
 ===================================================================================== */
 async function safeSupabase<T>(
@@ -369,6 +386,9 @@ serve(async (req: Request): Promise<Response> => {
     const sourceType = (body.source_type ?? "text") as string;
     const incomingTitle = body.title?.trim?.() || "Untitled article";
 
+    // Phase 6: optional keywords array for strict keyword matching in ai-handler
+    const keywords = normalizeKeywords(body.keywords);
+
     // Replace mode (update existing article)
     const replaceArticleId = body.article_id ? String(body.article_id).trim() : null;
 
@@ -383,6 +403,7 @@ serve(async (req: Request): Promise<Response> => {
       subOrgId,
       sourceType,
       replace: !!replaceArticleId,
+      keywords_count: keywords.length,
     });
 
     /* ============================================
@@ -553,6 +574,9 @@ serve(async (req: Request): Promise<Response> => {
         title: incomingTitle || existingTitle || "Untitled article",
         content: fullText,
 
+        // Phase 6 — optional keywords for strict keyword matching
+        keywords,
+
         // file metadata columns (post-migration)
         source_type: sourceType,
         file_bucket: sourceType === "file" ? file_bucket : null,
@@ -598,6 +622,9 @@ serve(async (req: Request): Promise<Response> => {
         title: incomingTitle,
         description: null,
         content: fullText,
+
+        // Phase 6 — optional keywords for strict keyword matching
+        keywords,
 
         // file metadata columns (post-migration)
         source_type: sourceType,
@@ -709,6 +736,7 @@ serve(async (req: Request): Promise<Response> => {
         JSON.stringify({
           success: true,
           article_id: articleId,
+          keywords,
           chunks: records.length,
           replaced: !!replaceArticleId,
           request_id,

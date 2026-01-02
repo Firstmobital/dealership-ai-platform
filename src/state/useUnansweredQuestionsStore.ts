@@ -1,6 +1,5 @@
 // src/state/useUnansweredQuestionsStore.ts
-
-import { create } from "zustand"; // ✅ FIXED
+import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
 import { useSubOrganizationStore } from "./useSubOrganizationStore";
@@ -13,12 +12,14 @@ type UnansweredQuestionsState = {
   error: string | null;
 
   fetchUnanswered: () => Promise<void>;
+
   saveToKnowledge: (params: {
     questionId: string;
     title?: string;
     summary?: string;
   }) => Promise<void>;
-  deleteQuestion: (questionId: string) => Promise<void>;
+
+  ignoreQuestion: (questionId: string) => Promise<void>;
 };
 
 export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
@@ -29,7 +30,7 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     error: null,
 
     /* -------------------------------------------------- */
-    /* FETCH                                              */
+    /* FETCH — ONLY OPEN QUESTIONS                        */
     /* -------------------------------------------------- */
     fetchUnanswered: async () => {
       const { currentOrganization } = useOrganizationStore.getState();
@@ -50,6 +51,7 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           .from("unanswered_questions")
           .select("*")
           .eq("organization_id", currentOrganization.id)
+          .eq("status", "open")
           .order("created_at", { ascending: false });
 
         if (activeSubOrg) {
@@ -74,38 +76,34 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           error: null,
           questions: (data ?? []) as UnansweredQuestion[],
         });
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Unexpected error while loading unanswered questions.";
-
+      } catch (err) {
         set({
           loading: false,
-          error: message,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Unexpected error while loading unanswered questions.",
           questions: [],
         });
       }
     },
 
     /* -------------------------------------------------- */
-    /* SAVE TO KNOWLEDGE                                  */
+    /* SAVE TO KNOWLEDGE (ANSWER)                         */
     /* -------------------------------------------------- */
     saveToKnowledge: async ({ questionId, title, summary }) => {
       const { currentOrganization } = useOrganizationStore.getState();
       const { activeSubOrg } = useSubOrganizationStore.getState();
 
       if (!currentOrganization) {
-        set({
-          error: "Select an organization before saving to Knowledge Base.",
-        });
+        set({ error: "Select an organization before saving to Knowledge Base." });
         return;
       }
 
       set({ saving: true, error: null });
 
       try {
-        const { error } = await supabase.functions.invoke(
+        const { data, error } = await supabase.functions.invoke(
           "kb-save-from-unanswered",
           {
             body: {
@@ -118,33 +116,42 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           }
         );
 
-        if (error) {
+        if (error || !data?.article_id) {
           set({
             saving: false,
-            error: error.message ?? "Failed to save unanswered question to KB.",
+            error: error?.message ?? "Failed to save unanswered question to KB.",
           });
           return;
         }
 
+        // ✅ Mark question as answered
+        await supabase
+          .from("unanswered_questions")
+          .update({
+            status: "answered",
+            resolution_article_id: data.article_id,
+            resolved_at: new Date().toISOString(),
+          })
+          .eq("id", questionId)
+          .eq("organization_id", currentOrganization.id);
+
         await get().fetchUnanswered();
         set({ saving: false, error: null });
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Unexpected error while saving unanswered question to KB.";
-
+      } catch (err) {
         set({
           saving: false,
-          error: message,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Unexpected error while saving unanswered question.",
         });
       }
     },
 
     /* -------------------------------------------------- */
-    /* DELETE                                             */
+    /* IGNORE (NOT DELETE)                                */
     /* -------------------------------------------------- */
-    deleteQuestion: async (questionId: string) => {
+    ignoreQuestion: async (questionId: string) => {
       const { currentOrganization } = useOrganizationStore.getState();
 
       if (!currentOrganization) {
@@ -157,29 +164,30 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
       try {
         const { error } = await supabase
           .from("unanswered_questions")
-          .delete()
+          .update({
+            status: "ignored",
+            resolved_at: new Date().toISOString(),
+          })
           .eq("id", questionId)
           .eq("organization_id", currentOrganization.id);
 
         if (error) {
           set({
             loading: false,
-            error: error.message ?? "Failed to delete unanswered question.",
+            error: error.message ?? "Failed to ignore question.",
           });
           return;
         }
 
         await get().fetchUnanswered();
         set({ loading: false, error: null });
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Unexpected error while deleting unanswered question.";
-
+      } catch (err) {
         set({
           loading: false,
-          error: message,
+          error:
+            err instanceof Error
+              ? err.message
+              : "Unexpected error while ignoring question.",
         });
       }
     },

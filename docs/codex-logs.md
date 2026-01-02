@@ -549,3 +549,111 @@ Added database foundation for AI configuration and usage tracking.
 - Exported WalletTransaction type from useWalletStore
 - Fixed Vercel build failure (TS2305)
 - Wallet transactions UI now type-safe
+
+## 2026-01-02 — Phase 5.2 (Wallet Ledger Audit Fields)
+
+- Extended `wallet_transactions` ledger with:
+  - `purpose` (commercial reason: ai_chat / campaign / voice / manual_credit / razorpay / etc.)
+  - `created_by` (uuid) and `created_by_role` (system/admin/razorpay)
+  - `balance_before` and `balance_after` snapshots
+- Broadened debit reference constraint to allow `reference_type` in: `ai_usage`, `campaign`, `voice`.
+- Updated `phase5_wallet_prevent_negative_balance()` trigger to:
+  - Lock wallet row for race-free balance snapshots
+  - Populate `balance_before`/`balance_after` for every new transaction
+- Added NOT VALID constraint to enforce balance snapshots on all NEW inserts without breaking historic rows.
+
+2026-01-02 — Phase 5.3 (Manual Wallet Credit RPC + UI)
+
+Added RPC phase5_wallet_manual_credit(...) (owner/admin only)
+
+Manual credit creates wallet_transactions entry (reference_type='manual', purpose='manual_credit')
+
+Wallet page shows recent transactions + manual credit form
+
+Transactions table now renders debit/credit correctly
+
+## 2026-01-02 — Phase 5.4 (Recharge CTA + Low Balance UX)
+
+- Added Low/Critical wallet balance banner with Recharge CTA
+- Added Recharge Wallet modal (manual instructions)
+- No payment gateway yet (Razorpay deferred)
+- Wallet page now nudges dealers before AI gets blocked
+
+## 2026-01-02 — Phase 5.5 (Razorpay Recharge: Orders + Webhook Credit)
+
+- Added DB tables:
+  - `razorpay_orders` (server-created orders mapped to org/wallet)
+  - `razorpay_payments` (webhook captured payments; unique by payment_id)
+- Implemented Edge Functions:
+  - `razorpay-create-order`: creates Razorpay order via Orders API and stores mapping.
+  - `razorpay-webhook`: validates X-Razorpay-Signature (HMAC-SHA256), upserts payment,
+    marks order paid, and credits wallet via `wallet_transactions` (purpose=razorpay).
+- Frontend Recharge modal now launches Razorpay Checkout using returned order_id.
+- Ledger credit is webhook-driven (source of truth) with idempotency protections.
+
+## 2026-01-02 — Phase 6.1–6.2 (AI Decision Engine: Deterministic KB + Workflow Priority)
+
+- Added `knowledge_articles.keywords text[]` + GIN index for strict keyword matching.
+- Replaced semantic/vector KB retrieval in `ai-handler` with deterministic matching:
+  - Title match: longest title contained in user message wins.
+  - Keyword match: strict single-match only; multiple matches rejected.
+- Enforced decision order: Workflow overrides KB; KB overrides free AI.
+- Pricing/discount behavior controlled by bot_personality DOs/DON’Ts (no platform hard-block).
+
+## 2026-01-02 — Phase 6.3: Unanswered Questions → Knowledge Feedback Loop (Final)
+
+**Status:** ✅ Completed & Locked
+
+### Summary
+
+Finalized the AI learning feedback loop by converting unanswered questions from
+a delete-based model to a lifecycle-based model (`open → answered / ignored`),
+ensuring no learning signal is ever lost.
+
+This completes the deterministic AI Decision Engine foundation.
+
+### Key Changes
+
+#### Backend / Edge Functions
+- `ai-handler`
+  - Logs unanswered questions only when AI falls back.
+  - No deletion logic; unanswered questions persist until resolved.
+  - Fully compatible with deterministic KB (title/keyword) resolution.
+
+- `kb-save-from-unanswered`
+  - Creates a KB article from an unanswered question.
+  - Returns `article_id` to the frontend.
+  - No longer deletes unanswered questions.
+  - Enables explicit resolution tracking instead of destructive deletes.
+
+#### Database / Schema
+- `unanswered_questions` now follows a lifecycle model:
+  - `status`: `open | answered | ignored`
+  - `resolution_article_id`
+  - `resolved_at`, `resolved_by`
+  - `ai_response` retained for audit/debugging
+- This preserves historical AI failures while closing the learning loop.
+
+#### Frontend / State
+- Updated `useUnansweredQuestionsStore`:
+  - Fetches only `status = open` questions.
+  - `saveToKnowledge()` marks question as `answered` and links KB article.
+  - `ignoreQuestion()` marks question as `ignored` (non-training signal).
+  - Removed all delete logic.
+
+- Updated `UnansweredQuestionsModule` UI:
+  - Replaced Delete with Ignore.
+  - Questions disappear automatically once answered or ignored.
+  - Clear, minimal UX aligned with dealership workflows.
+
+### Behavioral Outcome
+
+- AI failures are never lost.
+- Admins explicitly decide what trains the AI.
+- Knowledge Base grows deterministically and safely.
+- AI answers improve over time without hallucination risk.
+
+### Phase Lock
+
+Phase 6.3 is complete and locked.  
+All unanswered-question handling is now production-grade and auditable.

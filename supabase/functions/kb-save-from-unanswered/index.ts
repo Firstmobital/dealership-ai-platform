@@ -4,6 +4,7 @@
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import OpenAI from "https://esm.sh/openai@4.47.0";
+import { logAuditEvent } from "../_shared/audit.ts";
 
 /* =====================================================================================
    ENV
@@ -38,13 +39,19 @@ const cors = (r: Response) => {
 function createLogger(request_id: string, org_id?: string) {
   return {
     info(msg: string, extra = {}) {
-      console.log(JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }));
+      console.log(
+        JSON.stringify({ level: "info", request_id, org_id, msg, ...extra })
+      );
     },
     warn(msg: string, extra = {}) {
-      console.warn(JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }));
+      console.warn(
+        JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra })
+      );
     },
     error(msg: string, extra = {}) {
-      console.error(JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }));
+      console.error(
+        JSON.stringify({ level: "error", request_id, org_id, msg, ...extra })
+      );
     },
   };
 }
@@ -154,7 +161,10 @@ Return ONLY the summary.
   return result.text || text.slice(0, 600);
 }
 
-async function embedChunks(logger: any, chunks: string[]): Promise<number[][] | null> {
+async function embedChunks(
+  logger: any,
+  chunks: string[]
+): Promise<number[][] | null> {
   if (!openai) {
     logger.warn("No OpenAI – zero vectors used");
     return chunks.map(() => Array(1536).fill(0));
@@ -187,10 +197,13 @@ serve(async (req: Request): Promise<Response> => {
 
   if (req.method !== "POST") {
     return cors(
-      new Response(JSON.stringify({ error: "Method not allowed", request_id }), {
-        status: 405,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ error: "Method not allowed", request_id }),
+        {
+          status: 405,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
     );
   }
 
@@ -203,14 +216,15 @@ serve(async (req: Request): Promise<Response> => {
       question_id,
       title,
       summary,
+      resolved_by, // optional (admin user id)
     } = body || {};
 
     if (!organization_id || !question_id) {
       return cors(
         new Response(
           JSON.stringify({ error: "Missing required fields", request_id }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        )
       );
     }
 
@@ -228,21 +242,37 @@ serve(async (req: Request): Promise<Response> => {
           .select("*")
           .eq("id", question_id)
           .eq("organization_id", organization_id)
-          .single(),
+          .single()
     );
+
+    // AUDIT: unanswered question resolved
+    await logAuditEvent(supabase, {
+      organization_id,
+      action: "unanswered_resolved",
+      entity_type: "unanswered_question",
+      entity_id: question_id,
+      actor_user_id: null,
+      actor_email: null,
+      metadata: {
+        article_id: article.id,
+        title: articleTitle,
+        request_id,
+      },
+    });
 
     if (!question) {
       return cors(
         new Response(
           JSON.stringify({ error: "Question not found", request_id }),
-          { status: 404, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 404, headers: { "Content-Type": "application/json" } }
+        )
       );
     }
 
     const questionText = question.question.trim();
     const articleTitle = title || questionText.slice(0, 80).trim();
-    const articleSummary = summary || (await generateSummary(logger, questionText, articleTitle));
+    const articleSummary =
+      summary || (await generateSummary(logger, questionText, articleTitle));
 
     /* ------------------------------------------------------------------
        STEP 2 — Create article
@@ -260,15 +290,32 @@ serve(async (req: Request): Promise<Response> => {
             content: articleSummary,
           })
           .select("id")
-          .single(),
+          .single()
     );
+
+    // AUDIT: KB article created
+    await logAuditEvent(supabase, {
+      organization_id,
+      action: "kb_article_created",
+      entity_type: "knowledge_article",
+      entity_id: article.id,
+      actor_user_id: null,
+      actor_email: null,
+      metadata: {
+        source: "unanswered_question",
+        question_id,
+        title: articleTitle,
+        sub_organization_id: sub_organization_id ?? null,
+        request_id,
+      },
+    });
 
     if (!article) {
       return cors(
         new Response(
           JSON.stringify({ error: "Failed to create article", request_id }),
-          { status: 500, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        )
       );
     }
 
@@ -280,10 +327,13 @@ serve(async (req: Request): Promise<Response> => {
     const vectors = await embedChunks(logger, chunks);
     if (!vectors || vectors.length !== chunks.length) {
       return cors(
-        new Response(JSON.stringify({ error: "Embedding failed", request_id }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ error: "Embedding failed", request_id }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
       );
     }
 
@@ -296,25 +346,54 @@ serve(async (req: Request): Promise<Response> => {
     const insertedChunks = await safeSupabase<any>(
       logger,
       "knowledge_chunks.insert",
-      () => supabase.from("knowledge_chunks").insert(records),
+      () => supabase.from("knowledge_chunks").insert(records)
     );
+
+    // AUDIT: KB chunks created
+    await logAuditEvent(supabase, {
+      organization_id,
+      action: "kb_chunks_created",
+      entity_type: "knowledge_article",
+      entity_id: article.id,
+      actor_user_id: null,
+      actor_email: null,
+      metadata: {
+        chunks_count: records.length,
+        embedding_model: "text-embedding-3-small",
+        source: "unanswered_question",
+        request_id,
+      },
+    });
 
     if (!insertedChunks) {
       return cors(
-        new Response(JSON.stringify({ error: "Failed to save chunks", request_id }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ error: "Failed to save chunks", request_id }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
       );
     }
 
     /* ------------------------------------------------------------------
        STEP 4 — Delete original unanswered question
     ------------------------------------------------------------------ */
-    await safeSupabase<any>(
-      logger,
-      "unanswered_questions.delete",
-      () => supabase.from("unanswered_questions").delete().eq("id", question_id),
+
+    /* ------------------------------------------------------------------
+   STEP 4 — Mark unanswered question as answered (Phase 6.3)
+------------------------------------------------------------------ */
+    await safeSupabase<any>(logger, "unanswered_questions.resolve", () =>
+      supabase
+        .from("unanswered_questions")
+        .update({
+          status: "answered",
+          resolution_article_id: article.id,
+          resolved_at: new Date().toISOString(),
+          resolved_by: resolved_by ?? null,
+        })
+        .eq("id", question_id)
     );
 
     logger.info("KB article created from unanswered question", {
@@ -327,20 +406,23 @@ serve(async (req: Request): Promise<Response> => {
         JSON.stringify({
           success: true,
           article_id: article.id,
+          question_id,
           chunks: records.length,
           request_id,
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
   } catch (err) {
     logger.error("FATAL", { error: String(err) });
     return cors(
-      new Response(JSON.stringify({ error: "Internal Server Error", request_id }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ error: "Internal Server Error", request_id }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
     );
   }
 });
-

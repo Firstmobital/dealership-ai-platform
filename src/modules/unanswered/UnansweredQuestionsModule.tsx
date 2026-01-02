@@ -5,9 +5,9 @@ import {
   BookOpen,
   FileText,
   Loader2,
-  Trash2,
   XCircle,
   HelpCircle,
+  EyeOff,
 } from "lucide-react";
 
 import { useUnansweredQuestionsStore } from "../../state/useUnansweredQuestionsStore";
@@ -23,7 +23,7 @@ export function UnansweredQuestionsModule() {
     error,
     fetchUnanswered,
     saveToKnowledge,
-    deleteQuestion,
+    ignoreQuestion,
   } = useUnansweredQuestionsStore();
 
   const { currentOrganization } = useOrganizationStore();
@@ -53,14 +53,20 @@ export function UnansweredQuestionsModule() {
     setKbSummary("");
   };
 
-  const handleDelete = async (q: UnansweredQuestion) => {
-    if (!window.confirm("Delete this unanswered question?")) return;
-    await deleteQuestion(q.id);
-    if (selected?.id === q.id) setSelected(null);
+  const handleIgnore = async (q: UnansweredQuestion) => {
+    if (!window.confirm("Ignore this question? It will not train the AI.")) return;
+
+    await ignoreQuestion(q.id);
+
+    if (selected?.id === q.id) {
+      setSelected(null);
+      setKbTitle("");
+      setKbSummary("");
+    }
   };
 
   return (
-    <div className="flex h-full flex-col px-6 py-6 bg-slate-50 text-slate-900">
+    <div className="flex h-full flex-col bg-slate-50 px-6 py-6 text-slate-900">
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
@@ -69,16 +75,16 @@ export function UnansweredQuestionsModule() {
         <div>
           <h1 className="text-xl font-semibold">Unanswered Questions</h1>
           <p className="text-sm text-slate-500">
-            Questions customers asked that the AI could not answer.
+            Questions customers asked that the AI could not confidently answer.
           </p>
         </div>
       </div>
 
       <div className="flex flex-1 gap-6 overflow-hidden">
-        {/* LEFT */}
+        {/* LEFT — Question List */}
         <div className="w-[360px] overflow-y-auto rounded-xl border bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold">
-            Questions ({questions.length})
+            Open Questions ({questions.length})
           </h2>
 
           {loading ? (
@@ -88,11 +94,11 @@ export function UnansweredQuestionsModule() {
             </div>
           ) : questions.length === 0 ? (
             <p className="py-6 text-sm text-slate-500">
-              🎉 No unanswered questions found.
+              🎉 No unanswered questions.
             </p>
           ) : (
             <ul className="space-y-2">
-              {questions.map((q: UnansweredQuestion) => (
+              {questions.map((q) => (
                 <li
                   key={q.id}
                   onClick={() => setSelected(q)}
@@ -102,17 +108,19 @@ export function UnansweredQuestionsModule() {
                       : "hover:bg-slate-50"
                   }`}
                 >
-                  <div className="flex justify-between gap-2">
+                  <div className="flex items-start justify-between gap-2">
                     <p className="text-sm font-medium line-clamp-2">
                       {q.question}
                     </p>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDelete(q);
+                        handleIgnore(q);
                       }}
+                      title="Ignore question"
+                      className="text-slate-400 hover:text-slate-600"
                     >
-                      <Trash2 size={14} />
+                      <EyeOff size={14} />
                     </button>
                   </div>
                 </li>
@@ -121,44 +129,51 @@ export function UnansweredQuestionsModule() {
           )}
         </div>
 
-        {/* RIGHT */}
+        {/* RIGHT — Review / Save */}
         <div className="flex-1 rounded-xl border bg-white p-6">
           {!selected ? (
             <div className="flex h-full items-center justify-center text-slate-400">
-              Select a question to review.
+              Select a question to review and convert into knowledge.
             </div>
           ) : (
             <>
-              <div className="flex justify-between">
-                <h2 className="font-semibold">Question Details</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold">Question Review</h2>
                 <button onClick={() => setSelected(null)}>
                   <XCircle size={18} />
                 </button>
               </div>
 
-              <div className="mt-4 rounded border bg-slate-50 p-4">
+              <div className="mt-4 rounded border bg-slate-50 p-4 text-sm">
                 {selected.question}
               </div>
 
-              <div className="mt-4">
+              <div className="mt-4 space-y-2">
                 <input
-                  placeholder="KB title"
+                  placeholder="Knowledge Base title (optional)"
                   value={kbTitle}
                   onChange={(e) => setKbTitle(e.target.value)}
-                  className="w-full mb-2 rounded border px-3 py-2"
+                  className="w-full rounded border px-3 py-2 text-sm"
                 />
+
                 <textarea
-                  placeholder="Summary"
+                  placeholder="Clean summary / answer (optional)"
                   value={kbSummary}
                   onChange={(e) => setKbSummary(e.target.value)}
-                  className="w-full rounded border px-3 py-2"
+                  rows={4}
+                  className="w-full rounded border px-3 py-2 text-sm"
                 />
+
                 <button
                   onClick={handleSaveToKnowledge}
                   disabled={saving}
-                  className="mt-3 flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-white"
+                  className="mt-2 inline-flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50"
                 >
-                  {saving ? <Loader2 size={14} /> : <FileText size={14} />}
+                  {saving ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <FileText size={14} />
+                  )}
                   Save to Knowledge Base
                 </button>
               </div>
@@ -167,7 +182,9 @@ export function UnansweredQuestionsModule() {
         </div>
       </div>
 
-      {error && <div className="mt-4 text-sm text-red-600">{error}</div>}
+      {error && (
+        <div className="mt-4 text-sm text-red-600">{error}</div>
+      )}
     </div>
   );
 }

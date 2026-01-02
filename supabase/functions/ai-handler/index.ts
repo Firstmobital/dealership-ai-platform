@@ -7,6 +7,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import { logAuditEvent } from "../_shared/audit.ts";
 
 /* ============================================================================
    ENV
@@ -396,10 +397,7 @@ async function runOpenAICompletion(params: {
     const resp = await openai.chat.completions.create({
       model,
       temperature: 0.3,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...historyMessages,
-      ],
+      messages: [{ role: "system", content: systemPrompt }, ...historyMessages],
     });
 
     const text = resp.choices?.[0]?.message?.content?.trim() ?? null;
@@ -416,7 +414,6 @@ async function runOpenAICompletion(params: {
     return null;
   }
 }
-
 
 async function runGeminiCompletion(params: {
   model: string;
@@ -640,136 +637,130 @@ async function loadBotPersonality(params: {
 /* ============================================================================
    RAG HELPER — SUB-ORG SCOPED + SEMANTIC FALLBACK
 ============================================================================ */
+/* ============================================================================
+   PHASE 6 — DETERMINISTIC KB RESOLVER (NO VECTORS, NO SCORING)
+   Order:
+   1) Exact Title match (longest title contained in message)
+   2) Keyword match (strict: exactly one article allowed)
+============================================================================ */
+function normalizeForMatch(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function containsPhrase(haystack: string, needle: string): boolean {
+  if (!needle || needle.length < 3) return false;
+  return haystack.includes(needle);
+}
+
 async function resolveKnowledgeContext(params: {
-  embedding: number[];
   userMessage: string;
   organizationId: string;
   subOrganizationId: string | null;
   logger: ReturnType<typeof createLogger>;
-}): Promise<{ context: string; forced: boolean } | null> {
-  const { embedding, userMessage, organizationId, subOrganizationId, logger } =
-    params;
+}): Promise<{
+  context: string;
+  match_type: "title" | "keyword";
+  article_id: string;
+  title: string;
+} | null> {
+  const { userMessage, organizationId, subOrganizationId, logger } = params;
 
-  // PASS 1 — TITLE MATCH (HIGH PRECISION)
-  const keywords = userMessage
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
-    .split(" ")
-    .filter(
-      (w) =>
-        w.length >= 3 &&
-        !["who", "what", "is", "are", "the", "this", "that"].includes(w)
-    );
+  const msg = normalizeForMatch(userMessage);
+  if (!msg) return null;
 
-  logger.debug("[rag] title keywords", { keywords });
-
-  let titleMatches: any[] = [];
-
-  for (const word of keywords) {
-    const { data, error } = await supabase
-      .from("knowledge_articles")
-      .select("id, title, organization_id, sub_organization_id")
-      .eq("organization_id", organizationId)
-      .ilike("title", `%${word}%`)
-      .limit(3);
-
-    if (error) {
-      logger.error("[rag] title query error", { error, word });
-      continue;
-    }
-
-    if (data?.length) {
-      titleMatches = data.filter((a) => {
-        if (!subOrganizationId) return true;
-        return (
-          a.sub_organization_id === null ||
-          a.sub_organization_id === subOrganizationId
-        );
-      });
-      if (titleMatches.length) break;
-    }
-  }
-
-  if (titleMatches.length) {
-    const article = titleMatches[0];
-
-    const { data: chunks } = await supabase
-      .from("knowledge_chunks")
-      .select("chunk")
-      .eq("article_id", article.id)
-      .order("id", { ascending: true });
-
-    if (chunks?.length) {
-      logger.info("[rag] FORCED title match used", {
-        article_id: article.id,
-        title: article.title,
-      });
-
-      return {
-        context: chunks.map((c: any) => c.chunk).join("\n\n"),
-        forced: true,
-      };
-    }
-  }
-
-  // PASS 2 — SEMANTIC SEARCH (VECTOR)
-  const { data: matches, error: matchErr } = await supabase.rpc(
-    "match_knowledge_chunks",
-    {
-      query_embedding: embedding,
-      match_count: 15,
-      match_threshold: 0.05,
-    }
-  );
-
-  if (matchErr || !matches?.length) {
-    logger.debug("[rag] no semantic matches");
-    return null;
-  }
-
-  const articleIds = [...new Set(matches.map((m: any) => m.article_id))];
-
-  const { data: articles } = await supabase
+  // Load articles in scope (sub-org: allow null/global + exact division)
+  const { data: articles, error } = await supabase
     .from("knowledge_articles")
-    .select("id, organization_id, sub_organization_id")
-    .in("id", articleIds);
+    .select("id, title, content, sub_organization_id, keywords")
+    .eq("organization_id", organizationId);
 
-  if (!articles?.length) return null;
-
-  const allowedIds = new Set(
-    articles
-      .filter((a: any) => {
-        if (a.organization_id !== organizationId) return false;
-        if (!subOrganizationId) return true;
-        return (
-          a.sub_organization_id === null ||
-          a.sub_organization_id === subOrganizationId
-        );
-      })
-      .map((a: any) => a.id)
-  );
-
-  const filtered = matches.filter((m: any) => allowedIds.has(m.article_id));
-  if (!filtered.length) {
-    logger.debug("[rag] semantic matches filtered out by scope");
+  if (error || !articles?.length) {
+    logger.debug("[kb] no articles or load error", { error });
     return null;
   }
 
-  logger.info("[rag] semantic KB used", {
-    matches: filtered.map((m: any) => ({
-      article_id: m.article_id,
-      similarity: m.similarity,
-    })),
+  const scoped = (articles as any[]).filter((a) => {
+    if (!subOrganizationId) return true;
+    return (
+      a.sub_organization_id === null ||
+      a.sub_organization_id === subOrganizationId
+    );
   });
 
-  return {
-    context: filtered
-      .sort((a: any, b: any) => b.similarity - a.similarity)
-      .slice(0, 8)
-      .map((m: any) => m.chunk)
-      .join("\n\n"),
-    forced: false,
-  };
+  if (!scoped.length) return null;
+
+  // -------------------------
+  // PASS 1 — EXACT TITLE MATCH
+  // longest title that appears in the message wins (deterministic)
+  // -------------------------
+  const titleCandidates = scoped
+    .map((a) => ({
+      ...a,
+      title_norm: normalizeForMatch(a.title),
+      title_len: normalizeForMatch(a.title).length,
+    }))
+    .filter((a) => a.title_len >= 4 && containsPhrase(msg, a.title_norm))
+    .sort(
+      (a, b) =>
+        b.title_len - a.title_len || String(a.id).localeCompare(String(b.id))
+    );
+
+  if (titleCandidates.length) {
+    const best = titleCandidates[0];
+    logger.info("[kb] title match", { article_id: best.id, title: best.title });
+
+    return {
+      context: String(best.content || "").trim(),
+      match_type: "title",
+      article_id: best.id,
+      title: best.title,
+    };
+  }
+
+  // -------------------------
+  // PASS 2 — KEYWORD MATCH (STRICT)
+  // If multiple articles match → reject (avoid wrong car/offers)
+  // -------------------------
+  const keywordHits: any[] = [];
+
+  for (const a of scoped) {
+    const kws: string[] = Array.isArray(a.keywords) ? a.keywords : [];
+    const normalizedKws = kws
+      .map((k) => normalizeForMatch(String(k)))
+      .filter((k) => k.length >= 3);
+
+    if (!normalizedKws.length) continue;
+
+    const matched = normalizedKws.some((k) => containsPhrase(msg, k));
+    if (matched) keywordHits.push(a);
+  }
+
+  if (keywordHits.length === 1) {
+    const best = keywordHits[0];
+    logger.info("[kb] keyword match", {
+      article_id: best.id,
+      title: best.title,
+    });
+
+    return {
+      context: String(best.content || "").trim(),
+      match_type: "keyword",
+      article_id: best.id,
+      title: best.title,
+    };
+  }
+
+  if (keywordHits.length > 1) {
+    logger.warn("[kb] multiple keyword matches -> reject", {
+      matches: keywordHits.map((k) => ({ id: k.id, title: k.title })),
+    });
+  }
+
+  return null;
 }
 
 /* ============================================================================
@@ -1007,26 +998,44 @@ async function saveWorkflowProgress(
 }
 
 async function logUnansweredQuestion(params: {
-  organization_id: string
-  conversation_id: string
-  question: string
-  ai_response?: string
+  organization_id: string;
+  sub_organization_id: string | null;
+  conversation_id: string;
+  channel: string;
+  question: string;
+  ai_response: string;
+  logger: ReturnType<typeof createLogger>;
 }) {
+  const {
+    organization_id,
+    sub_organization_id,
+    conversation_id,
+    channel,
+    question,
+    ai_response,
+    logger,
+  } = params;
+
   try {
-    const { error } = await supabase
-      .from("unanswered_questions")
-      .insert({
-        organization_id: params.organization_id,
-        conversation_id: params.conversation_id,
-        question: params.question,
-        ai_response: params.ai_response ?? null,
-      })
+    const { error } = await supabase.rpc("phase6_log_unanswered_question", {
+      p_organization_id: organization_id,
+      p_sub_organization_id: sub_organization_id,
+      p_conversation_id: conversation_id,
+      p_channel: channel,
+      p_question: question,
+      p_ai_response: ai_response,
+    });
 
     if (error) {
-      console.error("[unanswered_questions] insert failed", error)
+      logger.error("[unanswered_questions] rpc failed", { error });
+    } else {
+      logger.info("[unanswered_questions] logged", {
+        conversation_id,
+        question,
+      });
     }
   } catch (err) {
-    console.error("[unanswered_questions] fatal", err)
+    logger.error("[unanswered_questions] fatal", { error: err });
   }
 }
 
@@ -1094,12 +1103,27 @@ serve(async (req: Request): Promise<Response> => {
 
     // 2) Wallet (required for any AI call; greetings are free)
     const wallet = await loadWalletForOrg(organizationId);
+
     if (!wallet) {
       logger.error("[wallet] missing or inactive wallet");
-      // Allow greeting reply even if wallet missing? You wanted greeting ALWAYS.
-      // But we can still allow greeting because it bypasses AI + wallet.
-      // We'll only block if not greeting.
+
       if (!isGreetingMessage(user_message)) {
+        // AUDIT: wallet blocked
+        await logAuditEvent(supabase, {
+          organization_id: organizationId,
+          action: "wallet_blocked",
+          entity_type: "conversation",
+          entity_id: conversation_id,
+          actor_user_id: null,
+          actor_email: null,
+          metadata: {
+            reason: "WALLET_NOT_AVAILABLE",
+            channel,
+            user_message: user_message.slice(0, 500),
+            request_id,
+          },
+        });
+
         return new Response(
           JSON.stringify({
             error: "Wallet not available",
@@ -1262,7 +1286,7 @@ ${personality.donts || "- None specified."}
     const historyMessages = buildChatMessagesFromHistory(
       (recentMessages ?? []).map((m) => ({ sender: m.sender, text: m.text })),
       user_message
-    );    
+    );
 
     // 9) Campaign context (best-effort; fixed schema)
     let campaignContextText = "";
@@ -1282,22 +1306,28 @@ ${personality.donts || "- None specified."}
     }
 
     // 10) RAG
-    let contextText = "No relevant dealership knowledge found.";
-    const embedding = await safeEmbedding(logger, user_message);
+    // 10) Phase 6 — Deterministic KB (no vectors)
+    let contextText = "";
+    let kbMatchMeta: {
+      match_type: "title" | "keyword";
+      article_id: string;
+      title: string;
+    } | null = null;
 
-    if (embedding) {
-      const resolved = await resolveKnowledgeContext({
-        embedding,
-        userMessage: user_message,
-        organizationId,
-        subOrganizationId,
-        logger,
-      });
+    const resolvedKB = await resolveKnowledgeContext({
+      userMessage: user_message,
+      organizationId,
+      subOrganizationId,
+      logger,
+    });
 
-      // KB context is NEVER a direct reply
-      if (resolved?.context) {
-        contextText = resolved.context;
-      }
+    if (resolvedKB?.context) {
+      contextText = resolvedKB.context;
+      kbMatchMeta = {
+        match_type: resolvedKB.match_type,
+        article_id: resolvedKB.article_id,
+        title: resolvedKB.title,
+      };
     }
 
     // ------------------------------------------------------------------
@@ -1342,6 +1372,13 @@ ${personality.donts || "- None specified."}
       }
     }
 
+    // Phase 6 rule: Workflow overrides KB context (prevents mixing)
+    if (workflowInstructionText?.trim()) {
+      contextText = "";
+      kbMatchMeta = null;
+      logger.info("[decision] workflow_override_kb", { has_workflow: true });
+    }
+
     // 11) System prompt
     const systemPrompt = `
 You are Techwheels AI — a professional automotive dealership assistant.
@@ -1364,6 +1401,13 @@ DEALERSHIP INFORMATION
 BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ------------------------
 ${personaBlock}
+PRICING / DISCOUNT POLICY (IMPORTANT):
+- Read DOs and DON'Ts above.
+- If DON'Ts mentions price/pricing/discount/offer/negotiation:
+  you MUST NOT provide that information and must politely follow policy.
+- If not forbidden in DON'Ts:
+  you MAY share prices, offers, discounts if the customer asks.
+- Never invent a price/offer. If you do not know, use the fallback message exactly.
 
 ------------------------
 WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
@@ -1444,7 +1488,6 @@ Respond now to the customer's latest message only.
       historyMessages,
       logger,
     });
-    
 
     let aiResponseText = aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
@@ -1469,6 +1512,25 @@ Respond now to the customer's latest message only.
         logger.warn("[wallet] insufficient balance for AI call", {
           balance: wallet.balance,
           required: chargedAmount,
+        });
+
+        // AUDIT: wallet blocked (low balance)
+        await logAuditEvent(supabase, {
+          organization_id: organizationId,
+          action: "wallet_blocked",
+          entity_type: "wallet",
+          entity_id: wallet.id,
+          actor_user_id: null,
+          actor_email: null,
+          metadata: {
+            reason: "LOW_WALLET_BALANCE",
+            balance: wallet.balance,
+            required: chargedAmount,
+            model: aiResult.model,
+            conversation_id,
+            channel,
+            request_id,
+          },
         });
 
         return new Response(
@@ -1529,6 +1591,26 @@ Respond now to the customer's latest message only.
         );
       }
 
+      // AUDIT: wallet debit success for AI chat
+      await logAuditEvent(supabase, {
+        organization_id: organizationId,
+        action: "wallet_debit_ai_chat",
+        entity_type: "wallet_transaction",
+        entity_id: walletTxnId,
+        actor_user_id: null,
+        actor_email: null,
+        metadata: {
+          amount: chargedAmount,
+          provider: aiResult.provider,
+          model: aiResult.model,
+          conversation_id,
+          sub_organization_id: subOrganizationId,
+          channel,
+          request_id,
+          ai_usage_id: usage.id,
+        },
+      });
+
       // 3) Link usage → wallet transaction
       await supabase
         .from("ai_usage_logs")
@@ -1536,10 +1618,26 @@ Respond now to the customer's latest message only.
         .eq("id", usage.id);
     }
 
-
     // 15) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
       logger.info("[ai-handler] AI chose not to reply", { user_message });
+
+      // AUDIT: AI no-reply
+      await logAuditEvent(supabase, {
+        organization_id: organizationId,
+        action: "ai_no_reply",
+        entity_type: "conversation",
+        entity_id: conversation_id,
+        actor_user_id: null,
+        actor_email: null,
+        metadata: {
+          channel,
+          request_id,
+          user_message: user_message.slice(0, 500),
+          kb_match: kbMatchMeta ?? null,
+          has_workflow: Boolean(workflowInstructionText?.trim()),
+        },
+      });
 
       await supabase
         .from("conversations")
@@ -1573,14 +1671,31 @@ Respond now to the customer's latest message only.
       );
     }
 
-    // 16) Log unanswered fallback
+    // 16) Phase 6.3 — Log unanswered question (fallback only)
     if (aiResponseText === fallbackMessage) {
       await logUnansweredQuestion({
         organization_id: organizationId,
         conversation_id,
         question: user_message,
         ai_response: aiResponseText,
-      });      
+      });
+
+      // AUDIT: unanswered saved (fallback used)
+      await logAuditEvent(supabase, {
+        organization_id: organizationId,
+        action: "unanswered_logged",
+        entity_type: "conversation",
+        entity_id: conversation_id,
+        actor_user_id: null,
+        actor_email: null,
+        metadata: {
+          channel,
+          request_id,
+          question: user_message.slice(0, 500),
+          kb_match: kbMatchMeta ?? null,
+          has_workflow: Boolean(workflowInstructionText?.trim()),
+        },
+      });
     }
 
     // 17) Save message + update conversation

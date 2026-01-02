@@ -30,16 +30,19 @@ type KnowledgeBaseState = {
   createArticleFromText: (params: {
     title: string;
     content: string;
+    keywords?: string[];
   }) => Promise<void>;
 
   createArticleFromFile: (params: {
     file: File;
     title?: string;
+    keywords?: string[];
   }) => Promise<void>;
 
   replaceFileForArticle: (params: {
     article: KnowledgeArticle;
     file: File;
+    keywords?: string[];
   }) => Promise<void>;
 
   downloadOriginalFile: (article: KnowledgeArticle) => Promise<void>;
@@ -48,6 +51,7 @@ type KnowledgeBaseState = {
     id: string;
     title: string;
     content: string;
+    keywords?: string[];
   }) => Promise<void>;
 
   deleteArticle: (articleId: string) => Promise<void>;
@@ -108,7 +112,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         articles = articles.filter(
           (a) =>
             a.title?.toLowerCase().includes(term) ||
-            a.content?.toLowerCase().includes(term)
+            a.content?.toLowerCase().includes(term) ||
+            (Array.isArray(a.keywords) &&
+              a.keywords.some((k) => k.toLowerCase().includes(term)))
         );
       }
 
@@ -124,7 +130,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   /* -----------------------------------------------------------
      CREATE FROM TEXT
   ----------------------------------------------------------- */
-  createArticleFromText: async ({ title, content }) => {
+  createArticleFromText: async ({ title, content, keywords }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
@@ -140,6 +146,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           source_type: "text",
           title,
           content,
+          keywords: Array.isArray(keywords) ? keywords : [],
         },
       });
 
@@ -158,7 +165,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   /* -----------------------------------------------------------
      CREATE FROM FILE
   ----------------------------------------------------------- */
-  createArticleFromFile: async ({ file, title }) => {
+  createArticleFromFile: async ({ file, title, keywords }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     const { activeSubOrg } = useSubOrganizationStore.getState();
 
@@ -197,6 +204,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
             file_path: path,
             mime_type: file.type,
             original_filename: file.name,
+            keywords: Array.isArray(keywords) ? keywords : [],
           },
         }
       );
@@ -216,7 +224,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   /* -----------------------------------------------------------
      REPLACE FILE FOR ARTICLE
   ----------------------------------------------------------- */
-  replaceFileForArticle: async ({ article, file }) => {
+  replaceFileForArticle: async ({ article, file, keywords }) => {
     const { currentOrganization } = useOrganizationStore.getState();
 
     if (!currentOrganization || article.source_type !== "file") return;
@@ -247,13 +255,14 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         {
           body: {
             organization_id: currentOrganization.id,
-            article_id: article.id, // 🔥 REPLACE MODE
+            article_id: article.id, // replace mode
             source_type: "file",
             title: article.title,
             file_bucket: bucket,
             file_path: path,
             mime_type: file.type,
             original_filename: file.name,
+            keywords: Array.isArray(keywords) ? keywords : article.keywords ?? [],
           },
         }
       );
@@ -295,18 +304,21 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     UPDATE TEXT ARTICLE
+     UPDATE TEXT ARTICLE (keywords supported)
   ----------------------------------------------------------- */
-  updateArticle: async ({ id, title, content }) => {
+  updateArticle: async ({ id, title, content, keywords }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     if (!currentOrganization) return;
 
     set({ loading: true, error: null });
 
     try {
+      const payload: any = { title, content };
+      if (Array.isArray(keywords)) payload.keywords = keywords;
+
       const { error } = await supabase
         .from("knowledge_articles")
-        .update({ title, content })
+        .update(payload)
         .eq("id", id)
         .eq("organization_id", currentOrganization.id);
 

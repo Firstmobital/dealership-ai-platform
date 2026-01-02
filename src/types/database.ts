@@ -131,6 +131,9 @@ export type KnowledgeArticle = {
   title: string;
   description: string | null;
 
+  keywords: string[] | null;
+
+
   // core content
   content: string;
 
@@ -153,16 +156,27 @@ export type KnowledgeChunk = {
   chunk: string;
   embedding: number[];
   created_at?: string;
-  sub_organization_id: UUID | null;
 };
 
 export type UnansweredQuestion = {
   id: UUID;
   organization_id: UUID;
+  sub_organization_id: UUID | null;
+
   question: string;
   occurrences: number;
-  created_at?: string;
+
+  status: "open" | "answered" | "ignored";
+
+  resolution_article_id: UUID | null;
+  resolved_at: string | null;
+  resolved_by: UUID | null;
+
+  ai_response: string | null;
+
+  created_at: string;
 };
+
 
 // -------------------------------------------------------------
 // BOT PERSONALITY + INSTRUCTIONS
@@ -400,15 +414,37 @@ export type AIUsageLog = {
 
   input_tokens: number;
   output_tokens: number;
-  total_tokens: number;
+
   estimated_cost: number;
+  charged_amount: number;
+
+  wallet_transaction_id: UUID | null;
 
   created_at: string;
 };
+
+
 export type Wallet = {
   id: UUID;
   organization_id: UUID;
   balance: number;
   currency: string;
-  status: "active" | "suspended";
+  status: "active" | "inactive" | "suspended";
+};
+
+export type WalletTransaction = {
+  id: UUID;
+  wallet_id: UUID;
+
+  type: "credit" | "debit" | "adjustment";
+  direction: "in" | "out";
+
+  amount: number;
+
+  reference_type: "ai_usage" | "manual" | "system" | null;
+  reference_id: UUID | null;
+
+  metadata: Record<string, unknown>;
+
+  created_at: string;
 };
