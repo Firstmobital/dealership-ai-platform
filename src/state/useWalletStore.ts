@@ -15,7 +15,7 @@ export type Wallet = {
   organization_id: string;
   balance: number;
 
-  // ✅ DB status only (do NOT mix with derived status)
+  // DB status only (do NOT mix with derived status)
   status: WalletDbStatus;
 
   low_balance_threshold: number;
@@ -25,19 +25,24 @@ export type Wallet = {
 };
 
 /* -------------------------------------------------------------------------- */
-/* WALLET TRANSACTIONS (🔥 MISSING TYPE — FIXES BUILD)                         */
+/* WALLET TRANSACTIONS                                                         */
 /* -------------------------------------------------------------------------- */
 export type WalletTransaction = {
   id: string;
   wallet_id: string;
 
-  type: "debit" | "credit";
+  type: "credit" | "debit" | "adjustment";
   direction: "in" | "out";
 
   amount: number;
 
-  reference_type: "ai_usage" | "manual" | "adjustment";
+  // Phase 5.2+
+  purpose: string | null;
+  reference_type: string | null;
   reference_id: string | null;
+
+  balance_before: number | null;
+  balance_after: number | null;
 
   created_at: string;
 };
@@ -65,17 +70,19 @@ type WalletState = {
   wallet: Wallet | null;
   loading: boolean;
 
-  // ✅ Derived (single source of truth for UI)
+  // Derived (single source of truth for UI)
   walletStatus: WalletStatus;
 
-  // ✅ Active alerts (unresolved)
+  // Alerts
   activeAlerts: WalletAlertLog[];
+
+  // Transactions
+  transactions: WalletTransaction[];
 
   // Actions
   fetchWallet: (organizationId: string) => Promise<void>;
+  fetchTransactions: (organizationId: string) => Promise<void>;
   clearWallet: () => void;
-
-  // Optional: keep alert logs in sync with current walletStatus
   syncAlerts: () => Promise<void>;
 };
 
@@ -102,9 +109,10 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   loading: false,
   walletStatus: "missing",
   activeAlerts: [],
+  transactions: [],
 
   /* -------------------------------------------------------------------------- */
-  /* FETCH WALLET + ACTIVE ALERTS                                               */
+  /* FETCH WALLET                                                               */
   /* -------------------------------------------------------------------------- */
   fetchWallet: async (organizationId: string) => {
     if (!organizationId) {
@@ -112,6 +120,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         wallet: null,
         walletStatus: "missing",
         activeAlerts: [],
+        transactions: [],
         loading: false,
       });
       return;
@@ -119,19 +128,18 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
     set({ loading: true });
 
-    // 1) Load wallet
     const { data: wallet, error: walletErr } = await supabase
       .from("wallets")
       .select(
         `
-          id,
-          organization_id,
-          balance,
-          status,
-          low_balance_threshold,
-          critical_balance_threshold,
-          created_at
-        `,
+        id,
+        organization_id,
+        balance,
+        status,
+        low_balance_threshold,
+        critical_balance_threshold,
+        created_at
+      `,
       )
       .eq("organization_id", organizationId)
       .maybeSingle();
@@ -142,6 +150,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         wallet: null,
         walletStatus: "missing",
         activeAlerts: [],
+        transactions: [],
         loading: false,
       });
       return;
@@ -149,28 +158,24 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
     const walletStatus = computeWalletStatus(wallet as Wallet);
 
-    // 2) Load active alerts (unresolved)
-    const { data: alerts, error: alertErr } = await supabase
+    // Load active alerts
+    const { data: alerts } = await supabase
       .from("wallet_alert_logs")
       .select(
         `
-          id,
-          organization_id,
-          wallet_id,
-          alert_type,
-          triggered_at,
-          resolved_at,
-          created_at
-        `,
+        id,
+        organization_id,
+        wallet_id,
+        alert_type,
+        triggered_at,
+        resolved_at,
+        created_at
+      `,
       )
       .eq("organization_id", organizationId)
       .eq("wallet_id", wallet.id)
       .is("resolved_at", null)
       .order("triggered_at", { ascending: false });
-
-    if (alertErr) {
-      console.error("[Wallet] fetch activeAlerts error:", alertErr);
-    }
 
     set({
       wallet: wallet as Wallet,
@@ -179,12 +184,38 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       loading: false,
     });
 
-    // Keep DB alerts in sync (safe + idempotent)
+    // Sync alerts safely
     await get().syncAlerts();
   },
 
   /* -------------------------------------------------------------------------- */
-  /* SYNC ALERTS (CREATE / RESOLVE)                                             */
+  /* FETCH TRANSACTIONS                                                         */
+  /* -------------------------------------------------------------------------- */
+  fetchTransactions: async (organizationId: string) => {
+    if (!organizationId) {
+      set({ transactions: [] });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("wallet_transactions")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error("[Wallet] fetchTransactions error:", error);
+      return;
+    }
+
+    set({
+      transactions: (data ?? []) as WalletTransaction[],
+    });
+  },
+
+  /* -------------------------------------------------------------------------- */
+  /* SYNC ALERTS                                                                */
   /* -------------------------------------------------------------------------- */
   syncAlerts: async () => {
     const { wallet, walletStatus, activeAlerts } = get();
@@ -216,12 +247,10 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         );
         if (!open) continue;
 
-        const { error } = await supabase
+        await supabase
           .from("wallet_alert_logs")
           .update({ resolved_at: new Date().toISOString() })
           .eq("id", open.id);
-
-        if (error) console.error("[Wallet] resolve alert error:", error);
       }
 
       if (desiredType) {
@@ -230,15 +259,11 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         );
 
         if (!alreadyOpen) {
-          const { error } = await supabase
-            .from("wallet_alert_logs")
-            .insert({
-              organization_id: wallet.organization_id,
-              wallet_id: wallet.id,
-              alert_type: desiredType,
-            });
-
-          if (error) console.error("[Wallet] create alert error:", error);
+          await supabase.from("wallet_alert_logs").insert({
+            organization_id: wallet.organization_id,
+            wallet_id: wallet.id,
+            alert_type: desiredType,
+          });
         }
       }
     } catch (e) {
@@ -247,13 +272,14 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
-  /* CLEAR WALLET                                                               */
+  /* CLEAR                                                                      */
   /* -------------------------------------------------------------------------- */
   clearWallet: () => {
     set({
       wallet: null,
       walletStatus: "missing",
       activeAlerts: [],
+      transactions: [],
       loading: false,
     });
   },

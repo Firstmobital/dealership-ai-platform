@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { supabase } from "../../lib/supabase";
+import { supabase } from "../../lib/supabaseClient";
 
 type Props = {
   open: boolean;
