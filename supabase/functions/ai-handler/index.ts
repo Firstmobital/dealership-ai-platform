@@ -1106,38 +1106,56 @@ async function logUnansweredQuestion(params: {
   ai_response: string;
   logger: ReturnType<typeof createLogger>;
 }) {
-  const {
-    organization_id,
-    sub_organization_id,
-    conversation_id,
-    channel,
-    question,
-    ai_response,
-    logger,
-  } = params;
-
   try {
     const { error } = await supabase.rpc("phase6_log_unanswered_question", {
-      p_organization_id: organization_id,
-      p_sub_organization_id: sub_organization_id,
-      p_conversation_id: conversation_id,
-      p_channel: channel,
-      p_question: question,
-      p_ai_response: ai_response,
+      p_organization_id: params.organization_id,
+      p_sub_organization_id: params.sub_organization_id,
+      p_conversation_id: params.conversation_id,
+      p_channel: params.channel,
+      p_question: params.question,
+      p_ai_response: params.ai_response ?? "NO_RESPONSE",
     });
 
     if (error) {
-      logger.error("[unanswered_questions] rpc failed", { error });
+      params.logger.error("[unanswered_questions] rpc failed", { error });
     } else {
-      logger.info("[unanswered_questions] logged", {
-        conversation_id,
-        question,
+      params.logger.info("[unanswered_questions] logged", {
+        conversation_id: params.conversation_id,
       });
     }
   } catch (err) {
-    logger.error("[unanswered_questions] fatal", { error: err });
+    // 🔒 NEVER crash ai-handler because of logging
+    params.logger.error("[unanswered_questions] fatal", { error: err });
   }
 }
+
+/* ============================================================================
+   FOLLOW-UP SUGGESTION PROMPT (PHASE 1)
+============================================================================ */
+function buildFollowupSuggestionPrompt(params: {
+  campaignContextText: string;
+  personalityBlock: string;
+}) {
+  return `
+You are an AI assistant helping a dealership agent.
+
+Your task:
+- Suggest ONE short follow-up message
+- Sound human and polite
+- Do NOT repeat previous messages
+- Do NOT include pricing unless explicitly allowed
+- Keep it WhatsApp-friendly (1–2 lines)
+
+PERSONALITY RULES:
+${params.personalityBlock}
+
+CAMPAIGN CONTEXT:
+${params.campaignContextText || "No campaign context"}
+
+Return ONLY the suggested message text.
+`.trim();
+}
+
 
 /* ============================================================================
    MAIN HANDLER
@@ -1872,32 +1890,36 @@ Respond now to the customer's latest message only.
     }
 
     // 16) Phase 6.3 — Log unanswered question (fallback only)
-    if (aiResponseText === fallbackMessage) {
-      await logUnansweredQuestion({
-        organization_id: organizationId,
-        conversation_id,
-        question: user_message,
-        ai_response: aiResponseText,
-      });
+    // 16) Phase 6.3 — Log unanswered question (fallback only)
+if (aiResponseText === fallbackMessage) {
+  await logUnansweredQuestion({
+    organization_id: organizationId,
+    sub_organization_id: subOrganizationId,
+    conversation_id,
+    channel,
+    question: user_message,
+    ai_response: aiResponseText,
+    logger,
+  });
 
-      // AUDIT: unanswered saved (fallback used)
-      await logAuditEvent(supabase, {
-        organization_id: organizationId,
-        action: "unanswered_logged",
-        entity_type: "conversation",
-        entity_id: conversation_id,
-        actor_user_id: null,
-        actor_email: null,
-        metadata: {
-          channel,
-          request_id,
-          question: user_message.slice(0, 500),
-          kb_match: kbMatchMeta ?? null,
-          has_workflow: Boolean(workflowInstructionText?.trim()),
-        },
-      });
-    }
-
+  // AUDIT: unanswered saved (fallback used)
+  await logAuditEvent(supabase, {
+    organization_id: organizationId,
+    action: "unanswered_logged",
+    entity_type: "conversation",
+    entity_id: conversation_id,
+    actor_user_id: null,
+    actor_email: null,
+    metadata: {
+      channel,
+      request_id,
+      question: user_message.slice(0, 500),
+      kb_match: kbMatchMeta ?? null,
+      has_workflow: Boolean(workflowInstructionText?.trim()),
+    },
+  });
+}
+  
     /* ---------------------------------------------------------------------------
    PHASE 1 — SUGGEST MODE HARD STOP (STEP 7)
 --------------------------------------------------------------------------- */
