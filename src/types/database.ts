@@ -125,29 +125,33 @@ export type Message = {
 // -------------------------------------------------------------
 export type KnowledgeArticle = {
   id: string;
+  title: string;
+  content: string;
+
+  // Phase 1 — Governance
+  status: "draft" | "published" | "archived";
+  published_at?: string | null;
+  updated_by?: string | null;
+
+  // Source & content
+  source_type: "text" | "file";
+  keywords?: string[] | null;
+
+  // File-backed articles
+  file_bucket?: string | null;
+  file_path?: string | null;
+  original_filename?: string | null;
+  mime_type?: string | null;
+
+  // Org scoping
   organization_id: string;
   sub_organization_id: string | null;
 
-  title: string;
-  description: string | null;
-
-  keywords: string[] | null;
-
-
-  // core content
-  content: string;
-
-  // ✅ NEW (from migration)
-  source_type: "text" | "file";
-  file_bucket: string | null;
-  file_path: string | null;
-  mime_type: string | null;
-  original_filename: string | null;
-  raw_content: string | null;
-  last_processed_at: string | null;
-  processing_error: string | null;
-
+  // Processing metadata
   created_at: string;
+  updated_at?: string | null;
+  last_processed_at?: string | null;
+  processing_error?: string | null;
 };
 
 export type KnowledgeChunk = {

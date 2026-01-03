@@ -1,6 +1,6 @@
 // src/modules/chats/ChatsModule.tsx
 // FULL + FINAL — PATCHED
-// SEARCH + PHONE-FIRST + DIVISION SAFE
+// SEARCH + PHONE-FIRST + DIVISION SAFE + AI MODE HEADER
 
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, Copy, SendHorizonal } from "lucide-react";
@@ -11,6 +11,7 @@ import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
 import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { ChatSidebarItem } from "./components/ChatSidebarItem";
+import { ChatHeader } from "./components/ChatHeader";
 
 import type { Conversation } from "../../types/database";
 import { supabase } from "../../lib/supabaseClient";
@@ -133,7 +134,7 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-   * SEND MESSAGE (UNCHANGED LOGIC)
+   * SEND MESSAGE (UNCHANGED)
    * ------------------------------------------------------- */
   const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -259,6 +260,12 @@ export function ChatsModule() {
           </div>
         ) : (
           <>
+            {/* 🔥 CHAT HEADER — AI MODE TOGGLE */}
+            {activeConversation && (
+              <ChatHeader conversation={activeConversation} />
+            )}
+
+            {/* CONVERSATION INFO BAR */}
             <div className="flex justify-between border-b border-slate-200 px-6 py-4">
               <div>
                 <div className="font-semibold">
@@ -279,6 +286,7 @@ export function ChatsModule() {
               </button>
             </div>
 
+            {/* MESSAGES */}
             <div
               ref={scrollRef}
               className="flex-1 space-y-4 overflow-y-auto p-6"
@@ -296,6 +304,7 @@ export function ChatsModule() {
               <div ref={bottomRef} />
             </div>
 
+            {/* COMPOSER */}
             <form
               onSubmit={handleSend}
               className="border-t border-slate-200 px-6 py-4"

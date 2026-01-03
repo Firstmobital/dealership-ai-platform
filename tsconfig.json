@@ -18,6 +18,7 @@
     "types": ["vite/client"]
   },
   "include": ["src"],
+  "exclude": ["supabase/functions", "supabase/migrations"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
 

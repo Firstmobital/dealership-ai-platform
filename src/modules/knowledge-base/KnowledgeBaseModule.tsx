@@ -1,7 +1,6 @@
 // src/modules/knowledge-base/KnowledgeBaseModule.tsx
-// FULL + FINAL — Tier 4
-// Bright CRM Knowledge Base UI
-// Replace confirm + Last processed display + Download/Replace/Error visibility
+// FULL + FINAL — Tier 4 + Phase 1 Governance
+// Draft / Publish / Archive + AI-safe KB
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -16,12 +15,19 @@ import {
   Download,
   RefreshCcw,
   AlertTriangle,
+  CheckCircle,
+  Archive,
 } from "lucide-react";
 
 import { useKnowledgeBaseStore } from "../../state/useKnowledgeBaseStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import type { KnowledgeArticle } from "../../types/database";
+
+/* -----------------------------------------------------------
+ * TYPES
+ * -----------------------------------------------------------*/
+type ArticleStatus = "draft" | "published" | "archived";
 
 /* -----------------------------------------------------------
  * AddNewArticleDropdown
@@ -107,7 +113,6 @@ export function KnowledgeBaseModule() {
   const [manualContent, setManualContent] = useState("");
   const [editMode, setEditMode] = useState(false);
 
-  // ✅ NEW: confirm replace modal
   const [confirmReplaceOpen, setConfirmReplaceOpen] = useState(false);
 
   /* -----------------------------------------------------------
@@ -120,7 +125,7 @@ export function KnowledgeBaseModule() {
   }, [currentOrganization?.id, activeSubOrg?.id]);
 
   /* -----------------------------------------------------------
-   * ORDER — DIVISION FIRST, ORG FALLBACK NEXT
+   * ORDER — DIVISION FIRST
    * -----------------------------------------------------------*/
   const orderedArticles = useMemo(() => {
     if (!activeSubOrg) return articles;
@@ -128,7 +133,6 @@ export function KnowledgeBaseModule() {
     return [...articles].sort((a, b) => {
       const aLocal = a.sub_organization_id === activeSubOrg.id;
       const bLocal = b.sub_organization_id === activeSubOrg.id;
-
       if (aLocal && !bLocal) return -1;
       if (!aLocal && bLocal) return 1;
       return 0;
@@ -136,7 +140,7 @@ export function KnowledgeBaseModule() {
   }, [articles, activeSubOrg]);
 
   /* -----------------------------------------------------------
-   * Manual Create / Update
+   * Manual Create / Update (DRAFT BY DEFAULT)
    * -----------------------------------------------------------*/
   async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -152,6 +156,7 @@ export function KnowledgeBaseModule() {
       await createArticleFromText({
         title: manualTitle.trim(),
         content: manualContent.trim(),
+        status: "draft",
       });
     }
 
@@ -170,7 +175,11 @@ export function KnowledgeBaseModule() {
    * File Upload / Replace
    * -----------------------------------------------------------*/
   async function handleFileSelected(file: File) {
-    await createArticleFromFile({ file, title: file.name });
+    await createArticleFromFile({
+      file,
+      title: file.name,
+      status: "draft",
+    });
   }
 
   async function handleReplaceFile(file: File) {
@@ -236,7 +245,6 @@ export function KnowledgeBaseModule() {
           onFile={() => fileInputRef.current?.click()}
         />
 
-        {/* Hidden file inputs */}
         <input
           ref={fileInputRef}
           type="file"
@@ -290,86 +298,34 @@ export function KnowledgeBaseModule() {
               <Loader2 size={16} className="animate-spin" />
               Processing…
             </div>
-          ) : orderedArticles.length === 0 ? (
-            <p className="py-6 text-sm text-slate-500">
-              No knowledge articles yet.
-            </p>
           ) : (
             <ul className="space-y-2">
-              {orderedArticles.map((a) => {
-                const isSelected = selectedArticle?.id === a.id;
-                const isLocal =
-                  activeSubOrg &&
-                  a.sub_organization_id === activeSubOrg.id;
+              {orderedArticles.map((a) => (
+                <li
+                  key={a.id}
+                  onClick={() => setSelectedArticle(a)}
+                  className="cursor-pointer rounded-md border border-slate-200 bg-slate-50 px-3 py-2 hover:bg-slate-100"
+                >
+                  <p className="font-medium">{a.title}</p>
+                  <div className="mt-1 flex gap-2 flex-wrap text-[10px]">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5">
+                      {a.source_type === "file" ? "PDF / Excel" : "Text"}
+                    </span>
 
-                return (
-                  <li
-                    key={a.id}
-                    onClick={() => setSelectedArticle(a)}
-                    className={[
-                      "cursor-pointer rounded-md border px-3 py-2 text-sm transition",
-                      isSelected
-                        ? "border-blue-600 bg-blue-50 text-blue-700"
-                        : "border-slate-200 bg-slate-50 hover:bg-slate-100",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-medium">{a.title}</p>
-
-                        <div className="mt-1 flex gap-2 flex-wrap">
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
-                            {a.source_type === "file" ? "PDF / Excel" : "Text"}
-                          </span>
-
-                          {a.processing_error && (
-                            <span className="flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-700">
-                              <AlertTriangle size={10} />
-                              Error
-                            </span>
-                          )}
-
-                          {activeSubOrg && (
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-[10px] ${
-                                isLocal
-                                  ? "bg-green-50 text-green-700"
-                                  : "bg-amber-50 text-amber-700"
-                              }`}
-                            >
-                              {isLocal ? "This Division" : "From Organization"}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        {a.source_type === "text" && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleEdit(a);
-                            }}
-                            className="text-slate-400 hover:text-blue-600"
-                          >
-                            <Pencil size={15} />
-                          </button>
-                        )}
-
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(a);
-                          }}
-                          className="text-slate-400 hover:text-red-600"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
+                    <span
+                      className={`rounded-full px-2 py-0.5 ${
+                        a.status === "published"
+                          ? "bg-green-50 text-green-700"
+                          : a.status === "draft"
+                          ? "bg-yellow-50 text-yellow-700"
+                          : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {a.status}
+                    </span>
+                  </div>
+                </li>
+              ))}
             </ul>
           )}
         </div>
@@ -385,179 +341,87 @@ export function KnowledgeBaseModule() {
           {/* VIEW */}
           {selectedArticle && !showManualForm && (
             <div className="flex h-full flex-col overflow-hidden">
-              <div className="border-b border-slate-200 bg-white px-6 py-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-lg font-semibold">
-                      {selectedArticle.title}
-                    </h2>
-                    {selectedArticle.source_type === "file" &&
-                      selectedArticle.original_filename && (
-                        <p className="mt-1 truncate text-xs text-slate-500">
-                          File: {selectedArticle.original_filename}
-                        </p>
-                      )}
-                  </div>
+              <div className="border-b border-slate-200 bg-white px-6 py-4 flex justify-between">
+                <h2 className="text-lg font-semibold">
+                  {selectedArticle.title}
+                </h2>
 
-                  <div className="flex shrink-0 gap-2">
-                    {selectedArticle.source_type === "file" && (
-                      <>
-                        <button
-                          onClick={() => downloadOriginalFile(selectedArticle)}
-                          className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
-                        >
-                          <Download size={14} />
-                          Download
-                        </button>
-
-                        <button
-                          onClick={() => setConfirmReplaceOpen(true)}
-                          className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-slate-50"
-                        >
-                          <RefreshCcw size={14} />
-                          Replace
-                        </button>
-                      </>
-                    )}
-
+                <div className="flex gap-2">
+                  {selectedArticle.status !== "published" && (
                     <button
-                      onClick={() => setSelectedArticle(null)}
-                      className="text-slate-400 hover:text-slate-600"
+                      onClick={() =>
+                        updateArticle({
+                          id: selectedArticle.id,
+                          status: "published",
+                          published_at: new Date().toISOString(),
+                        })
+                      }
+                      className="flex items-center gap-1 rounded-md bg-green-600 px-3 py-1 text-xs text-white"
                     >
-                      <X size={20} />
+                      <CheckCircle size={14} />
+                      Publish
                     </button>
-                  </div>
+                  )}
+
+                  {selectedArticle.status === "published" && (
+                    <button
+                      onClick={() =>
+                        updateArticle({
+                          id: selectedArticle.id,
+                          status: "archived",
+                        })
+                      }
+                      className="flex items-center gap-1 rounded-md bg-slate-600 px-3 py-1 text-xs text-white"
+                    >
+                      <Archive size={14} />
+                      Archive
+                    </button>
+                  )}
                 </div>
               </div>
 
               <div className="flex-1 overflow-y-auto px-6 py-4 text-sm whitespace-pre-wrap">
-                {selectedArticle.processing_error && (
-                  <div className="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-                    <strong>Processing failed:</strong>
-                    <br />
-                    {selectedArticle.processing_error}
-                  </div>
-                )}
-
                 {selectedArticle.content}
-              </div>
-
-              {/* ✅ Footer: Created + Last processed + Source */}
-              <div className="border-t border-slate-200 px-6 py-3 text-xs text-slate-500 space-y-1">
-                <div>ID: {selectedArticle.id}</div>
-
-                <div>
-                  Created:{" "}
-                  {new Date(selectedArticle.created_at).toLocaleString()}
-                </div>
-
-                {selectedArticle.last_processed_at && (
-                  <div>
-                    Last processed: {formatDateTime(selectedArticle.last_processed_at)}
-                  </div>
-                )}
-
-                <div>
-                  Source:{" "}
-                  {selectedArticle.source_type === "file"
-                    ? "PDF / Excel"
-                    : "Manual Text"}
-                </div>
               </div>
             </div>
           )}
 
           {/* CREATE / EDIT */}
           {showManualForm && (
-            <div className="flex h-full flex-col overflow-hidden">
-              <div className="border-b border-slate-200 bg-white px-6 py-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold">
-                    {editMode ? "Edit Article" : "New Article"}
-                  </h2>
-                  <button
-                    onClick={resetManualForm}
-                    className="text-slate-400 hover:text-slate-600"
-                  >
-                    <X size={20} />
-                  </button>
-                </div>
-              </div>
+            <div className="flex h-full flex-col">
+              <form
+                onSubmit={handleManualSubmit}
+                className="flex-1 space-y-4 px-6 py-4"
+              >
+                <input
+                  type="text"
+                  placeholder="Article title"
+                  value={manualTitle}
+                  onChange={(e) => setManualTitle(e.target.value)}
+                  className="w-full rounded-md border px-3 py-2 text-sm"
+                />
 
-              <div className="flex-1 overflow-y-auto px-6 py-4">
-                <form
-                  onSubmit={handleManualSubmit}
-                  className="max-w-2xl space-y-4"
+                <textarea
+                  placeholder="Enter content..."
+                  value={manualContent}
+                  onChange={(e) => setManualContent(e.target.value)}
+                  rows={12}
+                  className="w-full rounded-md border px-3 py-2 text-sm"
+                />
+
+                <button
+                  type="submit"
+                  className="rounded-md bg-blue-600 px-6 py-2 text-sm text-white"
                 >
-                  <input
-                    type="text"
-                    placeholder="Article title"
-                    value={manualTitle}
-                    onChange={(e) => setManualTitle(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  />
-
-                  <textarea
-                    placeholder="Enter content..."
-                    value={manualContent}
-                    onChange={(e) => setManualContent(e.target.value)}
-                    rows={12}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  />
-
-                  <button
-                    type="submit"
-                    className="rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                  >
-                    {editMode ? "Update Article" : "Save Article"}
-                  </button>
-                </form>
-              </div>
+                  {editMode ? "Update Draft" : "Save Draft"}
+                </button>
+              </form>
             </div>
           )}
         </div>
       </div>
 
-      {/* ✅ Confirm Replace Modal */}
-      {confirmReplaceOpen && selectedArticle?.source_type === "file" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg">
-            <h3 className="text-lg font-semibold text-slate-900">
-              Replace file?
-            </h3>
-
-            <p className="mt-2 text-sm text-slate-600">
-              This will overwrite existing extracted knowledge for{" "}
-              <span className="font-medium">{selectedArticle.title}</span>.
-              Old chunks/embeddings will be removed and new data will replace it.
-            </p>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmReplaceOpen(false)}
-                className="rounded-md border px-4 py-2 text-sm"
-              >
-                Cancel
-              </button>
-
-              <button
-                onClick={() => {
-                  setConfirmReplaceOpen(false);
-                  replaceFileInputRef.current?.click();
-                }}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
-              >
-                Replace
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <p className="mt-4 text-sm text-red-600">Error: {error}</p>
-      )}
+      {error && <p className="mt-4 text-sm text-red-600">Error: {error}</p>}
     </div>
   );
 }
-

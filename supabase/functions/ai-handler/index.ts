@@ -138,6 +138,99 @@ function safeText(v: any): string {
 }
 
 /* ============================================================================
+   PHASE 1 — AI MODE + HUMAN OVERRIDE + ENTITY LOCK + SUMMARY CACHE
+============================================================================ */
+type AiMode = "auto" | "suggest" | "off";
+
+function detectModelFromText(text: string): string | null {
+  const t = (text || "").toLowerCase();
+
+  // Tata models (extend anytime)
+  const models = [
+    "nexon",
+    "punch",
+    "harrier",
+    "safari",
+    "tiago",
+    "tigor",
+    "altroz",
+    "curvv",
+    "tiago ev",
+    "nexon ev",
+    "tigor ev",
+  ];
+
+  // Prefer longer matches first (e.g., "nexon ev" before "nexon")
+  const sorted = [...models].sort((a, b) => b.length - a.length);
+
+  for (const m of sorted) {
+    if (t.includes(m)) return m.toUpperCase();
+  }
+  return null;
+}
+
+function mergeEntities(
+  prev: Record<string, any> | null,
+  next: Record<string, any> | null
+) {
+  return { ...(prev ?? {}), ...(next ?? {}) };
+}
+
+function buildRollingSummary(params: {
+  prevSummary: string | null;
+  userMessage: string;
+  aiReply: string;
+  maxChars?: number;
+}) {
+  const maxChars = params.maxChars ?? 1400;
+
+  const u = (params.userMessage || "").replace(/\s+/g, " ").trim();
+  const a = (params.aiReply || "").replace(/\s+/g, " ").trim();
+
+  const newLine = `U: ${u}\nA: ${a}`.trim();
+
+  const prev = (params.prevSummary || "").trim();
+  const combined = prev ? `${prev}\n---\n${newLine}` : newLine;
+
+  // Hard cap (keep most recent)
+  if (combined.length <= maxChars) return combined;
+
+  // Keep last chunk
+  return combined.slice(combined.length - maxChars);
+}
+
+async function wasHumanActiveRecently(params: {
+  conversationId: string;
+  logger: ReturnType<typeof createLogger>;
+  seconds?: number;
+}): Promise<boolean> {
+  const seconds = params.seconds ?? 60;
+
+  const lastAgent = await safeSupabase<{ sender: string; created_at: string }>(
+    "load_last_agent_message",
+    params.logger,
+    () =>
+      supabase
+        .from("messages")
+        .select("sender, created_at")
+        .eq("conversation_id", params.conversationId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+  );
+
+  if (!lastAgent) return false;
+  if ((lastAgent.sender || "").toLowerCase() !== "agent") return false;
+
+  const ts = Date.parse(lastAgent.created_at);
+  if (!Number.isFinite(ts)) return false;
+
+  const ageMs = Date.now() - ts;
+  return ageMs >= 0 && ageMs <= seconds * 1000;
+}
+
+
+/* ============================================================================
    CHAT HISTORY → LLM MESSAGES (STATEFUL FIX)
 ============================================================================ */
 type ChatMsg = { role: "user" | "assistant"; content: string };
@@ -680,9 +773,10 @@ async function resolveKnowledgeContext(params: {
 
   // Load articles in scope (sub-org: allow null/global + exact division)
   const { data: articles, error } = await supabase
-    .from("knowledge_articles")
-    .select("id, title, content, sub_organization_id, keywords")
-    .eq("organization_id", organizationId);
+  .from("knowledge_articles")
+  .select("id, title, content, sub_organization_id, keywords, status")
+  .eq("organization_id", organizationId)
+  .eq("status", "published");
 
   if (error || !articles?.length) {
     logger.debug("[kb] no articles or load error", { error });
@@ -1080,19 +1174,64 @@ serve(async (req: Request): Promise<Response> => {
       contact_id: string | null;
       sub_organization_id: string | null;
       ai_enabled: boolean | null;
+    
+      // Phase 1
+      ai_mode: AiMode | null;
+      ai_summary: string | null;
+      ai_last_entities: Record<string, any> | null;
     }>("load_conversation", baseLogger, () =>
       supabase
         .from("conversations")
         .select(
-          "id, organization_id, channel, contact_id, sub_organization_id, ai_enabled"
+          "id, organization_id, channel, contact_id, sub_organization_id, ai_enabled, ai_mode, ai_summary, ai_last_entities"
         )
         .eq("id", conversation_id)
         .maybeSingle()
     );
+    
 
     if (!conv) return new Response("Conversation not found", { status: 404 });
     if (conv.ai_enabled === false)
       return new Response("AI disabled", { status: 200 });
+
+    // Phase 1 — AI mode guard
+const aiMode: AiMode = (conv.ai_mode as AiMode) || "auto";
+
+if (aiMode === "off") {
+  return new Response(
+    JSON.stringify({
+      conversation_id,
+      no_reply: true,
+      request_id,
+      reason: "AI_MODE_OFF",
+    }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
+
+// If human is actively handling, block auto replies
+if (aiMode === "auto") {
+  const humanActive = await wasHumanActiveRecently({
+    conversationId: conversation_id,
+    logger: baseLogger,
+    seconds: 60,
+  });
+
+  if (humanActive) {
+    return new Response(
+      JSON.stringify({
+        conversation_id,
+        no_reply: true,
+        request_id,
+        reason: "HUMAN_ACTIVE",
+      }),
+      { headers: { "Content-Type": "application/json" } }
+    );
+  }
+}
+
+const isSuggestOnly = aiMode === "suggest";
+
 
     const organizationId = conv.organization_id;
     const subOrganizationId = conv.sub_organization_id ?? null;
@@ -1106,6 +1245,7 @@ serve(async (req: Request): Promise<Response> => {
       sub_organization_id: subOrganizationId,
       channel,
     });
+
 
     // 2) Wallet (required for any AI call; greetings are free)
     const wallet = await loadWalletForOrg(organizationId);
@@ -1230,6 +1370,29 @@ ${personality.donts || "- None specified."}
         { headers: { "Content-Type": "application/json" } }
       );
     }
+    /* ---------------------------------------------------------------------------
+   PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
+--------------------------------------------------------------------------- */
+
+// Detect model from user message
+const detectedModel = detectModelFromText(user_message);
+
+// Merge with previously locked entities
+const prevEntities = conv.ai_last_entities ?? {};
+const nextEntities = mergeEntities(
+  prevEntities,
+  detectedModel ? { model: detectedModel } : null
+);
+
+// Persist entity lock (best-effort)
+await supabase
+  .from("conversations")
+  .update({
+    ai_last_entities: nextEntities,
+    ai_context_updated_at: new Date().toISOString(),
+  })
+  .eq("id", conversation_id);
+
 
     // 5) Follow-up suggestion mode (NO send, NO DB write)
     if (mode === "suggest_followup") {
@@ -1406,6 +1569,18 @@ DEALERSHIP INFORMATION
 - Channel: ${channel}
 
 ------------------------
+CONVERSATION MEMORY (PHASE 1)
+------------------------
+Summary (rolling):
+${conv.ai_summary || "No summary yet."}
+
+Locked Entities (do NOT change unless user changes):
+${JSON.stringify(nextEntities || {}, null, 2)}
+
+CRITICAL ENTITY RULE:
+- If Locked Entities includes "model", you MUST NOT switch to any other model unless the user explicitly mentions a different model.
+
+------------------------
 BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ------------------------
 ${personaBlock}
@@ -1465,6 +1640,8 @@ MODEL & OFFER SAFETY RULE (CRITICAL)
 - Do NOT guess.
 - Do NOT recommend.
 - Do NOT upsell without explicit customer intent.
+- If a locked model exists, ask clarifying questions ONLY within that model (variant, fuel, price, availability).
+- Do not propose a different model as an alternative unless the user asks for comparisons or more information.
 
 
 ------------------------
@@ -1720,6 +1897,25 @@ Respond now to the customer's latest message only.
         },
       });
     }
+
+    /* ---------------------------------------------------------------------------
+   PHASE 1 — SUGGEST MODE HARD STOP (STEP 7)
+--------------------------------------------------------------------------- */
+
+if (isSuggestOnly) {
+  logger.info("[ai-handler] suggest-only mode — returning draft");
+
+  return new Response(
+    JSON.stringify({
+      conversation_id,
+      draft: aiResponseText,
+      auto_send: false,
+      request_id,
+    }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
+
 
     // 17) Save message + update conversation
     await supabase.from("messages").insert({
