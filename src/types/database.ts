@@ -89,6 +89,10 @@ export type Conversation = {
   channel: ConversationChannel;
   sub_organization_id: UUID | null;
 
+  meta?: {
+    psf_case_id?: string | null;
+  };  
+
   created_at?: string;
 
   // Joined contact (normalized in store)

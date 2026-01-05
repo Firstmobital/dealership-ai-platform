@@ -20,12 +20,13 @@ let realtimeInitialized = false;
 
 export type ConversationFilter =
   | "all"
-  | "unassigned"
   | "assigned"
+  | "unassigned"
   | "bot"
   | "whatsapp"
   | "web"
-  | "internal";
+  | "internal"
+  | "psf";
 
 /* ========================================================================== */
 /*  CHAT STORE TYPE                                                           */

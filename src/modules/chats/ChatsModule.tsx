@@ -55,7 +55,7 @@ export function ChatsModule() {
   useEffect(() => {
     if (!currentOrganization?.id) return;
     initRealtime(currentOrganization.id);
-  }, [currentOrganization?.id]);
+  }, [currentOrganization?.id, initRealtime]);
 
   /* -------------------------------------------------------
      LOAD CONVERSATIONS
@@ -64,11 +64,11 @@ export function ChatsModule() {
     if (currentOrganization?.id) {
       fetchConversations(currentOrganization.id).catch(console.error);
     }
-  }, [currentOrganization?.id, subOrgKey]);
+  }, [currentOrganization?.id, subOrgKey, fetchConversations]);
 
   useEffect(() => {
     setActiveConversation(null);
-  }, [subOrgKey]);
+  }, [subOrgKey, setActiveConversation]);
 
   useEffect(() => {
     if (!activeConversationId) return;
@@ -92,7 +92,7 @@ export function ChatsModule() {
       .eq("contact_id", conv.contact_id)
       .maybeSingle()
       .then(({ data }) => setCampaignContext(data ?? null));
-  }, [activeConversationId]);
+  }, [activeConversationId, conversations, messages, fetchMessages]);
 
   /* -------------------------------------------------------
      SCROLL MANAGEMENT
@@ -193,11 +193,11 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-     FILTER + SEARCH (PSF INCLUDED)
+     FILTER + SEARCH (PSF SAFE)
   ------------------------------------------------------- */
   const filteredConversations: Conversation[] = conversations
     .filter((c) => {
-      if (filter === "psf") return c.meta?.is_psf === true;
+      if (filter === "psf") return Boolean(c.meta?.psf_case_id);
       if (filter === "unassigned") return !c.assigned_to;
       if (filter === "assigned") return Boolean(c.assigned_to);
       if (filter === "bot") return c.ai_enabled;
@@ -224,7 +224,7 @@ export function ChatsModule() {
     (c) => c.id === activeConversationId
   );
 
-  const isPsfConversation = Boolean(activeConversation?.meta?.is_psf);
+  const isPsfConversation = Boolean(activeConversation?.meta?.psf_case_id);
 
   /* -------------------------------------------------------
      UI
@@ -247,6 +247,7 @@ export function ChatsModule() {
             conversation={c}
             isActive={c.id === activeConversationId}
             unreadCount={unread[c.id] ?? 0}
+            onClick={() => setActiveConversation(c.id)}
           />
         ))}
       </div>
