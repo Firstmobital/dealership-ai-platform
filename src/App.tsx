@@ -30,6 +30,8 @@ import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesMod
 import { AIConfigurationModule } from "./modules/settings/AIConfigurationModule";
 import WalletPage from "./pages/settings/WalletPage";
 
+/* ================= PSF MODULE ================= */
+import { PsfModule } from "./modules/psf/PsfModule";
 
 /* -------------------------------------------------------------------------- */
 /* FULL SCREEN LOADING                                                         */
@@ -137,12 +139,17 @@ function App() {
         <Route path="bot" element={<BotPersonalityModule />} />
         <Route path="workflows" element={<WorkflowModule />} />
         <Route path="campaigns" element={<CampaignsModule />} />
-        <Route path="settings/whatsapp-templates" element={<WhatsappTemplatesModule />} />
+
+        {/* ✅ PSF ROUTE */}
+        <Route path="psf" element={<PsfModule />} />
+
+        <Route
+          path="settings/whatsapp-templates"
+          element={<WhatsappTemplatesModule />}
+        />
         <Route path="database" element={<DatabasePage />} />
         <Route path="settings" element={<SettingsModule />} />
         <Route path="analytics" element={<WhatsappOverviewPage />} />
-        
-
 
         <Route
           path="settings/whatsapp"
@@ -152,7 +159,10 @@ function App() {
           path="settings/sub-orgs"
           element={<SubOrganizationsPanel />}
         />
-        <Route path="settings/ai-config" element={<AIConfigurationModule />} />
+        <Route
+          path="settings/ai-config"
+          element={<AIConfigurationModule />}
+        />
         <Route path="settings/wallet" element={<WalletPage />} />
         <Route
           path="unanswered"

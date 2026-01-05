@@ -265,6 +265,64 @@ function buildChatMessagesFromHistory(
 }
 
 /* ============================================================================
+   PSF HELPERS
+============================================================================ */
+
+async function loadOpenPsfCaseByConversation(
+  conversationId: string
+) {
+  const { data } = await supabase
+    .from("psf_cases")
+    .select("id, campaign_id")
+    .eq("conversation_id", conversationId)
+    .eq("resolution_status", "open")
+    .eq("source", "psf_campaign") // 🔒 IMPORTANT
+    .maybeSingle();
+
+  return data;
+}
+
+
+async function classifyPsfSentiment(
+  logger: ReturnType<typeof createLogger>,
+  message: string
+): Promise<{ sentiment: "positive" | "negative" | "neutral"; summary: string }> {
+  const prompt = `
+You are classifying customer service feedback.
+
+Rules:
+- Positive = satisfied, happy, good, excellent
+- Negative = complaint, delay, rude, billing issue, unhappy
+- Neutral = unclear, mixed, very short
+
+Return STRICT JSON:
+{
+  "sentiment": "positive | negative | neutral",
+  "summary": "1 short line summary"
+}
+`.trim();
+
+  const resp = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    messages: [
+      { role: "system", content: prompt },
+      { role: "user", content: message },
+    ],
+  });
+
+  const text = resp.choices?.[0]?.message?.content ?? "{}";
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    logger.warn("[psf] sentiment parse failed", { text });
+    return { sentiment: "neutral", summary: "Feedback received" };
+  }
+}
+
+
+/* ============================================================================
    WALLET HELPERS — PHASE 5
 ============================================================================ */
 async function loadWalletForOrg(organizationId: string) {
@@ -1388,6 +1446,91 @@ ${personality.donts || "- None specified."}
         { headers: { "Content-Type": "application/json" } }
       );
     }
+
+    /* ============================================================================
+   PSF FLOW — SHORT CIRCUIT
+============================================================================ */
+
+const psfCase = await loadOpenPsfCaseByConversation(conversation_id);
+
+if (psfCase) {
+  logger.info("[psf] handling feedback reply", {
+    psf_case_id: psfCase.id,
+  });
+
+  const result = await classifyPsfSentiment(logger, user_message);
+
+  await supabase
+    .from("psf_cases")
+    .update({
+      sentiment: result.sentiment,
+      ai_summary: result.summary,
+      action_required: result.sentiment !== "positive",
+      last_customer_reply_at: new Date().toISOString(),
+    })
+    .eq("id", psfCase.id);
+
+      // 🔍 AUDIT: PSF feedback received
+  await logAuditEvent(supabase, {
+    organization_id: organizationId,
+    action: "psf_feedback_received",
+    entity_type: "psf_case",
+    entity_id: psfCase.id,
+    actor_user_id: null,
+    actor_email: null,
+    metadata: {
+      sentiment: result.sentiment,
+      summary: result.summary,
+      conversation_id,
+      campaign_id: psfCase.campaign_id,
+      channel,
+      request_id,
+    },
+  });
+
+  const replyText =
+    result.sentiment === "positive"
+      ? "Thank you for your feedback! We’re glad you had a good experience 😊"
+      : result.sentiment === "negative"
+      ? "Thank you for sharing your feedback. Our team will review this and connect with you shortly."
+      : "Thank you for your feedback. We appreciate you taking the time to respond.";
+
+  // Save bot reply
+  await supabase.from("messages").insert({
+    conversation_id,
+    sender: "bot",
+    message_type: "text",
+    text: replyText,
+    channel,
+    sub_organization_id: subOrganizationId,
+  });
+
+  await supabase
+    .from("conversations")
+    .update({ last_message_at: new Date().toISOString() })
+    .eq("id", conversation_id);
+
+  if (channel === "whatsapp" && contactPhone) {
+    await safeWhatsAppSend(logger, {
+      organization_id: organizationId,
+      sub_organization_id: subOrganizationId,
+      to: contactPhone,
+      type: "text",
+      text: replyText,
+    });
+  }
+
+  return new Response(
+    JSON.stringify({
+      conversation_id,
+      psf_handled: true,
+      sentiment: result.sentiment,
+      request_id,
+    }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
+
     /* ---------------------------------------------------------------------------
    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
 --------------------------------------------------------------------------- */

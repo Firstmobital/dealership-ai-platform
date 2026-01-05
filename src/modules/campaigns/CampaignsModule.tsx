@@ -83,7 +83,6 @@ function mapCsvRowsToObjects(
     .filter(Boolean) as ParsedCsvRow[];
 }
 
-
 /* ========================================================================
    TEMPLATE PREVIEW
 ========================================================================= */
@@ -124,7 +123,6 @@ function WhatsAppPreviewCard({
   );
 }
 
-
 function extractMaxTemplateVarIndex(body: string): number {
   const matches = body.match(/{{\s*(\d+)\s*}}/g) ?? [];
   let max = 0;
@@ -134,8 +132,6 @@ function extractMaxTemplateVarIndex(body: string): number {
   }
   return max;
 }
-
-
 /* ========================================================================
    COMPONENT
 ========================================================================= */
@@ -178,6 +174,24 @@ export function CampaignsModule() {
   const [testPhone, setTestPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [retrying, setRetrying] = useState(false);
+
+  /* ==========================================================
+     ✅ NEW: SEND NOW / SEND LATER
+  ========================================================== */
+  const [sendMode, setSendMode] = useState<"now" | "later">("now");
+  const [scheduledAtLocal, setScheduledAtLocal] = useState<string>(""); // datetime-local
+
+  function scheduledAtIsoOrNull(): string | null {
+    if (sendMode !== "later") return null;
+    const v = String(scheduledAtLocal ?? "").trim();
+    if (!v) return null;
+
+    // datetime-local parsed as local time; store ISO
+    const dt = new Date(v);
+    if (!Number.isFinite(dt.getTime())) return null;
+
+    return dt.toISOString();
+  }
 
   /* --------------------------------------------------------------------
      TEMPLATE + MEDIA STATE (PHASE 2.3 FINAL)
@@ -232,44 +246,41 @@ export function CampaignsModule() {
   /* --------------------------------------------------------------------
      CSV PARSE
   -------------------------------------------------------------------- */
-
   useEffect(() => {
     if (!csvText.trim()) {
       setParsedRows([]);
       setCsvErrors([]);
       return;
     }
-  
+
     const { headers, rows } = parseSimpleCsv(csvText);
     const errors: string[] = [];
-  
+
     if (!headers.includes("phone")) {
       errors.push("CSV must include phone column");
     }
-  
+
     const mapped = mapCsvRowsToObjects(headers, rows);
     if (!mapped.length) {
       errors.push("No valid rows");
     }
-  
+
     // ✅ TEMPLATE VARIABLE VALIDATION (PHASE C – CORRECT SCOPE)
     const neededVars = extractMaxTemplateVarIndex(
       selectedTemplate?.body ?? ""
     );
-  
+
     const providedVars = headers.filter((h) => h !== "phone").length;
-  
+
     if (neededVars > providedVars) {
       errors.push(
         `Template requires ${neededVars} variables ({{1}}..{{${neededVars}}}) but CSV provides only ${providedVars}.`
       );
     }
-  
+
     setParsedRows(mapped);
     setCsvErrors(errors);
   }, [csvText, selectedTemplate?.body]);
-  
-
   /* --------------------------------------------------------------------
      DERIVED
   -------------------------------------------------------------------- */
@@ -334,6 +345,10 @@ export function CampaignsModule() {
     setParsedRows([]);
     setCsvErrors([]);
     setTestPhone("");
+
+    // ✅ NEW: reset scheduling UI
+    setSendMode("now");
+    setScheduledAtLocal("");
   }
 
   function closeCreate() {
@@ -361,6 +376,12 @@ export function CampaignsModule() {
       return null;
     }
 
+    // ✅ NEW: validate schedule
+    if (sendMode === "later" && !scheduledAtIsoOrNull()) {
+      alert("Please select a valid schedule date/time.");
+      return null;
+    }
+
     setBusy(true);
     try {
       const id = await createCampaignWithMessages({
@@ -369,7 +390,7 @@ export function CampaignsModule() {
         name: builder.name.trim(),
         description: builder.description?.trim() ?? "",
         whatsapp_template_id: builder.whatsapp_template_id,
-        scheduledAt: null,
+        scheduledAt: scheduledAtIsoOrNull(), // ✅ NEW
         rows: parsedRows,
       });
 
@@ -395,6 +416,27 @@ export function CampaignsModule() {
 
     setBusy(true);
     try {
+      const scheduleIso = scheduledAtIsoOrNull();
+
+      // ✅ NEW: If send later, schedule it directly (no store changes needed)
+      if (scheduleIso) {
+        const { error } = await supabase
+          .from("campaigns")
+          .update({
+            status: "scheduled",
+            scheduled_at: scheduleIso,
+          })
+          .eq("id", id);
+
+        if (error) throw error;
+
+        await fetchCampaigns(currentOrganization!.id);
+        await fetchCampaignMessages(id);
+        alert("✅ Campaign scheduled for later (dispatch will pick it at time)");
+        return;
+      }
+
+      // send now (existing behavior)
       await launchCampaign(id);
       await fetchCampaigns(currentOrganization!.id);
       await fetchCampaignMessages(id);
@@ -666,6 +708,61 @@ export function CampaignsModule() {
             </select>
 
             {/* ==========================================================
+                ✅ NEW: SCHEDULING (Send now / later)
+            ========================================================== */}
+            <div className="rounded-md border bg-white p-3 space-y-2">
+              <div className="text-sm font-semibold text-slate-900">
+                Schedule
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setSendMode("now");
+                    setScheduledAtLocal("");
+                  }}
+                  className={`px-3 py-2 text-sm rounded-md border ${
+                    sendMode === "now"
+                      ? "bg-blue-50 border-blue-600"
+                      : "border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  Send Now
+                </button>
+
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setSendMode("later")}
+                  className={`px-3 py-2 text-sm rounded-md border ${
+                    sendMode === "later"
+                      ? "bg-blue-50 border-blue-600"
+                      : "border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  Send Later
+                </button>
+              </div>
+
+              {sendMode === "later" && (
+                <div className="space-y-1">
+                  <div className="text-xs text-slate-600">
+                    Select date & time (local). Dispatch will pick it when scheduled time arrives.
+                  </div>
+                  <input
+                    type="datetime-local"
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={scheduledAtLocal}
+                    onChange={(e) => setScheduledAtLocal(e.target.value)}
+                    disabled={busy}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* ==========================================================
                 TEMPLATE MEDIA (PHASE 2.3 FINAL UX)
             ========================================================== */}
             {needsMedia && selectedTemplate && (
@@ -818,6 +915,7 @@ export function CampaignsModule() {
               onChange={(e) => setTestPhone(e.target.value)}
               disabled={busy}
             />
+
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={launchNow}
@@ -829,7 +927,7 @@ export function CampaignsModule() {
                 ) : (
                   <Play size={14} />
                 )}
-                Launch
+                {sendMode === "later" ? "Schedule" : "Launch"}
               </button>
 
               <button

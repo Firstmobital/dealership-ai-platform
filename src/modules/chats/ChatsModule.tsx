@@ -1,9 +1,8 @@
 // src/modules/chats/ChatsModule.tsx
-// FULL + FINAL — PATCHED
-// SEARCH + PHONE-FIRST + DIVISION SAFE + AI MODE HEADER
+// SEARCH + PHONE-FIRST + DIVISION SAFE + AI MODE HEADER + PSF SUPPORT
 
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Copy, SendHorizonal } from "lucide-react";
+import { Sparkles, Copy, SendHorizonal, ThumbsUp } from "lucide-react";
 
 import { useChatStore } from "../../state/useChatStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
@@ -41,11 +40,9 @@ export function ChatsModule() {
   const [search, setSearch] = useState("");
   const [sending, setSending] = useState(false);
 
-  /* ---------------- PHASE 7 STATE ---------------- */
+  /* ---------------- PSF + CAMPAIGN CONTEXT ---------------- */
   const [campaignContext, setCampaignContext] = useState<any | null>(null);
-  const [followupSuggestion, setFollowupSuggestion] = useState<string | null>(
-    null
-  );
+  const [followupSuggestion, setFollowupSuggestion] = useState<string | null>(null);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [aiNoReply, setAiNoReply] = useState(false);
 
@@ -53,16 +50,16 @@ export function ChatsModule() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   /* -------------------------------------------------------
-   * INIT REALTIME (ONCE PER ORG)
-   * ------------------------------------------------------- */
+     INIT REALTIME
+  ------------------------------------------------------- */
   useEffect(() => {
     if (!currentOrganization?.id) return;
     initRealtime(currentOrganization.id);
   }, [currentOrganization?.id]);
 
   /* -------------------------------------------------------
-   * LOAD CONVERSATIONS
-   * ------------------------------------------------------- */
+     LOAD CONVERSATIONS
+  ------------------------------------------------------- */
   useEffect(() => {
     if (currentOrganization?.id) {
       fetchConversations(currentOrganization.id).catch(console.error);
@@ -98,8 +95,8 @@ export function ChatsModule() {
   }, [activeConversationId]);
 
   /* -------------------------------------------------------
-   * SCROLL
-   * ------------------------------------------------------- */
+     SCROLL MANAGEMENT
+  ------------------------------------------------------- */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -113,8 +110,8 @@ export function ChatsModule() {
   }, [messages]);
 
   /* -------------------------------------------------------
-   * FOLLOW-UP SUGGESTION
-   * ------------------------------------------------------- */
+     AI FOLLOW-UP SUGGESTION
+  ------------------------------------------------------- */
   const handleSuggestFollowup = async () => {
     if (!activeConversationId) return;
 
@@ -134,8 +131,8 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-   * SEND MESSAGE (UNCHANGED)
-   * ------------------------------------------------------- */
+     SEND MESSAGE (MANUAL ONLY)
+  ------------------------------------------------------- */
   const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!activeConversationId) return;
@@ -196,10 +193,11 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-   * FILTER + SEARCH
-   * ------------------------------------------------------- */
+     FILTER + SEARCH (PSF INCLUDED)
+  ------------------------------------------------------- */
   const filteredConversations: Conversation[] = conversations
     .filter((c) => {
+      if (filter === "psf") return c.meta?.is_psf === true;
       if (filter === "unassigned") return !c.assigned_to;
       if (filter === "assigned") return Boolean(c.assigned_to);
       if (filter === "bot") return c.ai_enabled;
@@ -226,9 +224,11 @@ export function ChatsModule() {
     (c) => c.id === activeConversationId
   );
 
+  const isPsfConversation = Boolean(activeConversation?.meta?.is_psf);
+
   /* -------------------------------------------------------
-   * UI
-   * ------------------------------------------------------- */
+     UI
+  ------------------------------------------------------- */
   return (
     <div className="flex h-full w-full bg-white">
       {/* LEFT PANEL */}
@@ -247,7 +247,6 @@ export function ChatsModule() {
             conversation={c}
             isActive={c.id === activeConversationId}
             unreadCount={unread[c.id] ?? 0}
-            onClick={() => setActiveConversation(c.id)}
           />
         ))}
       </div>
@@ -260,18 +259,24 @@ export function ChatsModule() {
           </div>
         ) : (
           <>
-            {/* 🔥 CHAT HEADER — AI MODE TOGGLE */}
             {activeConversation && (
               <ChatHeader conversation={activeConversation} />
             )}
 
-            {/* CONVERSATION INFO BAR */}
+            {/* HEADER BAR */}
             <div className="flex justify-between border-b border-slate-200 px-6 py-4">
               <div>
-                <div className="font-semibold">
+                <div className="flex items-center gap-2 font-semibold">
                   {activeConversation?.contact?.name ||
                     activeConversation?.contact?.phone}
+
+                  {isPsfConversation && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+                      <ThumbsUp size={12} /> PSF
+                    </span>
+                  )}
                 </div>
+
                 <div className="text-xs text-slate-500">
                   {activeConversation?.contact?.phone}
                 </div>
@@ -312,7 +317,11 @@ export function ChatsModule() {
               <div className="flex gap-3">
                 <input
                   name="message"
-                  placeholder="Type your message..."
+                  placeholder={
+                    isPsfConversation
+                      ? "Type response to customer..."
+                      : "Type your message..."
+                  }
                   className="flex-1 rounded-md border border-slate-300 px-4 py-2 text-sm
                              focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -328,7 +337,7 @@ export function ChatsModule() {
         )}
       </div>
 
-      {/* RIGHT PANEL — PHASE 7 */}
+      {/* RIGHT PANEL */}
       {activeConversationId && (
         <div className="w-80 space-y-4 border-l border-slate-200 bg-slate-50 p-4">
           <h3 className="text-sm font-semibold">Campaign Context</h3>

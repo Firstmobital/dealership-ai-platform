@@ -1,5 +1,4 @@
 // supabase/functions/campaign-dispatch/index.ts
-// supabase/functions/campaign-dispatch/index.ts
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -172,8 +171,6 @@ function buildTemplateHeaderComponents(template: WhatsappTemplate) {
 
 /* ============================================================
    TEMPLATE TEXT RENDER (best-effort for UI)
-   - Uses template.body with {{1}}, {{2}}... placeholders
-   - Pulls values from contact based on campaign.variable_mapping
 ============================================================ */
 function resolveTemplateText(
   templateBody: string,
@@ -192,12 +189,14 @@ function resolveTemplateText(
 }
 
 /* ============================================================
-   FETCH TEMPLATE (includes body + media)
+   FETCH TEMPLATE
 ============================================================ */
 async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
   const { data, error } = await supabaseAdmin
     .from("whatsapp_templates")
-    .select("name, language, status, body, header_type, header_media_url, header_media_mime")
+    .select(
+      "name, language, status, body, header_type, header_media_url, header_media_mime",
+    )
     .eq("id", templateId)
     .single();
 
@@ -206,6 +205,7 @@ async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
 
   return data as WhatsappTemplate;
 }
+
 /* ============================================================
    SAFE CONTACT UPSERT (C1 PATCH)
 ============================================================ */
@@ -213,7 +213,7 @@ async function upsertContactByPhone(params: {
   organizationId: string;
   phoneDigits: string; // "91XXXXXXXXXX"
   name?: string | null;
-  subOrganizationId?: string | null; // ignored if not in schema
+  subOrganizationId?: string | null;
 }) {
   const { data, error } = await supabaseAdmin
     .from("contacts")
@@ -245,6 +245,51 @@ async function upsertContactByPhone(params: {
 }
 
 /* ============================================================
+   ✅ PSF ADDITION — ENSURE CONVERSATION EXISTS
+   (Needed so PSF inbox can open chat & ai-handler can detect PSF by conversation)
+============================================================ */
+async function ensureConversationForContact(params: {
+  organizationId: string;
+  subOrganizationId: string | null;
+  contactId: string;
+  channel: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("conversations")
+    .select("id")
+    .eq("organization_id", params.organizationId)
+    .eq("contact_id", params.contactId)
+    .eq("channel", params.channel)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`CONVERSATION_LOOKUP_FAILED: ${error.message}`);
+  }
+
+  if (data?.id) return data.id;
+
+  const { data: created, error: insertError } = await supabaseAdmin
+    .from("conversations")
+    .insert({
+      organization_id: params.organizationId,
+      sub_organization_id: params.subOrganizationId,
+      contact_id: params.contactId,
+      channel: params.channel,
+      ai_enabled: true,
+    })
+    .select("id")
+    .single();
+
+  if (insertError || !created) {
+    throw new Error(
+      `CONVERSATION_CREATE_FAILED: ${insertError?.message ?? "unknown error"}`,
+    );
+  }
+
+  return created.id as string;
+}
+
+/* ============================================================
    SEND WHATSAPP TEMPLATE (calls whatsapp-send)
 ============================================================ */
 async function sendWhatsappTemplate(params: {
@@ -258,7 +303,7 @@ async function sendWhatsappTemplate(params: {
   renderedText: string;
 
   // Phase 2.4
-  templateComponents?: any[]; // header media etc.
+  templateComponents?: any[];
   mediaUrl?: string | null;
   mimeType?: string | null;
   messageType?: "template" | "image" | "document";
@@ -279,13 +324,11 @@ async function sendWhatsappTemplate(params: {
       template_language: params.language,
       template_variables: params.variables,
 
-      // Phase 2.4 (whatsapp-send will be updated next to actually use these)
       template_components: params.templateComponents ?? null,
       message_type: params.messageType ?? "template",
       media_url: params.mediaUrl ?? null,
       mime_type: params.mimeType ?? null,
 
-      // keep for now; whatsapp-send currently expects this in some versions
       rendered_text: params.renderedText,
     }),
   });
@@ -364,6 +407,7 @@ async function fetchContact(contactId: string) {
   if (error) return null;
   return data ?? null;
 }
+
 /* ============================================================
    STATUS UPDATES
 ============================================================ */
@@ -410,6 +454,18 @@ async function setMessageContactAndPhone(params: {
     .eq("id", params.campaignMessageId);
 }
 
+async function setMessageConversationId(params: {
+  campaignMessageId: string;
+  conversationId: string;
+}) {
+  await supabaseAdmin
+    .from("campaign_messages")
+    .update({
+      conversation_id: params.conversationId,
+    })
+    .eq("id", params.campaignMessageId);
+}
+
 async function markCampaignSending(campaignId: string, isImmediate: boolean) {
   const patch: Record<string, any> = {
     status: "sending",
@@ -430,7 +486,10 @@ async function markCampaignCompleted(campaignId: string) {
 }
 
 async function markCampaignFailed(campaignId: string, err: string) {
-  await supabaseAdmin.from("campaigns").update({ status: "failed" }).eq("id", campaignId);
+  await supabaseAdmin
+    .from("campaigns")
+    .update({ status: "failed" })
+    .eq("id", campaignId);
   console.error("campaign failed", campaignId, err);
 }
 
@@ -463,6 +522,36 @@ async function ensureContactForCampaignMessage(params: {
   }
 
   return { contactId: contact.id, phoneDigits };
+}
+
+/* ============================================================
+   ✅ PSF ADDITION — LINK MESSAGE → CONVERSATION + PSF CASE
+============================================================ */
+async function linkMessageToConversationAndPsf(params: {
+  msg: CampaignMessage;
+  contactId: string;
+  campaign: Campaign;
+  phoneDigits: string;
+}) {
+  const conversationId = await ensureConversationForContact({
+    organizationId: params.msg.organization_id,
+    subOrganizationId: params.msg.sub_organization_id,
+    contactId: params.contactId,
+    channel: "whatsapp",
+  });
+
+  // requires migration: campaign_messages.conversation_id
+  await setMessageConversationId({
+    campaignMessageId: params.msg.id,
+    conversationId,
+  });
+
+  // Safe no-op for non-PSF campaigns (no matching rows)
+  await supabaseAdmin
+    .from("psf_cases")
+    .update({ conversation_id: conversationId })
+    .eq("campaign_id", params.msg.campaign_id)
+    .eq("phone", params.phoneDigits);
 }
 
 /* ============================================================
@@ -546,7 +635,16 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         messageType,
       });
 
+      // keep your current behavior
       await markSent(msg.id, waId);
+
+      // ✅ PSF ADDITION: link conversation + psf case
+      await linkMessageToConversationAndPsf({
+        msg,
+        contactId,
+        campaign,
+        phoneDigits,
+      });
 
       sentGlobal++;
       sentPerOrg[msg.organization_id] = orgCount + 1;
@@ -710,6 +808,14 @@ serve(async (req: Request) => {
           });
 
           await markSent(msg.id, waId);
+
+          // ✅ PSF ADDITION: link conversation + psf case
+          await linkMessageToConversationAndPsf({
+            msg,
+            contactId,
+            campaign,
+            phoneDigits,
+          });
 
           globalSent++;
           sentPerOrg[msg.organization_id] = orgCount + 1;

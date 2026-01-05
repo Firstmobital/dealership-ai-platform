@@ -12,6 +12,7 @@ import {
   FileText,
   Sparkles,
   Wallet,
+  ThumbsUp,
 } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
@@ -58,8 +59,19 @@ export function Sidebar() {
         <SidebarLink to="/knowledge" icon={BookOpen} label="Knowledge Base" />
         <SidebarLink to="/bot" icon={Bot} label="Bot Personality" />
         <SidebarLink to="/workflows" icon={Workflow} label="Workflows" />
+
+        {/* =========================
+            CAMPAIGNS & ENGAGEMENT
+        ========================= */}
         <SidebarLink to="/campaigns" icon={Megaphone} label="Campaigns" />
+        <SidebarLink
+          to="/psf"
+          icon={ThumbsUp}
+          label="Post Service Feedback"
+        />
+
         <SidebarLink to="/analytics" icon={BarChart3} label="Analytics" />
+
         <SidebarLink
           to="/settings/whatsapp-templates"
           icon={FileText}
