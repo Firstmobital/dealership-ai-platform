@@ -20,9 +20,9 @@ type ContactSummary = {
 /* -------------------------------------------------------------------------- */
 export default function DatabasePage() {
   /* ------------------------- Org / Sub-org Context ------------------------ */
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
-  const organizationId = currentOrganization?.id;
+  const organizationId = activeOrganization?.id;
 
   /* ----------------------------- State ------------------------------------ */
   const [rows, setRows] = useState<ContactSummary[]>([]);

@@ -83,10 +83,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
      FETCH ARTICLES (ORG ONLY)
   ----------------------------------------------------------- */
   fetchArticles: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
     const { searchTerm } = get();
 
-    if (!currentOrganization) {
+    if (!activeOrganization) {
       set({ articles: [], error: null });
       return;
     }
@@ -97,7 +97,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const { data, error } = await supabase
         .from("knowledge_articles")
         .select("*")
-        .eq("organization_id", currentOrganization.id)
+        .eq("organization_id", activeOrganization.id)
         .order("updated_at", { ascending: false });
 
       if (error) throw error;
@@ -128,15 +128,15 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
      CREATE FROM TEXT
   ----------------------------------------------------------- */
   createArticleFromText: async ({ title, content, keywords, status }) => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization) return;
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization) return;
 
     set({ uploading: true, error: null });
 
     try {
       const { error } = await supabase.functions.invoke("ai-generate-kb", {
         body: {
-          organization_id: currentOrganization.id,
+          organization_id: activeOrganization.id,
           source_type: "text",
           title,
           content,
@@ -161,8 +161,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
      CREATE FROM FILE
   ----------------------------------------------------------- */
   createArticleFromFile: async ({ file, title, keywords, status }) => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization) return;
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization) return;
 
     if (!ALLOWED_FILE_TYPES.includes(file.type)) {
       set({ error: "Unsupported file type" });
@@ -174,7 +174,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     try {
       const bucket = "knowledge-base";
       const safeName = file.name.replace(/\s+/g, "_");
-      const path = `kb/${currentOrganization.id}/${Date.now()}-${safeName}`;
+      const path = `kb/${activeOrganization.id}/${Date.now()}-${safeName}`;
 
       const { error: uploadError } = await supabase.storage
         .from(bucket)
@@ -189,7 +189,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         "ai-generate-kb",
         {
           body: {
-            organization_id: currentOrganization.id,
+            organization_id: activeOrganization.id,
             source_type: "file",
             title: title || file.name,
             status: status ?? "draft",
@@ -218,8 +218,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
      REPLACE FILE FOR ARTICLE
   ----------------------------------------------------------- */
   replaceFileForArticle: async ({ article, file, keywords }) => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization || article.source_type !== "file") return;
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization || article.source_type !== "file") return;
 
     if (!ALLOWED_FILE_TYPES.includes(file.type)) {
       set({ error: "Unsupported file type" });
@@ -231,7 +231,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     try {
       const bucket = "knowledge-base";
       const safeName = file.name.replace(/\s+/g, "_");
-      const path = `kb/${currentOrganization.id}/${Date.now()}-${safeName}`;
+      const path = `kb/${activeOrganization.id}/${Date.now()}-${safeName}`;
 
       const { error: uploadError } = await supabase.storage
         .from(bucket)
@@ -246,7 +246,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         "ai-generate-kb",
         {
           body: {
-            organization_id: currentOrganization.id,
+            organization_id: activeOrganization.id,
             article_id: article.id,
             source_type: "file",
             title: article.title,
@@ -308,8 +308,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     status,
     published_at,
   }) => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization) return;
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization) return;
 
     set({ loading: true, error: null });
 
@@ -325,7 +325,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .from("knowledge_articles")
         .update(payload)
         .eq("id", id)
-        .eq("organization_id", currentOrganization.id);
+        .eq("organization_id", activeOrganization.id);
 
       if (error) throw error;
 
@@ -343,8 +343,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
      DELETE ARTICLE
   ----------------------------------------------------------- */
   deleteArticle: async (articleId) => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization) return;
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization) return;
 
     set({ loading: true, error: null });
 
@@ -353,7 +353,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .from("knowledge_articles")
         .delete()
         .eq("id", articleId)
-        .eq("organization_id", currentOrganization.id);
+        .eq("organization_id", activeOrganization.id);
 
       if (error) throw error;
 

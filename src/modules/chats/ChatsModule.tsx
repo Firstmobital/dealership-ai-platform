@@ -29,7 +29,7 @@ export function ChatsModule() {
     sendMessage,
   } = useChatStore();
 
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   /* ---------------- UI STATE ---------------- */
   const [search, setSearch] = useState("");
@@ -48,18 +48,18 @@ export function ChatsModule() {
      INIT REALTIME
   ------------------------------------------------------- */
   useEffect(() => {
-    if (!currentOrganization?.id) return;
-    initRealtime(currentOrganization.id);
-  }, [currentOrganization?.id, initRealtime]);
+    if (!activeOrganization?.id) return;
+    initRealtime(activeOrganization.id);
+  }, [activeOrganization?.id, initRealtime]);
 
   /* -------------------------------------------------------
      LOAD CONVERSATIONS
   ------------------------------------------------------- */
   useEffect(() => {
-    if (currentOrganization?.id) {
-      fetchConversations(currentOrganization.id).catch(console.error);
+    if (activeOrganization?.id) {
+      fetchConversations(activeOrganization.id).catch(console.error);
     }
-  }, [currentOrganization?.id, fetchConversations]);
+  }, [activeOrganization?.id, fetchConversations]);
 
 
   useEffect(() => {

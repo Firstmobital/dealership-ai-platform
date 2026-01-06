@@ -25,9 +25,9 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
      FETCH ALL TEMPLATES (ORG ONLY)
   -------------------------------------------------- */
   fetchTemplates: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({ templates: [], error: null });
       return;
     }
@@ -37,7 +37,7 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
     const { data, error } = await supabase
       .from("whatsapp_templates")
       .select("*")
-      .eq("organization_id", currentOrganization.id)
+      .eq("organization_id", activeOrganization.id)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -56,9 +56,9 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
      FETCH APPROVED TEMPLATES (ORG ONLY)
   -------------------------------------------------- */
   fetchApprovedTemplates: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({ templates: [], error: null });
       return;
     }
@@ -68,7 +68,7 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
     const { data, error } = await supabase
       .from("whatsapp_templates")
       .select("*")
-      .eq("organization_id", currentOrganization.id)
+      .eq("organization_id", activeOrganization.id)
       .eq("status", "approved")
       .order("created_at", { ascending: false });
 
@@ -91,9 +91,9 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
      CREATE TEMPLATE
   -------------------------------------------------- */
   createTemplate: async (payload) => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({ error: "Select an organization first." });
       return null;
     }
@@ -102,7 +102,7 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
       .from("whatsapp_templates")
       .insert({
         ...payload,
-        organization_id: currentOrganization.id,
+        organization_id: activeOrganization.id,
       })
       .select("id")
       .single();

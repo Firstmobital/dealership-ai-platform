@@ -77,9 +77,9 @@ export const usePsfStore = create<PsfState>((set, get) => ({
      FETCH PSF CASES (ORG ONLY)
   ------------------------------------------------------------------------ */
   fetchCases: async (opts = {}) => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({ cases: [], loading: false });
       return;
     }
@@ -90,7 +90,7 @@ export const usePsfStore = create<PsfState>((set, get) => ({
       let query = supabase
         .from("psf_cases_view")
         .select("*")
-        .eq("organization_id", currentOrganization.id)
+        .eq("organization_id", activeOrganization.id)
         .order("created_at", { ascending: false });
 
       if (opts.sentiment !== undefined) {

@@ -101,7 +101,7 @@ export function KnowledgeBaseModule() {
     setSearchTerm,
   } = useKnowledgeBaseStore();
 
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const replaceFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -117,10 +117,10 @@ export function KnowledgeBaseModule() {
    * Load on org / sub-org change
    * -----------------------------------------------------------*/
   useEffect(() => {
-    if (!currentOrganization) return;
+    if (!activeOrganization) return;
     fetchArticles();
     setSelectedArticle(null);
-  }, [currentOrganization?.id]);
+  }, [activeOrganization?.id]);
 
   /* -----------------------------------------------------------
    * ORDER — DIVISION FIRST

@@ -25,17 +25,17 @@ export function UnansweredQuestionsModule() {
     ignoreQuestion,
   } = useUnansweredQuestionsStore();
 
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const [selected, setSelected] = useState<UnansweredQuestion | null>(null);
   const [kbTitle, setKbTitle] = useState("");
   const [kbSummary, setKbSummary] = useState("");
 
   useEffect(() => {
-    if (!currentOrganization) return;
+    if (!activeOrganization) return;
     fetchUnanswered().catch(console.error);
     setSelected(null);
-  }, [currentOrganization?.id]);
+  }, [activeOrganization?.id]);
 
   const handleSaveToKnowledge = async () => {
     if (!selected) return;

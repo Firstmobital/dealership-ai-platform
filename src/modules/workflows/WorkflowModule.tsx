@@ -70,7 +70,7 @@ function renderStepSummary(step: WorkflowStep) {
 /* ------------------------------------------------------------------ */
 
 export function WorkflowModule() {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const {
     workflows,
@@ -125,10 +125,10 @@ export function WorkflowModule() {
   /* ------------------------------------------------------------------ */
 
   useEffect(() => {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
     fetchWorkflows().catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentOrganization?.id]);
+  }, [activeOrganization?.id]);
 
   useEffect(() => {
     if (!workflowId) return;

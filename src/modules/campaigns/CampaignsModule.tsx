@@ -152,7 +152,7 @@ export function CampaignsModule() {
     loading: templatesLoading,
   } = useWhatsappTemplateStore();
 
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const [mode, setMode] = useState<Mode>("view");
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(
@@ -210,10 +210,10 @@ export function CampaignsModule() {
      LOAD DATA
   -------------------------------------------------------------------- */
   useEffect(() => {
-    if (!currentOrganization?.id) return;
-    fetchCampaigns(currentOrganization.id);
+    if (!activeOrganization?.id) return;
+    fetchCampaigns(activeOrganization.id);
     fetchApprovedTemplates();
-  }, [currentOrganization?.id]);
+  }, [activeOrganization?.id]);
 
 
   useEffect(() => {
@@ -355,7 +355,7 @@ export function CampaignsModule() {
   }
 
   async function saveDraft(): Promise<string | null> {
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       alert("No organization selected");
       return null;
     }
@@ -384,7 +384,7 @@ export function CampaignsModule() {
     setBusy(true);
     try {
       const id = await createCampaignWithMessages({
-        organizationId: currentOrganization.id,
+        organizationId: activeOrganization.id,
         name: builder.name.trim(),
         description: builder.description?.trim() ?? "",
         whatsapp_template_id: builder.whatsapp_template_id,
@@ -395,7 +395,7 @@ export function CampaignsModule() {
       setSelectedCampaignId(id);
       setMode("view");
 
-      await fetchCampaigns(currentOrganization.id);
+      await fetchCampaigns(activeOrganization.id);
       await fetchCampaignMessages(id);
 
       return id;
@@ -428,7 +428,7 @@ export function CampaignsModule() {
 
         if (error) throw error;
 
-        await fetchCampaigns(currentOrganization!.id);
+        await fetchCampaigns(activeOrganization!.id);
         await fetchCampaignMessages(id);
         alert("✅ Campaign scheduled for later (dispatch will pick it at time)");
         return;
@@ -436,7 +436,7 @@ export function CampaignsModule() {
 
       // send now (existing behavior)
       await launchCampaign(id);
-      await fetchCampaigns(currentOrganization!.id);
+      await fetchCampaigns(activeOrganization!.id);
       await fetchCampaignMessages(id);
       alert("✅ Campaign scheduled (dispatch will pick it)");
     } catch (e: any) {
@@ -448,7 +448,7 @@ export function CampaignsModule() {
   }
 
   async function testSend() {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
     const phone = String(testPhone ?? "").trim();
     if (!phone) {
@@ -479,7 +479,7 @@ export function CampaignsModule() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            organization_id: currentOrganization.id,
+            organization_id: activeOrganization.id,
             to: phone,
             text: previewBody,
           }),
@@ -503,14 +503,14 @@ export function CampaignsModule() {
   }
 
   async function onRetryFailed() {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
     if (!selectedCampaign?.id) return;
 
     setRetrying(true);
     try {
       await retryFailedMessages(selectedCampaign.id);
       await fetchCampaignMessages(selectedCampaign.id);
-      await fetchCampaigns(currentOrganization.id);
+      await fetchCampaigns(activeOrganization.id);
       alert("✅ Failed messages moved back to pending");
     } catch (e: any) {
       console.error("[CampaignsModule] retry failed error", e);
@@ -521,7 +521,7 @@ export function CampaignsModule() {
   }
 
   async function uploadTemplateMedia(file: File) {
-    if (!currentOrganization?.id || !selectedTemplate?.id) {
+    if (!activeOrganization?.id || !selectedTemplate?.id) {
       alert("Select template first");
       return;
     }
@@ -546,7 +546,7 @@ export function CampaignsModule() {
       ? "whatsapp-template-images"
       : "whatsapp-template-documents";
 
-    const path = `${currentOrganization.id}/${selectedTemplate.id}/${file.name}`;
+    const path = `${activeOrganization.id}/${selectedTemplate.id}/${file.name}`;
 
     setMediaUploading(true);
     try {

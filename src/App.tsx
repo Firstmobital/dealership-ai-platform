@@ -78,30 +78,45 @@ function RequireAuth({ children }: { children: ReactElement }) {
 function App() {
   const { user } = useAuthStore();
 
-  const { currentOrganization, fetchOrganizations } =
-    useOrganizationStore();
+  const {
+    activeOrganization,
+    isBootstrapping,
+    bootstrapOrganizations,
+  } = useOrganizationStore();
 
   const initRealtime = useChatStore((s) => s.initRealtime);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
 
   /* ---------------------------------------------------------------------- */
-  /* 1) Load organizations after login                                      */
+  /* 1) Bootstrap orgs after login (DB-driven default org)                   */
   /* ---------------------------------------------------------------------- */
   useEffect(() => {
-    if (user) {
-      fetchOrganizations().catch(console.error);
-    }
-  }, [user, fetchOrganizations]);
+    if (!user) return;
+    bootstrapOrganizations().catch(console.error);
+  }, [user, bootstrapOrganizations]);
 
   /* ---------------------------------------------------------------------- */
-  /* 2) Start realtime ONLY after organization is known                     */
+  /* 2) Start realtime ONLY after active org is known                        */
   /* ---------------------------------------------------------------------- */
   useEffect(() => {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
-    initRealtime(currentOrganization.id);
-    fetchConversations(currentOrganization.id);
-  }, [currentOrganization?.id, initRealtime, fetchConversations]);
+    initRealtime(activeOrganization.id);
+    fetchConversations(activeOrganization.id);
+  }, [activeOrganization?.id, initRealtime, fetchConversations]);
+
+  /* ---------------------------------------------------------------------- */
+  /* 3) Guard: if org bootstrap running, show loader                         */
+  /* ---------------------------------------------------------------------- */
+  if (user && isBootstrapping) {
+    return <FullScreenLoader />;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* 4) Guard: user logged in but no orgs → send to settings (temporary)     */
+  /*    Later we replace this with a CreateOrganization page.                */
+  /* ---------------------------------------------------------------------- */
+  const hasOrg = !!activeOrganization?.id;
 
   return (
     <Routes>
@@ -117,49 +132,76 @@ function App() {
         element={
           <RequireAuth>
             <>
-              <Toaster
-                position="top-right"
-                toastOptions={{ duration: 2500 }}
-              />
+              <Toaster position="top-right" toastOptions={{ duration: 2500 }} />
               <AppLayout />
             </>
           </RequireAuth>
         }
       >
-        <Route index element={<ChatsModule />} />
-        <Route path="chats" element={<ChatsModule />} />
-        <Route path="knowledge" element={<KnowledgeBaseModule />} />
-        <Route path="bot" element={<BotPersonalityModule />} />
-        <Route path="workflows" element={<WorkflowModule />} />
-        <Route path="campaigns" element={<CampaignsModule />} />
+        {/* If logged in but no org, force user to settings for now */}
+        <Route
+          index
+          element={hasOrg ? <ChatsModule /> : <Navigate to="/settings" replace />}
+        />
+
+        <Route
+          path="chats"
+          element={hasOrg ? <ChatsModule /> : <Navigate to="/settings" replace />}
+        />
+        <Route
+          path="knowledge"
+          element={
+            hasOrg ? <KnowledgeBaseModule /> : <Navigate to="/settings" replace />
+          }
+        />
+        <Route
+          path="bot"
+          element={
+            hasOrg ? <BotPersonalityModule /> : <Navigate to="/settings" replace />
+          }
+        />
+        <Route
+          path="workflows"
+          element={hasOrg ? <WorkflowModule /> : <Navigate to="/settings" replace />}
+        />
+        <Route
+          path="campaigns"
+          element={
+            hasOrg ? <CampaignsModule /> : <Navigate to="/settings" replace />
+          }
+        />
 
         {/* ✅ PSF */}
-        <Route path="psf" element={<PsfModule />} />
+        <Route path="psf" element={hasOrg ? <PsfModule /> : <Navigate to="/settings" replace />} />
 
         {/* ----------------------- Analytics & Data -------------------------- */}
-        <Route path="analytics" element={<WhatsappOverviewPage />} />
-        <Route path="database" element={<DatabasePage />} />
+        <Route
+          path="analytics"
+          element={
+            hasOrg ? <WhatsappOverviewPage /> : <Navigate to="/settings" replace />
+          }
+        />
+        <Route
+          path="database"
+          element={hasOrg ? <DatabasePage /> : <Navigate to="/settings" replace />}
+        />
 
         {/* -------------------------- Settings ------------------------------- */}
         <Route path="settings" element={<SettingsModule />} />
-        <Route
-          path="settings/whatsapp"
-          element={<WhatsappSettingsModule />}
-        />
+        <Route path="settings/whatsapp" element={<WhatsappSettingsModule />} />
         <Route
           path="settings/whatsapp-templates"
           element={<WhatsappTemplatesModule />}
         />
-        <Route
-          path="settings/ai-config"
-          element={<AIConfigurationModule />}
-        />
+        <Route path="settings/ai-config" element={<AIConfigurationModule />} />
         <Route path="settings/wallet" element={<WalletPage />} />
 
         {/* --------------------- Knowledge feedback -------------------------- */}
         <Route
           path="unanswered"
-          element={<UnansweredQuestionsModule />}
+          element={
+            hasOrg ? <UnansweredQuestionsModule /> : <Navigate to="/settings" replace />
+          }
         />
       </Route>
 

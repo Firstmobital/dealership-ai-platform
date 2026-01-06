@@ -1,31 +1,30 @@
-// src/components/common/OrganizationSwitcher.tsx
-
-import { useEffect } from "react";
 import { Building2 } from "lucide-react";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
+import type { ChangeEvent } from "react";
 
 export function OrganizationSwitcher() {
   const {
     organizations,
-    currentOrganization,
-    fetchOrganizations,
-    switchOrganization,
+    activeOrganization,
+    setActiveOrganization,
   } = useOrganizationStore();
 
-
-  useEffect(() => {
-    if (!organizations.length) {
-      fetchOrganizations().catch(console.error);
-    }
-  }, [organizations.length, fetchOrganizations]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  /* -------------------------------------------------------------------------- */
+  /* HANDLE ORG CHANGE                                                          */
+  /* -------------------------------------------------------------------------- */
+  const handleChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const orgId = e.target.value;
     if (!orgId) return;
 
-    switchOrganization(orgId);
+    const org = organizations.find((o) => o.id === orgId);
+    if (!org) return;
+
+    setActiveOrganization(org).catch(console.error);
   };
 
+  /* -------------------------------------------------------------------------- */
+  /* LOADING STATE                                                              */
+  /* -------------------------------------------------------------------------- */
   if (!organizations.length) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
@@ -35,6 +34,9 @@ export function OrganizationSwitcher() {
     );
   }
 
+  /* -------------------------------------------------------------------------- */
+  /* RENDER                                                                     */
+  /* -------------------------------------------------------------------------- */
   return (
     <div className="flex flex-col">
       <span className="text-xs uppercase tracking-wide text-slate-500">
@@ -45,7 +47,7 @@ export function OrganizationSwitcher() {
         <Building2 size={16} className="text-accent" />
 
         <select
-          value={currentOrganization?.id ?? ""}
+          value={activeOrganization?.id ?? ""}
           onChange={handleChange}
           className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900
                      focus:border-accent focus:outline-none"

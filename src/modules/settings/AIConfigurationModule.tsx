@@ -97,7 +97,7 @@ function formatINR(n: number) {
 }
 
 export function AIConfigurationModule() {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const {
     settings,
@@ -122,9 +122,9 @@ export function AIConfigurationModule() {
      LOAD SETTINGS
   ------------------------------------------------------- */
   useEffect(() => {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
     fetchSettings().catch(console.error);
-  }, [currentOrganization?.id]);
+  }, [activeOrganization?.id]);
 
   useEffect(() => {
     if (!settings) {

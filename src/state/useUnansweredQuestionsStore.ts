@@ -32,9 +32,9 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     /* FETCH — ONLY OPEN QUESTIONS                        */
     /* -------------------------------------------------- */
     fetchUnanswered: async () => {
-      const { currentOrganization } = useOrganizationStore.getState();
+      const { activeOrganization } = useOrganizationStore.getState();
 
-      if (!currentOrganization) {
+      if (!activeOrganization) {
         set({
           error: "Select an organization to view unanswered questions.",
           questions: [],
@@ -48,7 +48,7 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
         let query = supabase
           .from("unanswered_questions")
           .select("*")
-          .eq("organization_id", currentOrganization.id)
+          .eq("organization_id", activeOrganization.id)
           .eq("status", "open")
           .order("created_at", { ascending: false });
 
@@ -84,9 +84,9 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     /* SAVE TO KNOWLEDGE (ANSWER)                         */
     /* -------------------------------------------------- */
     saveToKnowledge: async ({ questionId, title, summary }) => {
-      const { currentOrganization } = useOrganizationStore.getState();
+      const { activeOrganization } = useOrganizationStore.getState();
 
-      if (!currentOrganization) {
+      if (!activeOrganization) {
         set({ error: "Select an organization before saving to Knowledge Base." });
         return;
       }
@@ -98,7 +98,7 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           "kb-save-from-unanswered",
           {
             body: {
-              organization_id: currentOrganization.id,
+              organization_id: activeOrganization.id,
               question_id: questionId,
               title: title || undefined,
               summary: summary || undefined,
@@ -123,7 +123,7 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
             resolved_at: new Date().toISOString(),
           })
           .eq("id", questionId)
-          .eq("organization_id", currentOrganization.id);
+          .eq("organization_id", activeOrganization.id);
 
         await get().fetchUnanswered();
         set({ saving: false, error: null });
@@ -142,9 +142,9 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     /* IGNORE (NOT DELETE)                                */
     /* -------------------------------------------------- */
     ignoreQuestion: async (questionId: string) => {
-      const { currentOrganization } = useOrganizationStore.getState();
+      const { activeOrganization } = useOrganizationStore.getState();
 
-      if (!currentOrganization) {
+      if (!activeOrganization) {
         set({ error: "Select an organization first." });
         return;
       }
@@ -159,7 +159,7 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
             resolved_at: new Date().toISOString(),
           })
           .eq("id", questionId)
-          .eq("organization_id", currentOrganization.id);
+          .eq("organization_id", activeOrganization.id);
 
         if (error) {
           set({

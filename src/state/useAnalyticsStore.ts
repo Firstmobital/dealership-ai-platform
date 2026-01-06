@@ -25,16 +25,16 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
      OVERVIEW (Daily WhatsApp Stats — ORG ONLY)
   ====================================================== */
   fetchOverview: async (from, to) => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
     set({ loading: true });
 
     const { data, error } = await supabase
       .from("whatsapp_overview_daily_v1")
       .select("*")
-      .eq("organization_id", currentOrganization.id)
+      .eq("organization_id", activeOrganization.id)
       .gte("day", from)
       .lte("day", to)
       .order("day", { ascending: true });
@@ -52,16 +52,16 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
      CAMPAIGN ANALYTICS (ORG ONLY)
   ====================================================== */
   fetchCampaigns: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
     set({ loading: true });
 
     const { data, error } = await supabase
       .from("campaign_analytics_summary_v2")
       .select("*")
-      .eq("organization_id", currentOrganization.id)
+      .eq("organization_id", activeOrganization.id)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -77,16 +77,16 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
      TEMPLATE ANALYTICS (ORG ONLY)
   ====================================================== */
   fetchTemplates: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
     set({ loading: true });
 
     const { data, error } = await supabase
       .from("template_analytics_summary_v2")
       .select("*")
-      .eq("organization_id", currentOrganization.id)
+      .eq("organization_id", activeOrganization.id)
       .order("total_messages", { ascending: false });
 
     if (error) {

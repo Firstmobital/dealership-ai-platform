@@ -51,9 +51,9 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
        FETCH SETTINGS (ORG ONLY)
     ====================================================== */
     fetchSettings: async () => {
-      const { currentOrganization } = useOrganizationStore.getState();
+      const { activeOrganization } = useOrganizationStore.getState();
 
-      if (!currentOrganization?.id) {
+      if (!activeOrganization?.id) {
         set({
           error: "Select an organization to configure WhatsApp settings.",
           settings: null,
@@ -67,7 +67,7 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
         const { data, error } = await supabase
           .from("whatsapp_settings")
           .select("*")
-          .eq("organization_id", currentOrganization.id)
+          .eq("organization_id", activeOrganization.id)
           .maybeSingle();
 
         if (error) {
@@ -102,9 +102,9 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
       whatsapp_business_id,
       is_active,
     }) => {
-      const { currentOrganization } = useOrganizationStore.getState();
+      const { activeOrganization } = useOrganizationStore.getState();
 
-      if (!currentOrganization?.id) {
+      if (!activeOrganization?.id) {
         set({ error: "Select an organization before saving settings." });
         return;
       }
@@ -113,7 +113,7 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
 
       try {
         const payload = {
-          organization_id: currentOrganization.id,
+          organization_id: activeOrganization.id,
           phone_number,
           api_token,
           whatsapp_phone_id,

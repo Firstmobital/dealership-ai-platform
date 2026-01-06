@@ -37,9 +37,9 @@ export const useBotPersonalityStore = create<BotPersonalityState>((set, get) => 
      FETCH BOT PERSONALITY (ORG ONLY)
   --------------------------------------------------------- */
   fetchPersonality: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({
         error: "Select an organization to configure bot personality.",
         personality: null,
@@ -53,7 +53,7 @@ export const useBotPersonalityStore = create<BotPersonalityState>((set, get) => 
       const { data, error } = await supabase
         .from("bot_personality")
         .select("*")
-        .eq("organization_id", currentOrganization.id)
+        .eq("organization_id", activeOrganization.id)
         .maybeSingle();
 
       if (error) {
@@ -90,9 +90,9 @@ export const useBotPersonalityStore = create<BotPersonalityState>((set, get) => 
     language,
     tone,
   }) => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({ error: "Select an organization before saving bot personality." });
       return;
     }
@@ -101,7 +101,7 @@ export const useBotPersonalityStore = create<BotPersonalityState>((set, get) => 
 
     try {
       const payload = {
-        organization_id: currentOrganization.id,
+        organization_id: activeOrganization.id,
         system_prompt,
         greeting_message,
         fallback_message,

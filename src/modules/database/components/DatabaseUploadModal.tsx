@@ -25,7 +25,7 @@ type UploadRow = {
 /* COMPONENT                                                                  */
 /* -------------------------------------------------------------------------- */
 export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +40,7 @@ export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
 
       complete: async (result: ParseResult<UploadRow>) => {
         try {
-          if (!currentOrganization?.id) {
+          if (!activeOrganization?.id) {
             throw new Error("Organization not found");
           }
 
@@ -51,7 +51,7 @@ export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
               first_name: r.first_name?.trim() || null,
               last_name: r.last_name?.trim() || null,
               model: r.model?.trim() || null,
-              organization_id: currentOrganization.id,
+              organization_id: activeOrganization.id,
             }));
 
           if (rows.length === 0) {

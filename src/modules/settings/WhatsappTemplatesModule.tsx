@@ -21,7 +21,7 @@ const emptyDraft = (): Partial<WhatsappTemplate> => ({
 });
 
 export function WhatsappTemplatesModule() {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const {
     templates,
@@ -46,10 +46,10 @@ export function WhatsappTemplatesModule() {
    * Fetch templates
    * ----------------------------------------------------- */
   useEffect(() => {
-    if (currentOrganization?.id) {
+    if (activeOrganization?.id) {
       fetchTemplates(); // ✅ FIXED
     }
-  }, [currentOrganization?.id, fetchTemplates]);
+  }, [activeOrganization?.id, fetchTemplates]);
 
   /* -------------------------------------------------------
    * Sync selected → draft
@@ -63,7 +63,7 @@ export function WhatsappTemplatesModule() {
    * Save draft
    * ----------------------------------------------------- */
   async function onSave() {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
     if (draft.status !== "draft") return;
 
     if (!draft.name?.trim() || !draft.body?.trim()) {
@@ -76,7 +76,7 @@ export function WhatsappTemplatesModule() {
       if (!selectedId) {
         const id = await createTemplate({
           ...draft,
-          organization_id: currentOrganization.id,
+          organization_id: activeOrganization.id,
           status: "draft",
         } as any);
 
@@ -137,7 +137,7 @@ export function WhatsappTemplatesModule() {
    * Sync template status from Meta
    * ----------------------------------------------------- */
   async function onSyncFromMeta() {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
     setSyncing(true);
     try {
@@ -154,7 +154,7 @@ export function WhatsappTemplatesModule() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            organization_id: currentOrganization.id,
+            organization_id: activeOrganization.id,
           }),
         }
       );

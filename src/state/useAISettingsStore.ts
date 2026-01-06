@@ -70,9 +70,9 @@ export const useAISettingsStore = create<AISettingsState>((set, get) => ({
      FETCH SETTINGS (ORGANIZATION ONLY)
   -------------------------------------------------------------------------- */
   fetchSettings: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({
         error: "Select an organization to configure AI settings.",
         settings: null,
@@ -86,7 +86,7 @@ export const useAISettingsStore = create<AISettingsState>((set, get) => ({
       const { data, error } = await supabase
         .from("ai_settings")
         .select("*")
-        .eq("organization_id", currentOrganization.id)
+        .eq("organization_id", activeOrganization.id)
         .maybeSingle();
 
       if (error) {
@@ -116,10 +116,10 @@ export const useAISettingsStore = create<AISettingsState>((set, get) => ({
      SAVE SETTINGS (UPSERT BY ORGANIZATION)
   -------------------------------------------------------------------------- */
   saveSettings: async ({ ai_enabled, provider, model, kb_search_type }) => {
-    const { currentOrganization } = useOrganizationStore.getState();
+    const { activeOrganization } = useOrganizationStore.getState();
     const { settings } = get();
 
-    if (!currentOrganization?.id) {
+    if (!activeOrganization?.id) {
       set({ error: "Select an organization before saving AI settings." });
       return;
     }
@@ -128,7 +128,7 @@ export const useAISettingsStore = create<AISettingsState>((set, get) => ({
 
     try {
       const payload: any = {
-        organization_id: currentOrganization.id,
+        organization_id: activeOrganization.id,
         ai_enabled,
         provider,
         model,
@@ -138,7 +138,7 @@ export const useAISettingsStore = create<AISettingsState>((set, get) => ({
       // Preserve row ID if updating existing record
       if (
         settings &&
-        settings.organization_id === currentOrganization.id
+        settings.organization_id === activeOrganization.id
       ) {
         payload.id = settings.id;
       }

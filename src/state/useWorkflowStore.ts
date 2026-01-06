@@ -54,8 +54,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
      FETCH WORKFLOWS (ORG ONLY)
   ===================================================== */
   fetchWorkflows: async () => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization?.id) {
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization?.id) {
       set({ workflows: [] });
       return;
     }
@@ -65,7 +65,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const { data, error } = await supabase
       .from("workflows")
       .select("*")
-      .eq("organization_id", currentOrganization.id)
+      .eq("organization_id", activeOrganization.id)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -131,15 +131,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
      CREATE WORKFLOW
   ===================================================== */
   createWorkflow: async (payload) => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization?.id) return null;
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization?.id) return null;
 
     set({ saving: true, error: null });
 
     const { data, error } = await supabase
       .from("workflows")
       .insert({
-        organization_id: currentOrganization.id,
+        organization_id: activeOrganization.id,
         name: payload.name,
         description: payload.description ?? null,
         trigger: payload.trigger ?? { type: "always" },
@@ -335,8 +335,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
      GENERATE WORKFLOW FROM DESCRIPTION (AI)
   ===================================================== */
   generateWorkflowFromDescription: async (description) => {
-    const { currentOrganization } = useOrganizationStore.getState();
-    if (!currentOrganization?.id) return null;
+    const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization?.id) return null;
 
     set({ saving: true, error: null });
 
@@ -344,7 +344,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       "workflow-generator",
       {
         body: {
-          organization_id: currentOrganization.id,
+          organization_id: activeOrganization.id,
           description,
         },
       }
@@ -363,7 +363,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const { data: newWF, error: insertErr } = await supabase
       .from("workflows")
       .insert({
-        organization_id: currentOrganization.id,
+        organization_id: activeOrganization.id,
         name: wf.name,
         description: wf.description ?? description,
         trigger: wf.trigger ?? { type: "always" },

@@ -38,7 +38,7 @@ type PersonalityForm = {
 /* ------------------------------------------------------------------ */
 
 export function BotPersonalityModule() {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const [loading, setLoading] = useState(false);
 
@@ -62,9 +62,9 @@ export function BotPersonalityModule() {
   /* ------------------------------------------------------------------ */
 
   useEffect(() => {
-    if (!currentOrganization) return;
+    if (!activeOrganization) return;
 
-    const organizationId = currentOrganization.id;
+    const organizationId = activeOrganization.id;
 
     const load = async () => {
       let personalityQuery = supabase
@@ -93,18 +93,18 @@ export function BotPersonalityModule() {
     };
 
     load().catch(console.error);
-  }, [currentOrganization]);
+  }, [activeOrganization]);
 
   /* ------------------------------------------------------------------ */
   /* SAVE                                                              */
   /* ------------------------------------------------------------------ */
 
   const savePersonality = async () => {
-    if (!currentOrganization) return;
+    if (!activeOrganization) return;
 
     setLoading(true);
 
-    const organizationId = currentOrganization.id;
+    const organizationId = activeOrganization.id;
 
     try {
       const { error: personalityError } = await supabase

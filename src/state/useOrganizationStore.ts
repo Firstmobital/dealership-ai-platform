@@ -5,26 +5,26 @@ import type { Organization } from "../types/database";
 /* ============================================================================
    TYPES
 ============================================================================ */
+type OrgWithMeta = Organization & {
+  last_active_at: string | null;
+};
+
 export type OrgState = {
   /* -------------------------------------------------------------------------- */
   /* DATA                                                                       */
   /* -------------------------------------------------------------------------- */
-  organizations: Organization[];
+  organizations: OrgWithMeta[];
+  activeOrganization: Organization | null;
 
-  currentOrganization: Organization | null;
-  selectedOrganizationId: string | null;
-
+  isBootstrapping: boolean;
   loading: boolean;
-  initialized: boolean;
 
   /* -------------------------------------------------------------------------- */
   /* ACTIONS                                                                    */
   /* -------------------------------------------------------------------------- */
-  fetchOrganizations: () => Promise<void>;
-  switchOrganization: (orgId: string | null) => void;
-
-  hydrate: () => void;
-  loadAll: () => Promise<void>;
+  bootstrapOrganizations: () => Promise<void>;
+  setActiveOrganization: (org: Organization) => Promise<void>;
+  clearOrganizationState: () => void;
 };
 
 /* ============================================================================
@@ -35,98 +35,107 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
   /* INITIAL STATE                                                              */
   /* -------------------------------------------------------------------------- */
   organizations: [],
+  activeOrganization: null,
 
-  currentOrganization: null,
-  selectedOrganizationId: null,
-
+  isBootstrapping: false,
   loading: false,
-  initialized: false,
 
   /* -------------------------------------------------------------------------- */
-  /* HYDRATION                                                                  */
+  /* BOOTSTRAP (CALLED ON APP LOAD AFTER LOGIN)                                  */
   /* -------------------------------------------------------------------------- */
-  hydrate: () => {
-    const orgId = localStorage.getItem("selectedOrgId");
+  bootstrapOrganizations: async () => {
+    set({ isBootstrapping: true, loading: true });
 
-    set({
-      selectedOrganizationId: orgId || null,
-    });
-  },
-
-  /* -------------------------------------------------------------------------- */
-  /* LOAD ALL                                                                   */
-  /* -------------------------------------------------------------------------- */
-  loadAll: async () => {
-    get().hydrate();
-    await get().fetchOrganizations();
-    set({ initialized: true });
-  },
-
-  /* -------------------------------------------------------------------------- */
-  /* FETCH ORGANIZATIONS                                                        */
-  /* -------------------------------------------------------------------------- */
-  fetchOrganizations: async () => {
-    set({ loading: true });
-
-    const { data, error } = await supabase
-      .from("organizations")
-      .select("*")
-      .order("name", { ascending: true });
+    const {
+      data: memberships,
+      error,
+    } = await supabase
+      .from("organization_users")
+      .select(
+        `
+        last_active_at,
+        organizations (*)
+      `
+      );
 
     if (error) {
-      console.error("[Org] fetchOrganizations error:", error);
-      set({ loading: false });
+      console.error("[Org] bootstrap error:", error);
+      set({ isBootstrapping: false, loading: false });
       return;
     }
 
-    const organizations = data ?? [];
+    const orgs: OrgWithMeta[] =
+      memberships
+        ?.map((m: any) => ({
+          ...m.organizations,
+          last_active_at: m.last_active_at,
+        }))
+        .filter(Boolean) ?? [];
 
-    const storedId = localStorage.getItem("selectedOrgId");
-    let selectedId = get().selectedOrganizationId || storedId || null;
-
-    if (!selectedId && organizations.length > 0) {
-      selectedId = organizations[0].id;
+    if (orgs.length === 0) {
+      // User has no organizations
+      set({
+        organizations: [],
+        activeOrganization: null,
+        isBootstrapping: false,
+        loading: false,
+      });
+      return;
     }
 
-    const currentOrganization =
-      selectedId
-        ? organizations.find((o) => o.id === selectedId) ?? null
-        : null;
+    // Pick last-used org
+    const sorted = [...orgs].sort((a, b) => {
+      if (!a.last_active_at && !b.last_active_at) return 0;
+      if (!a.last_active_at) return 1;
+      if (!b.last_active_at) return -1;
+      return (
+        new Date(b.last_active_at).getTime() -
+        new Date(a.last_active_at).getTime()
+      );
+    });
 
-    if (currentOrganization) {
-      localStorage.setItem("selectedOrgId", currentOrganization.id);
-    }
+    const selected = sorted[0];
+
+    await get().setActiveOrganization(selected);
 
     set({
-      organizations,
-      currentOrganization,
-      selectedOrganizationId: currentOrganization?.id ?? null,
+      organizations: orgs,
+      isBootstrapping: false,
       loading: false,
     });
   },
 
   /* -------------------------------------------------------------------------- */
-  /* SWITCH ORGANIZATION                                                        */
+  /* ACTIVATE ORGANIZATION (AUTO OR MANUAL)                                      */
   /* -------------------------------------------------------------------------- */
-  switchOrganization: (orgId: string | null) => {
-    if (!orgId) {
-      localStorage.removeItem("selectedOrgId");
+  setActiveOrganization: async (org: Organization) => {
+    set({ activeOrganization: org });
 
-      set({
-        currentOrganization: null,
-        selectedOrganizationId: null,
-      });
-      return;
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) return;
+
+    const { error } = await supabase
+      .from("organization_users")
+      .update({
+        last_active_at: new Date().toISOString(),
+      })
+      .eq("organization_id", org.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("[Org] failed to update last_active_at:", error);
     }
+  },
 
-    localStorage.setItem("selectedOrgId", orgId);
-
-    const org =
-      get().organizations.find((o) => o.id === orgId) ?? null;
-
+  /* -------------------------------------------------------------------------- */
+  /* CLEAR STATE (LOGOUT)                                                        */
+  /* -------------------------------------------------------------------------- */
+  clearOrganizationState: () => {
     set({
-      currentOrganization: org,
-      selectedOrganizationId: org?.id ?? null,
+      organizations: [],
+      activeOrganization: null,
+      isBootstrapping: false,
+      loading: false,
     });
   },
 }));

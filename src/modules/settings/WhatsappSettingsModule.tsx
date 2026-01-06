@@ -21,7 +21,7 @@ export function WhatsappSettingsModule() {
     clearError,
   } = useWhatsappSettingsStore();
 
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const [form, setForm] = useState({
     phone_number: "",
@@ -35,9 +35,9 @@ export function WhatsappSettingsModule() {
   /* LOAD SETTINGS                                                       */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
     fetchSettings().catch(console.error);
-  }, [currentOrganization?.id]);
+  }, [activeOrganization?.id]);
 
   useEffect(() => {
     if (!settings) return;
