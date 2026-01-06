@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
 import type { Campaign, CampaignMessage } from "../types/database";
-import { useSubOrganizationStore } from "./useSubOrganizationStore";
 
 /* =========================================================
    TYPES
@@ -22,7 +21,6 @@ type CampaignState = {
 
   createCampaignWithMessages: (args: {
     organizationId: string;
-    sub_organization_id?: string | null;
     name: string;
     description?: string;
     whatsapp_template_id: string;
@@ -55,25 +53,16 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   loading: false,
 
   /* ------------------------------------------------------
-     FETCH CAMPAIGNS (ORG + SUB-ORG SCOPE)
+     FETCH CAMPAIGNS (ORG ONLY)
   ------------------------------------------------------ */
   fetchCampaigns: async (organizationId) => {
-    const { activeSubOrg } = useSubOrganizationStore.getState();
     set({ loading: true });
 
-    let query = supabase
+    const { data, error } = await supabase
       .from("campaigns")
       .select("*")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
-
-    if (activeSubOrg) {
-      query = query.or(
-        `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
-      );
-    }
-
-    const { data, error } = await query;
 
     if (error) {
       console.error("[useCampaignStore] fetchCampaigns error", error);
@@ -98,7 +87,10 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       .order("created_at", { ascending: true });
 
     if (error) {
-      console.error("[useCampaignStore] fetchCampaignMessages error", error);
+      console.error(
+        "[useCampaignStore] fetchCampaignMessages error",
+        error
+      );
       throw error;
     }
 
@@ -115,17 +107,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   ------------------------------------------------------ */
   createCampaignWithMessages: async ({
     organizationId,
-    sub_organization_id,
     name,
     description,
     whatsapp_template_id,
     scheduledAt,
     rows,
   }) => {
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-    const finalSubOrg = sub_organization_id ?? activeSubOrg?.id ?? null;
-
-    const status: Campaign["status"] = scheduledAt ? "scheduled" : "draft";
+    const status: Campaign["status"] = scheduledAt
+      ? "scheduled"
+      : "draft";
 
     // Sanitize phones early
     const cleanedRows = rows
@@ -158,32 +148,35 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     const bodySnapshot = safeTemplateBody(template.body);
 
     /* 2️⃣ Create campaign row */
-    const { data: campaignData, error: campaignError } = await supabase
-      .from("campaigns")
-      .insert({
-        organization_id: organizationId,
-        sub_organization_id: finalSubOrg,
-        name,
-        description: description ?? null,
-        channel: "whatsapp",
+    const { data: campaignData, error: campaignError } =
+      await supabase
+        .from("campaigns")
+        .insert({
+          organization_id: organizationId,
+          name,
+          description: description ?? null,
+          channel: "whatsapp",
 
-        whatsapp_template_id: template.id,
-        template_name: template.name ?? null,
-        template_body: bodySnapshot,
+          whatsapp_template_id: template.id,
+          template_name: template.name ?? null,
+          template_body: bodySnapshot,
 
-        template_variables: null,
-        status,
-        scheduled_at: scheduledAt,
+          template_variables: null,
+          status,
+          scheduled_at: scheduledAt,
 
-        total_recipients: cleanedRows.length,
-        sent_count: 0,
-        failed_count: 0,
-      })
-      .select("id")
-      .single();
+          total_recipients: cleanedRows.length,
+          sent_count: 0,
+          failed_count: 0,
+        })
+        .select("id")
+        .single();
 
     if (campaignError || !campaignData) {
-      console.error("[useCampaignStore] createCampaign error", campaignError);
+      console.error(
+        "[useCampaignStore] createCampaign error",
+        campaignError
+      );
       throw campaignError ?? new Error("Failed to create campaign");
     }
 
@@ -193,7 +186,6 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     const messagesPayload = cleanedRows.map((row) => ({
       organization_id: organizationId,
       campaign_id: campaignId,
-      sub_organization_id: finalSubOrg,
       phone: row.phone,
       variables: row.variables ?? {},
       status: "pending",
@@ -204,7 +196,10 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       .insert(messagesPayload);
 
     if (msgErr) {
-      console.error("[useCampaignStore] insert messages error", msgErr);
+      console.error(
+        "[useCampaignStore] insert messages error",
+        msgErr
+      );
       throw msgErr;
     }
 
@@ -219,7 +214,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
      LAUNCH CAMPAIGN (SEND NOW OR SCHEDULE)
   ------------------------------------------------------ */
   launchCampaign: async (campaignId, scheduledAt) => {
-    const effectiveTime = scheduledAt ?? new Date().toISOString();
+    const effectiveTime =
+      scheduledAt ?? new Date().toISOString();
 
     const { error } = await supabase
       .from("campaigns")
@@ -230,14 +226,21 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       .eq("id", campaignId);
 
     if (error) {
-      console.error("[useCampaignStore] launchCampaign error", error);
+      console.error(
+        "[useCampaignStore] launchCampaign error",
+        error
+      );
       throw error;
     }
 
     set((state) => ({
       campaigns: state.campaigns.map((c) =>
         c.id === campaignId
-          ? { ...c, status: "scheduled", scheduled_at: effectiveTime }
+          ? {
+              ...c,
+              status: "scheduled",
+              scheduled_at: effectiveTime,
+            }
           : c
       ),
     }));
@@ -260,12 +263,16 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       .eq("status", "failed");
 
     if (error) {
-      console.error("[useCampaignStore] retryFailedMessages error", error);
+      console.error(
+        "[useCampaignStore] retryFailedMessages error",
+        error
+      );
       throw error;
     }
 
     const orgId =
-      get().campaigns.find((c) => c.id === campaignId)?.organization_id;
+      get().campaigns.find((c) => c.id === campaignId)
+        ?.organization_id;
 
     if (orgId) {
       await get().fetchCampaigns(orgId);

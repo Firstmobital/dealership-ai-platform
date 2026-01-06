@@ -3,7 +3,6 @@ import { PlusCircle, Trash2, Save, RefreshCw } from "lucide-react";
 
 import { supabase } from "../../lib/supabaseClient";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import type { WhatsappTemplate } from "../../types/database";
 
@@ -23,7 +22,6 @@ const emptyDraft = (): Partial<WhatsappTemplate> => ({
 
 export function WhatsappTemplatesModule() {
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const {
     templates,
@@ -41,7 +39,7 @@ export function WhatsappTemplatesModule() {
 
   const selected = useMemo(
     () => templates.find((t) => t.id === selectedId) ?? null,
-    [templates, selectedId],
+    [templates, selectedId]
   );
 
   /* -------------------------------------------------------
@@ -49,9 +47,9 @@ export function WhatsappTemplatesModule() {
    * ----------------------------------------------------- */
   useEffect(() => {
     if (currentOrganization?.id) {
-      fetchTemplates(currentOrganization.id);
+      fetchTemplates(); // ✅ FIXED
     }
-  }, [currentOrganization?.id, activeSubOrg?.id]);
+  }, [currentOrganization?.id, fetchTemplates]);
 
   /* -------------------------------------------------------
    * Sync selected → draft
@@ -59,7 +57,7 @@ export function WhatsappTemplatesModule() {
   useEffect(() => {
     if (selected) setDraft(selected);
     else setDraft(emptyDraft());
-  }, [selectedId, selected]);
+  }, [selected]);
 
   /* -------------------------------------------------------
    * Save draft
@@ -79,15 +77,14 @@ export function WhatsappTemplatesModule() {
         const id = await createTemplate({
           ...draft,
           organization_id: currentOrganization.id,
-          sub_organization_id: activeSubOrg?.id ?? null,
           status: "draft",
         } as any);
 
-        await fetchTemplates(currentOrganization.id);
+        await fetchTemplates(); // ✅ FIXED
         if (id) setSelectedId(id);
       } else {
         await updateTemplate(selectedId, draft as any);
-        await fetchTemplates(currentOrganization.id);
+        await fetchTemplates(); // ✅ FIXED
       }
     } finally {
       setSaving(false);
@@ -128,10 +125,10 @@ export function WhatsappTemplatesModule() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ template_id: selectedId }),
-      },
+      }
     );
 
-    await fetchTemplates(currentOrganization!.id);
+    await fetchTemplates(); // ✅ FIXED
     setDraft((d) => ({ ...d, status: "pending" }));
     alert("Template submitted to WhatsApp");
   }
@@ -158,9 +155,8 @@ export function WhatsappTemplatesModule() {
           },
           body: JSON.stringify({
             organization_id: currentOrganization.id,
-            sub_organization_id: activeSubOrg?.id ?? null,
           }),
-        },
+        }
       );
 
       const json = await res.json().catch(() => ({}));
@@ -170,7 +166,7 @@ export function WhatsappTemplatesModule() {
         return;
       }
 
-      await fetchTemplates(currentOrganization.id);
+      await fetchTemplates(); // ✅ FIXED
       alert(`Synced templates. Updated: ${json.updated ?? 0}`);
     } finally {
       setSyncing(false);
@@ -276,13 +272,14 @@ export function WhatsappTemplatesModule() {
           </button>
         )}
 
-        {/* FORM */}
         <input
           className="rounded-md border px-3 py-2 text-sm"
           placeholder="Template name (lowercase, underscores)"
           disabled={!isEditable}
           value={draft.name ?? ""}
-          onChange={(e) => setDraft((p) => ({ ...p, name: e.target.value }))}
+          onChange={(e) =>
+            setDraft((p) => ({ ...p, name: e.target.value }))
+          }
         />
 
         <textarea
@@ -291,7 +288,9 @@ export function WhatsappTemplatesModule() {
           placeholder="Body (use {{1}}, {{2}} variables)"
           disabled={!isEditable}
           value={draft.body ?? ""}
-          onChange={(e) => setDraft((p) => ({ ...p, body: e.target.value }))}
+          onChange={(e) =>
+            setDraft((p) => ({ ...p, body: e.target.value }))
+          }
         />
 
         <div className="text-xs text-slate-500">

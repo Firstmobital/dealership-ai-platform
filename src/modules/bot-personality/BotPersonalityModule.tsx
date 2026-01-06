@@ -4,7 +4,6 @@ import toast from "react-hot-toast";
 
 import { supabase } from "../../lib/supabaseClient";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
 /* ------------------------------------------------------------------ */
 /* CONSTANTS                                                          */
@@ -40,7 +39,6 @@ type PersonalityForm = {
 
 export function BotPersonalityModule() {
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const [loading, setLoading] = useState(false);
 
@@ -67,18 +65,12 @@ export function BotPersonalityModule() {
     if (!currentOrganization) return;
 
     const organizationId = currentOrganization.id;
-    const subOrgId = activeSubOrg?.id ?? null;
 
     const load = async () => {
       let personalityQuery = supabase
         .from("bot_personality")
         .select("*")
         .eq("organization_id", organizationId);
-
-      personalityQuery =
-        subOrgId === null
-          ? personalityQuery.is("sub_organization_id", null)
-          : personalityQuery.eq("sub_organization_id", subOrgId);
 
       const { data: personality } = await personalityQuery.maybeSingle();
 
@@ -101,7 +93,7 @@ export function BotPersonalityModule() {
     };
 
     load().catch(console.error);
-  }, [currentOrganization, activeSubOrg?.id]);
+  }, [currentOrganization]);
 
   /* ------------------------------------------------------------------ */
   /* SAVE                                                              */
@@ -113,7 +105,6 @@ export function BotPersonalityModule() {
     setLoading(true);
 
     const organizationId = currentOrganization.id;
-    const subOrgId = activeSubOrg?.id ?? null;
 
     try {
       const { error: personalityError } = await supabase
@@ -121,7 +112,6 @@ export function BotPersonalityModule() {
         .upsert(
           {
             organization_id: organizationId,
-            sub_organization_id: subOrgId,
             tone: form.tone,
             language: form.language,
             short_responses: form.response_length === "Short",
@@ -132,7 +122,7 @@ export function BotPersonalityModule() {
             dos: form.dos,
             donts: form.donts,
           },
-          { onConflict: "organization_id,sub_organization_id" }
+          { onConflict: "organization_id" }
         );
 
       if (personalityError) throw personalityError;

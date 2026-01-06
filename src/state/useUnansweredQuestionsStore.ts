@@ -2,7 +2,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
-import { useSubOrganizationStore } from "./useSubOrganizationStore";
 import type { UnansweredQuestion } from "../types/database";
 
 type UnansweredQuestionsState = {
@@ -34,7 +33,6 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     /* -------------------------------------------------- */
     fetchUnanswered: async () => {
       const { currentOrganization } = useOrganizationStore.getState();
-      const { activeSubOrg } = useSubOrganizationStore.getState();
 
       if (!currentOrganization) {
         set({
@@ -53,12 +51,6 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           .eq("organization_id", currentOrganization.id)
           .eq("status", "open")
           .order("created_at", { ascending: false });
-
-        if (activeSubOrg) {
-          query = query.eq("sub_organization_id", activeSubOrg.id);
-        } else {
-          query = query.is("sub_organization_id", null);
-        }
 
         const { data, error } = await query;
 
@@ -93,7 +85,6 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     /* -------------------------------------------------- */
     saveToKnowledge: async ({ questionId, title, summary }) => {
       const { currentOrganization } = useOrganizationStore.getState();
-      const { activeSubOrg } = useSubOrganizationStore.getState();
 
       if (!currentOrganization) {
         set({ error: "Select an organization before saving to Knowledge Base." });
@@ -108,7 +99,6 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
           {
             body: {
               organization_id: currentOrganization.id,
-              sub_organization_id: activeSubOrg?.id ?? null,
               question_id: questionId,
               title: title || undefined,
               summary: summary || undefined,

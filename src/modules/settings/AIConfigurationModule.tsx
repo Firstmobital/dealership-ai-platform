@@ -1,15 +1,12 @@
 // src/modules/settings/AIConfigurationModule.tsx
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
-  ShieldCheck,
   Settings2,
   Loader2,
   Save,
 } from "lucide-react";
 
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import {
   DEFAULT_AI_SETTINGS,
   useAISettingsStore,
@@ -95,14 +92,12 @@ const SEARCH_CARDS: SearchCard[] = [
 ];
 
 function formatINR(n: number) {
-  // Keep it simple: ₹2.5 instead of locale formatting weirdness
   const fixed = Number.isInteger(n) ? String(n) : n.toFixed(1);
   return `₹${fixed}`;
 }
 
 export function AIConfigurationModule() {
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const {
     settings,
@@ -110,7 +105,6 @@ export function AIConfigurationModule() {
     saving,
     error,
     success,
-    isOrgFallback,
     fetchSettings,
     saveSettings,
     clearError,
@@ -130,10 +124,9 @@ export function AIConfigurationModule() {
   useEffect(() => {
     if (!currentOrganization?.id) return;
     fetchSettings().catch(console.error);
-  }, [currentOrganization?.id, activeSubOrg?.id]);
+  }, [currentOrganization?.id]);
 
   useEffect(() => {
-    // Fill form from DB settings if present, else keep defaults
     if (!settings) {
       setForm((p) => ({
         ...p,
@@ -151,7 +144,7 @@ export function AIConfigurationModule() {
   }, [settings]);
 
   /* -------------------------------------------------------
-     DERIVED: final cost
+     DERIVED COST
   ------------------------------------------------------- */
   const modelCost = useMemo(() => {
     const found = MODEL_CARDS.find(
@@ -165,7 +158,10 @@ export function AIConfigurationModule() {
     return found?.addOnPrice ?? 0;
   }, [form.kb_search_type]);
 
-  const finalCost = useMemo(() => modelCost + searchCost, [modelCost, searchCost]);
+  const finalCost = useMemo(
+    () => modelCost + searchCost,
+    [modelCost, searchCost]
+  );
 
   /* -------------------------------------------------------
      CHANGE HELPERS
@@ -178,9 +174,8 @@ export function AIConfigurationModule() {
     setForm((p) => ({ ...p, kb_search_type: key }));
   };
 
-  const setEnabled = (v: boolean) => setForm((p) => ({ ...p, ai_enabled: v }));
-
-  const isDivisionContext = Boolean(activeSubOrg);
+  const setEnabled = (v: boolean) =>
+    setForm((p) => ({ ...p, ai_enabled: v }));
 
   const hasChanges =
     (settings?.ai_enabled ?? DEFAULT_AI_SETTINGS.ai_enabled) !== form.ai_enabled ||
@@ -213,40 +208,17 @@ export function AIConfigurationModule() {
           AI Configuration
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Choose the AI model and knowledge base search type for this{" "}
-          {isDivisionContext ? "division" : "organization"}.
+          Choose the AI model and knowledge base search type for this organization.
         </p>
       </div>
 
       {/* Context Banner */}
-      {activeSubOrg && isOrgFallback && (
-        <div className="flex items-start gap-3 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
-          <AlertTriangle size={18} className="text-yellow-500" />
-          <p className="text-sm text-yellow-800">
-            This division has no AI override. Using organization-level AI
-            configuration.
-          </p>
-        </div>
-      )}
-
-      {activeSubOrg && !isOrgFallback && (
-        <div className="flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 p-3">
-          <ShieldCheck size={18} className="text-green-600" />
-          <p className="text-sm text-green-800">
-            Division-specific AI configuration is active.
-          </p>
-        </div>
-      )}
-
-      {!activeSubOrg && (
-        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
-          <Settings2 size={18} className="text-blue-600" />
-          <p className="text-sm text-blue-800">
-            Organization-level AI configuration. Divisions inherit these by
-            default.
-          </p>
-        </div>
-      )}
+      <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+        <Settings2 size={18} className="text-blue-600" />
+        <p className="text-sm text-blue-800">
+          Organization-level AI configuration. All workflows and conversations use these settings.
+        </p>
+      </div>
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* Enable toggle */}
@@ -257,7 +229,7 @@ export function AIConfigurationModule() {
                 AI Enabled
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                Turn AI on/off for this scope. (No wallet enforcement in Phase 4)
+                Turn AI on/off for this organization.
               </p>
             </div>
 
@@ -279,13 +251,14 @@ export function AIConfigurationModule() {
               AI Models
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Select the AI model best suited for your tasks to get accurate and efficient responses.
+              Select the AI model best suited for your tasks.
             </p>
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {MODEL_CARDS.map((m) => {
-              const selected = form.provider === m.provider && form.model === m.model;
+              const selected =
+                form.provider === m.provider && form.model === m.model;
 
               return (
                 <button
@@ -337,7 +310,7 @@ export function AIConfigurationModule() {
               Search type for knowledge base
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              Select a search option that best matches your knowledge base structure and user query needs.
+              Select a search option that best matches your knowledge base.
             </p>
           </div>
 

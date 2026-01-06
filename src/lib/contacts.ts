@@ -1,8 +1,9 @@
+//Users/air/dealership-ai-platform/src/lib/contacts.ts
+
 import { supabase } from "./supabaseClient";
 
 export async function upsertContactByPhone(params: {
   organization_id: string;
-  sub_organization_id?: string | null;
   phone: string;
   first_name?: string | null;
   last_name?: string | null;
@@ -11,7 +12,6 @@ export async function upsertContactByPhone(params: {
 }) {
   const {
     organization_id,
-    sub_organization_id = null,
     phone,
     first_name = null,
     last_name = null,
@@ -24,7 +24,6 @@ export async function upsertContactByPhone(params: {
     .upsert(
       {
         organization_id,
-        sub_organization_id,
         phone,
         first_name,
         last_name,

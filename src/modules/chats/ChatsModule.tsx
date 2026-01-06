@@ -6,8 +6,6 @@ import { Sparkles, Copy, SendHorizonal, ThumbsUp } from "lucide-react";
 
 import { useChatStore } from "../../state/useChatStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
-
 import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { ChatSidebarItem } from "./components/ChatSidebarItem";
 import { ChatHeader } from "./components/ChatHeader";
@@ -32,9 +30,6 @@ export function ChatsModule() {
   } = useChatStore();
 
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
-
-  const subOrgKey = activeSubOrg?.id ?? "__all__";
 
   /* ---------------- UI STATE ---------------- */
   const [search, setSearch] = useState("");
@@ -64,11 +59,8 @@ export function ChatsModule() {
     if (currentOrganization?.id) {
       fetchConversations(currentOrganization.id).catch(console.error);
     }
-  }, [currentOrganization?.id, subOrgKey, fetchConversations]);
+  }, [currentOrganization?.id, fetchConversations]);
 
-  useEffect(() => {
-    setActiveConversation(null);
-  }, [subOrgKey, setActiveConversation]);
 
   useEffect(() => {
     if (!activeConversationId) return;
@@ -174,7 +166,6 @@ export function ChatsModule() {
           text: text || null,
           media_url: url,
           channel: "whatsapp",
-          sub_organization_id: conv.sub_organization_id,
         });
       } else {
         await sendMessage(activeConversationId, {
@@ -182,7 +173,6 @@ export function ChatsModule() {
           sender: "user",
           message_type: "text",
           channel: conv.channel,
-          sub_organization_id: conv.sub_organization_id,
         });
       }
 

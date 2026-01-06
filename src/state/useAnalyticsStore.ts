@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
-import { useSubOrganizationStore } from "./useSubOrganizationStore";
 
 type AnalyticsState = {
   loading: boolean;
@@ -23,29 +22,22 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
   templates: [],
 
   /* ======================================================
-     OVERVIEW (Daily WhatsApp Stats)
+     OVERVIEW (Daily WhatsApp Stats — ORG ONLY)
   ====================================================== */
   fetchOverview: async (from, to) => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
 
-    if (!currentOrganization) return;
+    if (!currentOrganization?.id) return;
 
     set({ loading: true });
 
-    let query = supabase
+    const { data, error } = await supabase
       .from("whatsapp_overview_daily_v1")
       .select("*")
       .eq("organization_id", currentOrganization.id)
       .gte("day", from)
       .lte("day", to)
       .order("day", { ascending: true });
-
-    if (activeSubOrg) {
-      query = query.eq("sub_organization_id", activeSubOrg.id);
-    }
-
-    const { data, error } = await query;
 
     if (error) {
       console.error("[Analytics] fetchOverview error", error);
@@ -57,27 +49,20 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
   },
 
   /* ======================================================
-     CAMPAIGN ANALYTICS
+     CAMPAIGN ANALYTICS (ORG ONLY)
   ====================================================== */
   fetchCampaigns: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
 
-    if (!currentOrganization) return;
+    if (!currentOrganization?.id) return;
 
     set({ loading: true });
 
-    let query = supabase
+    const { data, error } = await supabase
       .from("campaign_analytics_summary_v2")
       .select("*")
       .eq("organization_id", currentOrganization.id)
       .order("created_at", { ascending: false });
-
-    if (activeSubOrg) {
-      query = query.eq("sub_organization_id", activeSubOrg.id);
-    }
-
-    const { data, error } = await query;
 
     if (error) {
       console.error("[Analytics] fetchCampaigns error", error);
@@ -89,27 +74,20 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
   },
 
   /* ======================================================
-     TEMPLATE ANALYTICS
+     TEMPLATE ANALYTICS (ORG ONLY)
   ====================================================== */
   fetchTemplates: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
 
-    if (!currentOrganization) return;
+    if (!currentOrganization?.id) return;
 
     set({ loading: true });
 
-    let query = supabase
+    const { data, error } = await supabase
       .from("template_analytics_summary_v2")
       .select("*")
       .eq("organization_id", currentOrganization.id)
       .order("total_messages", { ascending: false });
-
-    if (activeSubOrg) {
-      query = query.eq("sub_organization_id", activeSubOrg.id);
-    }
-
-    const { data, error } = await query;
 
     if (error) {
       console.error("[Analytics] fetchTemplates error", error);

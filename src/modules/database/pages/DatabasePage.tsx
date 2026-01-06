@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import { useOrganizationStore } from "../../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../../state/useSubOrganizationStore";
 import { DatabaseUploadModal } from "../components/DatabaseUploadModal";
 
 /* -------------------------------------------------------------------------- */
@@ -22,10 +21,8 @@ type ContactSummary = {
 export default function DatabasePage() {
   /* ------------------------- Org / Sub-org Context ------------------------ */
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const organizationId = currentOrganization?.id;
-  const subOrganizationId = activeSubOrg?.id;
 
   /* ----------------------------- State ------------------------------------ */
   const [rows, setRows] = useState<ContactSummary[]>([]);
@@ -52,10 +49,6 @@ export default function DatabasePage() {
         .select("*")
         .eq("organization_id", organizationId);
 
-      if (subOrganizationId) {
-        query = query.eq("sub_organization_id", subOrganizationId);
-      }
-
       const { data, error } = await query;
 
       if (error) {
@@ -68,7 +61,7 @@ export default function DatabasePage() {
     }
 
     loadData();
-  }, [organizationId, subOrganizationId]);
+  }, [organizationId]);
 
   /* ---------------------------- Filtering --------------------------------- */
   const filteredRows = rows.filter((row) => {

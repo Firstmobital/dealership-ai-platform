@@ -2,7 +2,6 @@
 
 import { LogOut } from "lucide-react";
 import { OrganizationSwitcher } from "./OrganizationSwitcher";
-import { SubOrgSwitcher } from "../topbar/SubOrgSwitcher";
 import { useAuthStore } from "../../state/useAuthStore";
 
 export function Topbar() {
@@ -13,7 +12,6 @@ export function Topbar() {
       {/* LEFT */}
       <div className="flex items-center gap-6">
         <OrganizationSwitcher />
-        <SubOrgSwitcher />
       </div>
 
       {/* RIGHT */}

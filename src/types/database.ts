@@ -1,30 +1,9 @@
-///Users/air/dealership-ai-platform/src/types/database.ts
-/// src/types/database.ts
+// src/types/database.ts
 
 // -------------------------------------------------------------
 // GLOBAL TYPES
 // -------------------------------------------------------------
 export type UUID = string;
-
-// -------------------------------------------------------------
-// SUB-ORGANIZATIONS
-// -------------------------------------------------------------
-export type SubOrganization = {
-  id: UUID;
-  organization_id: UUID;
-  name: string;
-  slug: string;
-  description: string | null;
-  created_at?: string;
-};
-
-export type SubOrganizationUser = {
-  id: UUID;
-  sub_organization_id: UUID;
-  user_id: UUID;
-  role: "admin" | "agent" | "viewer" | string;
-  created_at?: string;
-};
 
 // -------------------------------------------------------------
 // ORGANIZATIONS
@@ -67,7 +46,12 @@ export type Contact = {
 // -------------------------------------------------------------
 // CONVERSATIONS + MESSAGES
 // -------------------------------------------------------------
-export type ConversationChannel = "web" | "whatsapp" | "internal";
+export type ConversationChannel =
+  | "web"
+  | "whatsapp"
+  | "internal"
+  | "psf";
+
 export type ConversationIntent =
   | "sales"
   | "service"
@@ -79,23 +63,21 @@ export type Conversation = {
   id: UUID;
   organization_id: UUID;
 
-  contact_id: UUID | null; // ✅ nullable (important)
+  contact_id: UUID | null;
   assigned_to: UUID | null;
 
   ai_enabled: boolean;
-  intent?: ConversationIntent; // ✅ PHASE 1B FIX
+  intent?: ConversationIntent;
 
   last_message_at: string | null;
   channel: ConversationChannel;
-  sub_organization_id: UUID | null;
 
   meta?: {
     psf_case_id?: string | null;
-  };  
+  };
 
   created_at?: string;
 
-  // Joined contact (normalized in store)
   contact?: Pick<
     Contact,
     "id" | "phone" | "name" | "first_name" | "last_name" | "model"
@@ -116,7 +98,6 @@ export type Message = {
   mime_type: string | null;
 
   channel: ConversationChannel;
-  sub_organization_id: UUID | null;
 
   whatsapp_message_id: string | null;
   wa_received_at: string | null;
@@ -128,30 +109,24 @@ export type Message = {
 // KNOWLEDGE BASE + RAG
 // -------------------------------------------------------------
 export type KnowledgeArticle = {
-  id: string;
+  id: UUID;
+  organization_id: UUID;
+
   title: string;
   content: string;
 
-  // Phase 1 — Governance
   status: "draft" | "published" | "archived";
   published_at?: string | null;
   updated_by?: string | null;
 
-  // Source & content
   source_type: "text" | "file";
   keywords?: string[] | null;
 
-  // File-backed articles
   file_bucket?: string | null;
   file_path?: string | null;
   original_filename?: string | null;
   mime_type?: string | null;
 
-  // Org scoping
-  organization_id: string;
-  sub_organization_id: string | null;
-
-  // Processing metadata
   created_at: string;
   updated_at?: string | null;
   last_processed_at?: string | null;
@@ -169,7 +144,6 @@ export type KnowledgeChunk = {
 export type UnansweredQuestion = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   question: string;
   occurrences: number;
@@ -185,13 +159,12 @@ export type UnansweredQuestion = {
   created_at: string;
 };
 
-
 // -------------------------------------------------------------
 // BOT PERSONALITY + INSTRUCTIONS
 // -------------------------------------------------------------
 export type BotPersonality = {
+  id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   tone: string;
   language: string;
@@ -200,17 +173,18 @@ export type BotPersonality = {
   gender_voice: string;
   fallback_message: string;
 
-  // Phase 3
   business_context: string;
   dos: string;
   donts: string;
+
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type BotInstruction = {
   id: UUID;
   organization_id: UUID;
   rules: Record<string, unknown>;
-  sub_organization_id: UUID | null;
   created_at?: string;
 };
 
@@ -220,13 +194,12 @@ export type BotInstruction = {
 export type Workflow = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   name: string;
   description: string | null;
   trigger: any;
 
-  mode: "auto" | "manual" | "smart" | "strict";
+  mode: "smart" | "strict";
   is_active: boolean;
 
   created_at: string;
@@ -264,7 +237,6 @@ export type CampaignStatus =
 export type Campaign = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   name: string;
   whatsapp_template_id: UUID | null;
@@ -304,7 +276,6 @@ export type CampaignMessageStatus =
 export type CampaignMessage = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   campaign_id: UUID;
   contact_id: UUID | null;
@@ -323,28 +294,11 @@ export type CampaignMessage = {
 };
 
 // -------------------------------------------------------------
-// CONTACT → CAMPAIGN SUMMARY VIEW
-// -------------------------------------------------------------
-export type ContactCampaignSummary = {
-  contact_id: UUID;
-  organization_id: UUID;
-
-  first_name: string | null;
-  last_name: string | null;
-  phone: string;
-  model: string | null;
-
-  delivered_campaigns: string[];
-  failed_campaigns: string[];
-};
-
-// -------------------------------------------------------------
-// WHATSAPP SETTINGS
+// WHATSAPP SETTINGS + TEMPLATES
 // -------------------------------------------------------------
 export type WhatsappSettings = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   phone_number: string | null;
   api_token: string | null;
@@ -368,7 +322,6 @@ export type WhatsappTemplateStatus =
 export type WhatsappTemplate = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   name: string;
   category: string | null;
@@ -391,7 +344,7 @@ export type WhatsappTemplate = {
 };
 
 // -------------------------------------------------------------
-// AI CONFIGURATION + USAGE (Phase 4)
+// AI CONFIGURATION + USAGE
 // -------------------------------------------------------------
 export type AIProvider = "openai" | "gemini";
 export type KBSearchType = "default" | "hybrid" | "title";
@@ -399,7 +352,6 @@ export type KBSearchType = "default" | "hybrid" | "title";
 export type AISettings = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
 
   ai_enabled: boolean;
   provider: AIProvider;
@@ -413,7 +365,6 @@ export type AISettings = {
 export type AIUsageLog = {
   id: UUID;
   organization_id: UUID;
-  sub_organization_id: UUID | null;
   conversation_id: UUID | null;
   message_id: UUID | null;
 
@@ -431,7 +382,9 @@ export type AIUsageLog = {
   created_at: string;
 };
 
-
+// -------------------------------------------------------------
+// WALLET
+// -------------------------------------------------------------
 export type Wallet = {
   id: UUID;
   organization_id: UUID;

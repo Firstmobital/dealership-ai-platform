@@ -2,7 +2,6 @@ import { useState } from "react";
 import Papa, { ParseResult } from "papaparse";
 import { supabase } from "../../../lib/supabaseClient";
 import { useOrganizationStore } from "../../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../../state/useSubOrganizationStore";
 
 /* -------------------------------------------------------------------------- */
 /* PROPS                                                                      */
@@ -27,7 +26,6 @@ type UploadRow = {
 /* -------------------------------------------------------------------------- */
 export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +52,6 @@ export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
               last_name: r.last_name?.trim() || null,
               model: r.model?.trim() || null,
               organization_id: currentOrganization.id,
-              sub_organization_id: activeSubOrg?.id || null,
             }));
 
           if (rows.length === 0) {
@@ -63,7 +60,7 @@ export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
 
           const { error } = await supabase
             .from("contacts")
-            .upsert(rows, { onConflict: "phone" });
+            .upsert(rows, { onConflict: "organization_id,phone" });
 
           if (error) throw error;
 

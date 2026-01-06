@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
+import { useOrganizationStore } from "./useOrganizationStore";
 
 /* ============================================================================
    TYPES
@@ -12,7 +13,6 @@ export type PsfCase = {
   id: string;
 
   organization_id: string;
-  sub_organization_id: string | null;
 
   campaign_id: string;
   campaign_name: string | null;
@@ -74,15 +74,23 @@ export const usePsfStore = create<PsfState>((set, get) => ({
   selectedCase: null,
 
   /* ------------------------------------------------------------------------
-     FETCH PSF CASES
+     FETCH PSF CASES (ORG ONLY)
   ------------------------------------------------------------------------ */
   fetchCases: async (opts = {}) => {
+    const { currentOrganization } = useOrganizationStore.getState();
+
+    if (!currentOrganization?.id) {
+      set({ cases: [], loading: false });
+      return;
+    }
+
     set({ loading: true, error: null });
 
     try {
       let query = supabase
         .from("psf_cases_view")
         .select("*")
+        .eq("organization_id", currentOrganization.id)
         .order("created_at", { ascending: false });
 
       if (opts.sentiment !== undefined) {
@@ -108,7 +116,7 @@ export const usePsfStore = create<PsfState>((set, get) => ({
       set({ cases: (data ?? []) as PsfCase[] });
     } catch (err: any) {
       console.error("[PSF] fetchCases error", err);
-      set({ error: err.message || "Failed to load PSF cases" });
+      set({ error: err?.message ?? "Failed to load PSF cases" });
     } finally {
       set({ loading: false });
     }
@@ -122,7 +130,7 @@ export const usePsfStore = create<PsfState>((set, get) => ({
   },
 
   /* ------------------------------------------------------------------------
-     MARK CASE AS RESOLVED
+     MARK CASE AS RESOLVED (ORG SAFE)
   ------------------------------------------------------------------------ */
   markResolved: async (psfCaseId: string) => {
     try {
@@ -136,12 +144,12 @@ export const usePsfStore = create<PsfState>((set, get) => ({
 
       if (error) throw error;
 
-      // ✅ Optimistic update (STRICTLY TYPED)
+      // ✅ Optimistic update
       const updatedCases: PsfCase[] = get().cases.map((c) =>
         c.id === psfCaseId
           ? {
               ...c,
-              resolution_status: "resolved" as PsfResolutionStatus,
+              resolution_status: "resolved",
               action_required: false,
             }
           : c
@@ -153,7 +161,7 @@ export const usePsfStore = create<PsfState>((set, get) => ({
           get().selectedCase?.id === psfCaseId
             ? {
                 ...get().selectedCase!,
-                resolution_status: "resolved" as PsfResolutionStatus,
+                resolution_status: "resolved",
                 action_required: false,
               }
             : get().selectedCase,

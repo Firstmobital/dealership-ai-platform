@@ -20,7 +20,6 @@ import {
 
 import { useWorkflowStore } from "../../state/useWorkflowStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import { WorkflowSimulator } from "./WorkflowSimulator";
 
 import type { Workflow, WorkflowStep } from "../../types/database";
@@ -72,7 +71,6 @@ function renderStepSummary(step: WorkflowStep) {
 
 export function WorkflowModule() {
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const {
     workflows,
@@ -130,7 +128,7 @@ export function WorkflowModule() {
     if (!currentOrganization?.id) return;
     fetchWorkflows().catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentOrganization?.id, activeSubOrg?.id]);
+  }, [currentOrganization?.id]);
 
   useEffect(() => {
     if (!workflowId) return;

@@ -21,7 +21,6 @@ import {
 
 import { useKnowledgeBaseStore } from "../../state/useKnowledgeBaseStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import type { KnowledgeArticle } from "../../types/database";
 
 /* -----------------------------------------------------------
@@ -103,7 +102,6 @@ export function KnowledgeBaseModule() {
   } = useKnowledgeBaseStore();
 
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const replaceFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -122,22 +120,12 @@ export function KnowledgeBaseModule() {
     if (!currentOrganization) return;
     fetchArticles();
     setSelectedArticle(null);
-  }, [currentOrganization?.id, activeSubOrg?.id]);
+  }, [currentOrganization?.id]);
 
   /* -----------------------------------------------------------
    * ORDER — DIVISION FIRST
    * -----------------------------------------------------------*/
-  const orderedArticles = useMemo(() => {
-    if (!activeSubOrg) return articles;
-
-    return [...articles].sort((a, b) => {
-      const aLocal = a.sub_organization_id === activeSubOrg.id;
-      const bLocal = b.sub_organization_id === activeSubOrg.id;
-      if (aLocal && !bLocal) return -1;
-      if (!aLocal && bLocal) return 1;
-      return 0;
-    });
-  }, [articles, activeSubOrg]);
+  
 
   /* -----------------------------------------------------------
    * Manual Create / Update (DRAFT BY DEFAULT)
@@ -290,7 +278,7 @@ export function KnowledgeBaseModule() {
         {/* LEFT — ARTICLES */}
         <div className="w-[35%] overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold">
-            Articles ({orderedArticles.length})
+            Articles ({articles.length})
           </h2>
 
           {loading || uploading ? (
@@ -300,7 +288,7 @@ export function KnowledgeBaseModule() {
             </div>
           ) : (
             <ul className="space-y-2">
-              {orderedArticles.map((a) => (
+              {articles.map((a) => (
                 <li
                   key={a.id}
                   onClick={() => setSelectedArticle(a)}

@@ -12,7 +12,6 @@ import {
 
 import { useUnansweredQuestionsStore } from "../../state/useUnansweredQuestionsStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import type { UnansweredQuestion } from "../../types/database";
 
 export function UnansweredQuestionsModule() {
@@ -27,7 +26,6 @@ export function UnansweredQuestionsModule() {
   } = useUnansweredQuestionsStore();
 
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const [selected, setSelected] = useState<UnansweredQuestion | null>(null);
   const [kbTitle, setKbTitle] = useState("");
@@ -37,7 +35,7 @@ export function UnansweredQuestionsModule() {
     if (!currentOrganization) return;
     fetchUnanswered().catch(console.error);
     setSelected(null);
-  }, [currentOrganization?.id, activeSubOrg?.id]);
+  }, [currentOrganization?.id]);
 
   const handleSaveToKnowledge = async () => {
     if (!selected) return;

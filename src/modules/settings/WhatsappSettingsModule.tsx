@@ -1,15 +1,13 @@
+// src/modules/settings/WhatsappSettingsModule.tsx
 import { useEffect, useState } from "react";
 import {
   Loader2,
   Phone,
   Save,
-  ShieldCheck,
-  AlertTriangle,
 } from "lucide-react";
 
 import { useWhatsappSettingsStore } from "../../state/useWhatsappSettingsStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
 export function WhatsappSettingsModule() {
   const {
@@ -18,14 +16,12 @@ export function WhatsappSettingsModule() {
     saving,
     error,
     success,
-    isOrgFallback,
     fetchSettings,
     saveSettings,
     clearError,
   } = useWhatsappSettingsStore();
 
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const [form, setForm] = useState({
     phone_number: "",
@@ -39,9 +35,9 @@ export function WhatsappSettingsModule() {
   /* LOAD SETTINGS                                                       */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!currentOrganization) return;
+    if (!currentOrganization?.id) return;
     fetchSettings().catch(console.error);
-  }, [currentOrganization?.id, activeSubOrg?.id]);
+  }, [currentOrganization?.id]);
 
   useEffect(() => {
     if (!settings) return;
@@ -70,8 +66,6 @@ export function WhatsappSettingsModule() {
     });
   };
 
-  const isDivisionContext = Boolean(activeSubOrg);
-
   /* ------------------------------------------------------------------ */
   /* UI                                                                 */
   /* ------------------------------------------------------------------ */
@@ -83,40 +77,18 @@ export function WhatsappSettingsModule() {
           WhatsApp Settings
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Configure WhatsApp Cloud API for this{" "}
-          {isDivisionContext ? "division" : "organization"}.
+          Configure WhatsApp Cloud API for this organization.
         </p>
       </div>
 
       {/* Context Banner */}
-      {activeSubOrg && isOrgFallback && (
-        <div className="flex items-start gap-3 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
-          <AlertTriangle size={18} className="text-yellow-500" />
-          <p className="text-sm text-yellow-800">
-            This division has no WhatsApp override. Using organization-level
-            settings.
-          </p>
-        </div>
-      )}
-
-      {activeSubOrg && !isOrgFallback && (
-        <div className="flex items-start gap-3 rounded-lg border border-green-200 bg-green-50 p-3">
-          <ShieldCheck size={18} className="text-green-600" />
-          <p className="text-sm text-green-800">
-            Division-specific WhatsApp configuration is active.
-          </p>
-        </div>
-      )}
-
-      {!activeSubOrg && (
-        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
-          <Phone size={18} className="text-blue-600" />
-          <p className="text-sm text-blue-800">
-            Organization-level WhatsApp settings. Divisions inherit these by
-            default.
-          </p>
-        </div>
-      )}
+      <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+        <Phone size={18} className="text-blue-600" />
+        <p className="text-sm text-blue-800">
+          Organization-level WhatsApp configuration. All chats and campaigns
+          use this number.
+        </p>
+      </div>
 
       {/* Card */}
       <form

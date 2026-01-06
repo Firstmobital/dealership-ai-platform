@@ -1,12 +1,8 @@
 // src/state/useChatStore.ts
-
-// src/state/useChatStore.ts
-
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
 import type { Conversation, Message } from "../types/database";
-import { useSubOrganizationStore } from "./useSubOrganizationStore";
 
 /* ========================================================================== */
 /*  REALTIME INIT GUARD (CRITICAL)                                             */
@@ -134,10 +130,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unread: {},
 
   /* -------------------------------------------------------------------------- */
-  /* FETCH CONVERSATIONS (WITH SEARCH + FILTERS)                                */
+  /* FETCH CONVERSATIONS (ORG ONLY)                                             */
   /* -------------------------------------------------------------------------- */
   fetchConversations: async (organizationId, params) => {
-    const { activeSubOrg } = useSubOrganizationStore.getState();
     const search = (params?.search ?? "").trim();
     const intent = params?.intent ?? null;
     const assignedTo = params?.assignedTo ?? null;
@@ -151,16 +146,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .order("last_message_at", { ascending: false })
       .limit(200);
 
-    // Division scoping
-    if (activeSubOrg) query = query.eq("sub_organization_id", activeSubOrg.id);
-
-    // Intent filter
     if (intent) query = query.eq("intent", intent);
-
-    // Assigned filter
     if (assignedTo) query = query.eq("assigned_to", assignedTo);
 
-    // Search by phone or name
     if (search) {
       const digits = search.replace(/\D/g, "");
       const nameTerm = `%${search}%`;
@@ -238,16 +226,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         (payload) => {
           const convRaw = payload.new as any;
-          const { activeSubOrg } = useSubOrganizationStore.getState();
-
-          if (activeSubOrg && convRaw.sub_organization_id !== activeSubOrg.id)
-            return;
 
           if (get().conversations.some((c) => c.id === convRaw.id)) return;
 
           void (async () => {
             const contact = await fetchContactForConversation(convRaw);
-            const conv = normalizeConversation({ ...convRaw, contacts: contact });
+            const conv = normalizeConversation({
+              ...convRaw,
+              contacts: contact,
+            });
             set({ conversations: [conv, ...get().conversations] });
           })();
         }
@@ -266,15 +253,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
           if (existing.some((m) => m.id === msg.id)) return;
 
-          const { activeSubOrg } = useSubOrganizationStore.getState();
-          if (activeSubOrg) {
-            const conv = get().conversations.find(
-              (c) => c.id === msg.conversation_id
-            );
-            if (!conv) return;
-          }
-
-          const isActive = get().activeConversationId === msg.conversation_id;
+          const isActive =
+            get().activeConversationId === msg.conversation_id;
 
           set({
             messages: {
@@ -307,7 +287,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setFilter: (filter) => set({ filter }),
 
-  // 🔍 Phase 1B setters
+  // 🔍 setters
   setSearch: (q) => set({ search: q }),
   setIntentFilter: (intent) => set({ intentFilter: intent }),
   setAssignedFilter: (userId) => set({ assignedFilter: userId }),
@@ -326,7 +306,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       aiToggle: { ...state.aiToggle, [conversationId]: enabled },
       conversations: state.conversations.map((c) =>
-        c.id === conversationId ? { ...c, ai_enabled: enabled } : c
+        c.id === conversationId
+          ? { ...c, ai_enabled: enabled }
+          : c
       ),
     }));
   },
@@ -343,19 +325,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { noReply: false };
     }
 
-    const conv = get().conversations.find((c) => c.id === conversationId);
-    const subOrgId =
-      (conv as any)?.sub_organization_id ??
-      useSubOrganizationStore.getState().activeSubOrg?.id ??
-      null;
-
     await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender: payload.sender ?? "user",
       message_type: payload.message_type ?? "text",
       text,
       channel: payload.channel ?? "web",
-      sub_organization_id: subOrgId,
     });
 
     const aiEnabled = get().aiToggle[conversationId];

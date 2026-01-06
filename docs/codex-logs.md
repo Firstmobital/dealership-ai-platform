@@ -657,3 +657,91 @@ This completes the deterministic AI Decision Engine foundation.
 
 Phase 6.3 is complete and locked.  
 All unanswered-question handling is now production-grade and auditable.
+
+## 2026-01-06
+### Architecture Simplification & PSF Fix
+
+- Removed sub-organization layer to avoid data fragmentation
+- Simplified RLS to organization-only scoping
+- Fixed PSF pipeline by inserting entries at message send time
+- Added immediate campaign dispatch via Edge Function
+- Campaigns now send instantly on "Send Now"
+
+## 2026-01-06
+### Removed Sub-Organization Layer
+
+- Completely removed sub-organization concept
+- Simplified tenancy to organization-only
+- Fixed data visibility issues caused by sub-org filtering
+- Added organization creation flow with phone-based identity
+- Prepared system for clean campaign & PSF pipelines
+- Adjusted sub-organization removal migration to match existing schema (PSF table not yet present)
+
+
+## 2026-01-06
+### Sub-Organization Removed
+
+- Dropped sub_organizations and sub_organization_users tables
+- Simplified tenancy to organization-only
+- Confirmed all core modules already operate at org level
+- Eliminated data visibility issues caused by partial sub-org implementation
+
+## 2026-01-06
+### Sub-Org RLS Teardown & Org-Only Security
+
+- Removed all RLS policies dependent on sub_organization_users
+- Replaced with organization-only RLS policies
+- Safely dropped sub_organizations and sub_organization_users tables
+- Simplified security model across conversations, messages, campaigns, KB, bots
+
+- Fixed RLS policies by casting JWT organization_id from text to uuid
+
+## 2026-01-06
+### Organization-Only RLS Migration
+
+- Replaced all sub-organization based RLS with organization-only policies
+- Enforced explicit UUID casting for JWT organization_id
+- Simplified security across conversations, messages, campaigns, PSF, bots, wallets
+
+## 2026-01-06
+### Final Organization-Only RLS Migration
+
+- Rebuilt RLS using schema-aware org and parent-based policies
+- Removed all sub-organization dependencies
+- Fixed UUID vs JWT casting issues
+- Stabilized visibility for chats, campaigns, PSF, wallets
+
+## 2026-01-06
+### Sub-Organization Fully Removed
+
+- Dropped all foreign key constraints referencing sub_organizations
+- Removed sub_organization_id columns from all tables
+- Safely dropped sub_organizations table without CASCADE
+- Completed transition to organization-only architecture
+
+## 2026-01-06
+### Sub-Organization Fully Removed
+
+- Dropped all foreign key constraints referencing sub_organizations
+- Removed sub_organization_id columns from all tables
+- Safely dropped sub_organizations table without CASCADE
+- Completed transition to organization-only architecture
+- Updated dependent views (e.g., whatsapp_overview_daily_v1) to remove sub_organization_id references
+- Rebuilt whatsapp_overview_daily_v1 without sub_organization_id and removed invalid message direction reference
+
+## 2026-01-06
+### Sub-Organization Removal Completed
+
+- Removed all remaining foreign keys referencing sub_organizations
+- Dropped sub_organization_id columns from all dependent tables
+- Updated dependent views to org-only structure
+- Dropped sub_organizations and sub_organization_users tables
+- Platform now fully organization-only
+- Dropped and rebuilt campaign-related analytics views to remove sub_organization_id dependency
+## 2026-01-06
+### Sub-Organization Removal Fully Completed
+
+- Dropped final sub_organizations RLS policies
+- Dropped sub_organizations table
+- Verified zero remaining sub-organization references
+- Platform now strictly organization-based

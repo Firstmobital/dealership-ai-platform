@@ -17,7 +17,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useCampaignStore } from "../../state/useCampaignStore";
 import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 import { supabase } from "../../lib/supabaseClient";
 
 /* ========================================================================
@@ -154,7 +153,6 @@ export function CampaignsModule() {
   } = useWhatsappTemplateStore();
 
   const { currentOrganization } = useOrganizationStore();
-  const { activeSubOrg } = useSubOrganizationStore();
 
   const [mode, setMode] = useState<Mode>("view");
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(
@@ -214,8 +212,9 @@ export function CampaignsModule() {
   useEffect(() => {
     if (!currentOrganization?.id) return;
     fetchCampaigns(currentOrganization.id);
-    fetchApprovedTemplates(currentOrganization.id);
-  }, [currentOrganization?.id, activeSubOrg?.id]);
+    fetchApprovedTemplates();
+  }, [currentOrganization?.id]);
+
 
   useEffect(() => {
     if (selectedCampaignId && !messages[selectedCampaignId]) {
@@ -386,7 +385,6 @@ export function CampaignsModule() {
     try {
       const id = await createCampaignWithMessages({
         organizationId: currentOrganization.id,
-        sub_organization_id: activeSubOrg?.id ?? null,
         name: builder.name.trim(),
         description: builder.description?.trim() ?? "",
         whatsapp_template_id: builder.whatsapp_template_id,
@@ -482,7 +480,6 @@ export function CampaignsModule() {
           },
           body: JSON.stringify({
             organization_id: currentOrganization.id,
-            sub_organization_id: activeSubOrg?.id ?? null,
             to: phone,
             text: previewBody,
           }),
@@ -577,7 +574,7 @@ export function CampaignsModule() {
       setMediaUploadSuccess(true);
       setMediaPickedFileName(file.name);
 
-      await fetchApprovedTemplates(currentOrganization.id);
+      await fetchApprovedTemplates();
     } catch (e: any) {
       console.error("[CampaignsModule] media upload failed", e);
       setMediaError(e.message ?? "Media upload failed");

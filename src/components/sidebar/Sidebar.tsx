@@ -89,12 +89,6 @@ export function Sidebar() {
         />
 
         <SidebarLink
-          to="/settings/sub-orgs"
-          icon={Building2}
-          label="Divisions"
-        />
-
-        <SidebarLink
           to="/settings/ai-config"
           icon={Sparkles}
           label="AI Configuration"

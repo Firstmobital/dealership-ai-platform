@@ -1,25 +1,18 @@
+//Users/air/dealership-ai-platform/src/lib/api/whatsapp.ts
 import { supabase } from "../supabaseClient";
 import type { WhatsappSettings } from "../../types/database";
 
 /* =============================================================================
-   FETCH WhatsApp settings FOR ORG + SUB-ORG
+   FETCH WhatsApp settings (ORGANIZATION ONLY)
 ============================================================================= */
 export async function fetchWhatsappSettings(
-  organizationId: string,
-  subOrganizationId: string | null
+  organizationId: string
 ): Promise<WhatsappSettings | null> {
-  let query = supabase
+  const { data, error } = await supabase
     .from("whatsapp_settings")
     .select("*")
-    .eq("organization_id", organizationId);
-
-  if (subOrganizationId) {
-    query = query.eq("sub_organization_id", subOrganizationId);
-  } else {
-    query = query.is("sub_organization_id", null);
-  }
-
-  const { data, error } = await query.maybeSingle();
+    .eq("organization_id", organizationId)
+    .maybeSingle();
 
   if (error) {
     console.error("[WA-SETTINGS] Load error:", error);
@@ -31,7 +24,6 @@ export async function fetchWhatsappSettings(
   return {
     ...data,
     organization_id: data.organization_id ?? organizationId,
-    sub_organization_id: data.sub_organization_id ?? subOrganizationId ?? null,
 
     phone_number: data.phone_number ?? "",
     api_token: data.api_token ?? "",
@@ -43,16 +35,14 @@ export async function fetchWhatsappSettings(
 }
 
 /* =============================================================================
-   UPSERT WhatsApp settings FOR ORG + SUB-ORG
+   UPSERT WhatsApp settings (ORGANIZATION ONLY)
 ============================================================================= */
 export async function upsertWhatsappSettings(
   organizationId: string,
-  subOrganizationId: string | null,
   values: Partial<WhatsappSettings>
 ): Promise<WhatsappSettings> {
   const payload = {
     organization_id: organizationId,
-    sub_organization_id: subOrganizationId ?? null,
 
     phone_number: values.phone_number ?? null,
     api_token: values.api_token ?? null,
@@ -66,7 +56,7 @@ export async function upsertWhatsappSettings(
   const { data, error } = await supabase
     .from("whatsapp_settings")
     .upsert(payload, {
-      onConflict: "organization_id,sub_organization_id",
+      onConflict: "organization_id",
     })
     .select()
     .maybeSingle();
@@ -79,7 +69,6 @@ export async function upsertWhatsappSettings(
   return {
     ...data,
     organization_id: data.organization_id ?? organizationId,
-    sub_organization_id: data.sub_organization_id ?? subOrganizationId ?? null,
 
     phone_number: data.phone_number ?? "",
     api_token: data.api_token ?? "",
@@ -89,5 +78,3 @@ export async function upsertWhatsappSettings(
     is_active: data.is_active ?? true,
   } as WhatsappSettings;
 }
-
-

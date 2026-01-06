@@ -1,81 +1,141 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
-import { useSubOrganizationStore } from "./useSubOrganizationStore";
+import type { BotPersonality } from "../types/database";
 
 type BotPersonalityState = {
+  personality: BotPersonality | null;
   loading: boolean;
   saving: boolean;
   error: string | null;
-
-  personality: any | null;
-  instructions: any | null;
+  success: string | null;
 
   fetchPersonality: () => Promise<void>;
-  savePersonality: (data: any) => Promise<void>;
+  savePersonality: (params: {
+    system_prompt: string;
+    greeting_message: string;
+    fallback_message: string;
+    language: string;
+    tone: string;
+  }) => Promise<void>;
+
+  clearError: () => void;
+  clearSuccess: () => void;
 };
 
-export const useBotPersonalityStore = create<BotPersonalityState>((set) => ({
+export const useBotPersonalityStore = create<BotPersonalityState>((set, get) => ({
+  personality: null,
   loading: false,
   saving: false,
   error: null,
+  success: null,
 
-  personality: null,
-  instructions: null,
+  clearError: () => set({ error: null }),
+  clearSuccess: () => set({ success: null }),
 
-  async fetchPersonality() {
+  /* ---------------------------------------------------------
+     FETCH BOT PERSONALITY (ORG ONLY)
+  --------------------------------------------------------- */
+  fetchPersonality: async () => {
+    const { currentOrganization } = useOrganizationStore.getState();
+
+    if (!currentOrganization?.id) {
+      set({
+        error: "Select an organization to configure bot personality.",
+        personality: null,
+      });
+      return;
+    }
+
     set({ loading: true, error: null });
 
-    const org = useOrganizationStore.getState().currentOrganization;
-    const sub = useSubOrganizationStore.getState().activeSubOrg;
+    try {
+      const { data, error } = await supabase
+        .from("bot_personality")
+        .select("*")
+        .eq("organization_id", currentOrganization.id)
+        .maybeSingle();
 
-    if (!org?.id) return;
+      if (error) {
+        set({
+          loading: false,
+          personality: null,
+          error: error.message,
+        });
+        return;
+      }
 
-    const q = supabase
-      .from("bot_personality")
-      .select("*")
-      .eq("organization_id", org.id);
-
-    const { data } = sub?.id
-      ? await q.eq("sub_organization_id", sub.id).maybeSingle()
-      : await q.is("sub_organization_id", null).maybeSingle();
-
-    const rulesQ = supabase
-      .from("bot_instructions")
-      .select("*")
-      .eq("organization_id", org.id);
-
-    const { data: rules } = sub?.id
-      ? await rulesQ.eq("sub_organization_id", sub.id).maybeSingle()
-      : await rulesQ.is("sub_organization_id", null).maybeSingle();
-
-    set({
-      personality: data ?? {},
-      instructions: rules ?? { rules: {} },
-      loading: false,
-    });
+      set({
+        loading: false,
+        personality: data ?? null,
+      });
+    } catch (err: any) {
+      set({
+        loading: false,
+        personality: null,
+        error:
+          err?.message ??
+          "Unexpected error while loading bot personality.",
+      });
+    }
   },
 
-  async savePersonality(payload) {
-    set({ saving: true, error: null });
+  /* ---------------------------------------------------------
+     SAVE BOT PERSONALITY (UPSERT BY ORGANIZATION)
+  --------------------------------------------------------- */
+  savePersonality: async ({
+    system_prompt,
+    greeting_message,
+    fallback_message,
+    language,
+    tone,
+  }) => {
+    const { currentOrganization } = useOrganizationStore.getState();
 
-    const org = useOrganizationStore.getState().currentOrganization;
-    const sub = useSubOrganizationStore.getState().activeSubOrg;
+    if (!currentOrganization?.id) {
+      set({ error: "Select an organization before saving bot personality." });
+      return;
+    }
 
-    if (!org?.id) return;
+    set({ saving: true, error: null, success: null });
 
-    await supabase.from("bot_personality").upsert({
-      organization_id: org.id,
-      sub_organization_id: sub?.id ?? null,
-      ...payload.personality,
-    });
+    try {
+      const payload = {
+        organization_id: currentOrganization.id,
+        system_prompt,
+        greeting_message,
+        fallback_message,
+        language,
+        tone,
+      };
 
-    await supabase.from("bot_instructions").upsert({
-      organization_id: org.id,
-      sub_organization_id: sub?.id ?? null,
-      rules: payload.instructions,
-    });
+      const { data, error } = await supabase
+        .from("bot_personality")
+        .upsert(payload, { onConflict: "organization_id" })
+        .select("*")
+        .single();
 
-    set({ saving: false });
+      if (error) {
+        set({ saving: false, error: error.message });
+        return;
+      }
+
+      set({
+        saving: false,
+        personality: data,
+        success: "Bot personality saved successfully!",
+      });
+
+      setTimeout(() => {
+        if (get().success) set({ success: null });
+      }, 2000);
+    } catch (err: any) {
+      set({
+        saving: false,
+        error:
+          err?.message ??
+          "Unexpected error while saving bot personality.",
+      });
+    }
   },
 }));

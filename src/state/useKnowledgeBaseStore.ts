@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
-import { useSubOrganizationStore } from "./useSubOrganizationStore";
 import type { KnowledgeArticle } from "../types/database";
 
 /* -----------------------------------------------------------
@@ -81,11 +80,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSearchTerm: (term) => set({ searchTerm: term }),
 
   /* -----------------------------------------------------------
-     FETCH ARTICLES
+     FETCH ARTICLES (ORG ONLY)
   ----------------------------------------------------------- */
   fetchArticles: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
     const { searchTerm } = get();
 
     if (!currentOrganization) {
@@ -96,19 +94,12 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     set({ loading: true, error: null });
 
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from("knowledge_articles")
         .select("*")
         .eq("organization_id", currentOrganization.id)
         .order("updated_at", { ascending: false });
 
-      if (activeSubOrg) {
-        query = query.or(
-          `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
-        );
-      }
-
-      const { data, error } = await query;
       if (error) throw error;
 
       let articles = (data ?? []) as KnowledgeArticle[];
@@ -134,12 +125,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM TEXT (DRAFT BY DEFAULT)
+     CREATE FROM TEXT
   ----------------------------------------------------------- */
   createArticleFromText: async ({ title, content, keywords, status }) => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-
     if (!currentOrganization) return;
 
     set({ uploading: true, error: null });
@@ -148,7 +137,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const { error } = await supabase.functions.invoke("ai-generate-kb", {
         body: {
           organization_id: currentOrganization.id,
-          sub_organization_id: activeSubOrg?.id ?? null,
           source_type: "text",
           title,
           content,
@@ -170,12 +158,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM FILE (DRAFT BY DEFAULT)
+     CREATE FROM FILE
   ----------------------------------------------------------- */
   createArticleFromFile: async ({ file, title, keywords, status }) => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-
     if (!currentOrganization) return;
 
     if (!ALLOWED_FILE_TYPES.includes(file.type)) {
@@ -204,7 +190,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         {
           body: {
             organization_id: currentOrganization.id,
-            sub_organization_id: activeSubOrg?.id ?? null,
             source_type: "file",
             title: title || file.name,
             status: status ?? "draft",
@@ -234,7 +219,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   ----------------------------------------------------------- */
   replaceFileForArticle: async ({ article, file, keywords }) => {
     const { currentOrganization } = useOrganizationStore.getState();
-
     if (!currentOrganization || article.source_type !== "file") return;
 
     if (!ALLOWED_FILE_TYPES.includes(file.type)) {
@@ -314,9 +298,16 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     UPDATE ARTICLE (TEXT + STATUS)
+     UPDATE ARTICLE
   ----------------------------------------------------------- */
-  updateArticle: async ({ id, title, content, keywords, status, published_at }) => {
+  updateArticle: async ({
+    id,
+    title,
+    content,
+    keywords,
+    status,
+    published_at,
+  }) => {
     const { currentOrganization } = useOrganizationStore.getState();
     if (!currentOrganization) return;
 

@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { Building2 } from "lucide-react";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
-import { useSubOrganizationStore } from "../../state/useSubOrganizationStore";
 
 export function OrganizationSwitcher() {
   const {
@@ -13,7 +12,6 @@ export function OrganizationSwitcher() {
     switchOrganization,
   } = useOrganizationStore();
 
-  const { setActive } = useSubOrganizationStore();
 
   useEffect(() => {
     if (!organizations.length) {
@@ -26,7 +24,6 @@ export function OrganizationSwitcher() {
     if (!orgId) return;
 
     switchOrganization(orgId);
-    setActive(null); // 🔑 clear division when org changes
   };
 
   if (!organizations.length) {

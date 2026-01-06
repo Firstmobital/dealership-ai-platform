@@ -12,7 +12,8 @@ import { CampaignsModule } from "./modules/campaigns/CampaignsModule";
 import { SettingsModule } from "./modules/dashboard/SettingsModule";
 import { WhatsappSettingsModule } from "./modules/settings/WhatsappSettingsModule";
 import { UnansweredQuestionsModule } from "./modules/unanswered/UnansweredQuestionsModule";
-import { SubOrganizationsPanel } from "./modules/settings/SubOrganizationsPanel";
+import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesModule";
+import { AIConfigurationModule } from "./modules/settings/AIConfigurationModule";
 
 import { LoginPage } from "./modules/auth/LoginPage";
 import { SignupPage } from "./modules/auth/SignupPage";
@@ -26,8 +27,6 @@ import { useChatStore } from "./state/useChatStore";
 import { Toaster } from "react-hot-toast";
 import DatabasePage from "./modules/database/pages/DatabasePage";
 import { WhatsappOverviewPage } from "./modules/analytics/pages/WhatsappOverviewPage";
-import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesModule";
-import { AIConfigurationModule } from "./modules/settings/AIConfigurationModule";
 import WalletPage from "./pages/settings/WalletPage";
 
 /* ================= PSF MODULE ================= */
@@ -79,36 +78,30 @@ function RequireAuth({ children }: { children: ReactElement }) {
 function App() {
   const { user } = useAuthStore();
 
-  const {
-    currentOrganization,
-    fetchOrganizations,
-  } = useOrganizationStore();
+  const { currentOrganization, fetchOrganizations } =
+    useOrganizationStore();
 
   const initRealtime = useChatStore((s) => s.initRealtime);
   const fetchConversations = useChatStore((s) => s.fetchConversations);
 
-  /**
-   * 1) Load organizations after login
-   */
+  /* ---------------------------------------------------------------------- */
+  /* 1) Load organizations after login                                      */
+  /* ---------------------------------------------------------------------- */
   useEffect(() => {
     if (user) {
       fetchOrganizations().catch(console.error);
     }
   }, [user, fetchOrganizations]);
 
-  /**
-   * 2) Start realtime ONLY after organization is known
-   */
+  /* ---------------------------------------------------------------------- */
+  /* 2) Start realtime ONLY after organization is known                     */
+  /* ---------------------------------------------------------------------- */
   useEffect(() => {
     if (!currentOrganization?.id) return;
 
     initRealtime(currentOrganization.id);
     fetchConversations(currentOrganization.id);
-  }, [
-    currentOrganization?.id,
-    initRealtime,
-    fetchConversations,
-  ]);
+  }, [currentOrganization?.id, initRealtime, fetchConversations]);
 
   return (
     <Routes>
@@ -140,30 +133,30 @@ function App() {
         <Route path="workflows" element={<WorkflowModule />} />
         <Route path="campaigns" element={<CampaignsModule />} />
 
-        {/* ✅ PSF ROUTE */}
+        {/* ✅ PSF */}
         <Route path="psf" element={<PsfModule />} />
 
-        <Route
-          path="settings/whatsapp-templates"
-          element={<WhatsappTemplatesModule />}
-        />
-        <Route path="database" element={<DatabasePage />} />
-        <Route path="settings" element={<SettingsModule />} />
+        {/* ----------------------- Analytics & Data -------------------------- */}
         <Route path="analytics" element={<WhatsappOverviewPage />} />
+        <Route path="database" element={<DatabasePage />} />
 
+        {/* -------------------------- Settings ------------------------------- */}
+        <Route path="settings" element={<SettingsModule />} />
         <Route
           path="settings/whatsapp"
           element={<WhatsappSettingsModule />}
         />
         <Route
-          path="settings/sub-orgs"
-          element={<SubOrganizationsPanel />}
+          path="settings/whatsapp-templates"
+          element={<WhatsappTemplatesModule />}
         />
         <Route
           path="settings/ai-config"
           element={<AIConfigurationModule />}
         />
         <Route path="settings/wallet" element={<WalletPage />} />
+
+        {/* --------------------- Knowledge feedback -------------------------- */}
         <Route
           path="unanswered"
           element={<UnansweredQuestionsModule />}

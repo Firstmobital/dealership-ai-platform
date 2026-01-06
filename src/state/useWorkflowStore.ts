@@ -1,9 +1,6 @@
-// src/state/useWorkflowStore.ts
-
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
-import { useSubOrganizationStore } from "./useSubOrganizationStore";
 
 import type { Workflow, WorkflowStep, WorkflowLog } from "../types/database";
 
@@ -51,49 +48,37 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   error: null,
 
   selectedWorkflow: null,
-
   setSelectedWorkflow: (wf) => set({ selectedWorkflow: wf }),
 
-  /* ============================================================================
-     FETCH WORKFLOWS (ORG + DIVISION FALLBACK)
-  ============================================================================ */
+  /* =====================================================
+     FETCH WORKFLOWS (ORG ONLY)
+  ===================================================== */
   fetchWorkflows: async () => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-    if (!currentOrganization) return;
-
-    const orgId = currentOrganization.id;
+    if (!currentOrganization?.id) {
+      set({ workflows: [] });
+      return;
+    }
 
     set({ loading: true, error: null });
 
-    let query = supabase
+    const { data, error } = await supabase
       .from("workflows")
       .select("*")
-      .eq("organization_id", orgId);
-
-    // ✅ Division selected → division + org workflows
-    if (activeSubOrg) {
-      query = query.or(
-        `sub_organization_id.eq.${activeSubOrg.id},sub_organization_id.is.null`
-      );
-    }
-    // ✅ ALL divisions → no sub-org filter
-
-    const { data, error } = await query.order("created_at", {
-      ascending: false,
-    });
+      .eq("organization_id", currentOrganization.id)
+      .order("created_at", { ascending: false });
 
     if (error) {
-      set({ error: error.message, loading: false });
+      set({ loading: false, error: error.message });
       return;
     }
 
     set({ workflows: data ?? [], loading: false });
   },
 
-  /* ============================================================================
-     FETCH STEPS
-  ============================================================================ */
+  /* =====================================================
+     FETCH WORKFLOW STEPS
+  ===================================================== */
   fetchWorkflowSteps: async (workflowId) => {
     const { data, error } = await supabase
       .from("workflow_steps")
@@ -111,9 +96,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }));
   },
 
-  /* ============================================================================
-     FETCH LOGS
-  ============================================================================ */
+  /* =====================================================
+     FETCH WORKFLOW LOGS
+  ===================================================== */
   fetchWorkflowLogs: async (workflowId) => {
     const { data, error } = await supabase
       .from("workflow_logs")
@@ -131,9 +116,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }));
   },
 
-  /* ============================================================================
+  /* =====================================================
      SAVE WORKFLOW
-  ============================================================================ */
+  ===================================================== */
   saveWorkflow: async (payload) => {
     if (payload.id) {
       await get().updateWorkflow(payload.id, payload);
@@ -142,13 +127,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     return await get().createWorkflow(payload);
   },
 
-  /* ============================================================================
+  /* =====================================================
      CREATE WORKFLOW
-  ============================================================================ */
+  ===================================================== */
   createWorkflow: async (payload) => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-    if (!currentOrganization) return null;
+    if (!currentOrganization?.id) return null;
 
     set({ saving: true, error: null });
 
@@ -156,7 +140,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       .from("workflows")
       .insert({
         organization_id: currentOrganization.id,
-        sub_organization_id: activeSubOrg?.id ?? null,
         name: payload.name,
         description: payload.description ?? null,
         trigger: payload.trigger ?? { type: "always" },
@@ -179,9 +162,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     return data.id;
   },
 
-  /* ============================================================================
+  /* =====================================================
      UPDATE WORKFLOW
-  ============================================================================ */
+  ===================================================== */
   updateWorkflow: async (id, payload) => {
     set({ saving: true, error: null });
 
@@ -205,9 +188,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     });
   },
 
-  /* ============================================================================
+  /* =====================================================
      DELETE WORKFLOW
-  ============================================================================ */
+  ===================================================== */
   deleteWorkflow: async (workflowId) => {
     set({ saving: true, error: null });
 
@@ -227,12 +210,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     });
   },
 
-  /* ============================================================================
+  /* =====================================================
      ADD STEP
-  ============================================================================ */
+  ===================================================== */
   addStep: async (workflowId, action) => {
-    const stepOrder =
-      (get().steps[workflowId]?.length ?? 0) + 1;
+    const stepOrder = (get().steps[workflowId]?.length ?? 0) + 1;
 
     const { error } = await supabase.from("workflow_steps").insert({
       workflow_id: workflowId,
@@ -248,9 +230,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     await get().fetchWorkflowSteps(workflowId);
   },
 
-  /* ============================================================================
+  /* =====================================================
      UPDATE STEP
-  ============================================================================ */
+  ===================================================== */
   updateStep: async (stepId, action) => {
     const { error } = await supabase
       .from("workflow_steps")
@@ -260,9 +242,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (error) set({ error: error.message });
   },
 
-  /* ============================================================================
+  /* =====================================================
      DELETE STEP
-  ============================================================================ */
+  ===================================================== */
   deleteStep: async (workflowId, stepId) => {
     const { error } = await supabase
       .from("workflow_steps")
@@ -277,9 +259,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     await get().fetchWorkflowSteps(workflowId);
   },
 
-  /* ============================================================================
+  /* =====================================================
      REORDER STEPS
-  ============================================================================ */
+  ===================================================== */
   reorderSteps: async (workflowId, orderedIds) => {
     const updates = orderedIds.map((id, index) => ({
       id,
@@ -298,9 +280,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     await get().fetchWorkflowSteps(workflowId);
   },
 
-  /* ============================================================================
+  /* =====================================================
      CLONE WORKFLOW
-  ============================================================================ */
+  ===================================================== */
   cloneWorkflow: async (workflowId) => {
     const state = get();
 
@@ -315,9 +297,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const { data: newWF, error } = await supabase
       .from("workflows")
       .insert({
-        ...wf,
-        id: undefined,
-        name: wf.name + " (Copy)",
+        organization_id: wf.organization_id,
+        name: `${wf.name} (Copy)`,
+        description: wf.description,
+        trigger: wf.trigger,
+        mode: wf.mode,
+        is_active: wf.is_active,
       })
       .select()
       .single();
@@ -331,12 +316,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       .order("step_order");
 
     if (wfSteps?.length) {
-      const clonedSteps = wfSteps.map((s: any) => ({
-        workflow_id: newWF.id,
-        step_order: s.step_order,
-        action: s.action,
-      }));
-      await supabase.from("workflow_steps").insert(clonedSteps);
+      await supabase.from("workflow_steps").insert(
+        wfSteps.map((s: any) => ({
+          workflow_id: newWF.id,
+          step_order: s.step_order,
+          action: s.action,
+        }))
+      );
     }
 
     await state.fetchWorkflows();
@@ -345,13 +331,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     return newWF.id;
   },
 
-  /* ============================================================================
-     GENERATE WORKFLOW FROM DESCRIPTION
-  ============================================================================ */
+  /* =====================================================
+     GENERATE WORKFLOW FROM DESCRIPTION (AI)
+  ===================================================== */
   generateWorkflowFromDescription: async (description) => {
     const { currentOrganization } = useOrganizationStore.getState();
-    const { activeSubOrg } = useSubOrganizationStore.getState();
-    if (!currentOrganization) return null;
+    if (!currentOrganization?.id) return null;
 
     set({ saving: true, error: null });
 
@@ -368,17 +353,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (error || !data?.workflow) {
       set({
         saving: false,
-        error: error?.message ?? "Failed to generate workflow using AI.",
+        error: error?.message ?? "Failed to generate workflow.",
       });
       return null;
     }
 
     const wf = data.workflow;
+
     const { data: newWF, error: insertErr } = await supabase
       .from("workflows")
       .insert({
         organization_id: currentOrganization.id,
-        sub_organization_id: activeSubOrg?.id ?? null,
         name: wf.name,
         description: wf.description ?? description,
         trigger: wf.trigger ?? { type: "always" },
@@ -399,33 +384,24 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const workflowId = newWF.id as string;
 
     if (Array.isArray(wf.steps)) {
-      const stepsPayload = wf.steps.map((s: any, i: number) => ({
-        workflow_id: workflowId,
-        step_order: i + 1,
-        action: {
-          ai_action: s.ai_action,
-          instruction_text: s.instruction_text ?? "",
-          expected_user_input: s.expected_user_input ?? "",
-          metadata: s.metadata ?? {},
-        },
-      }));
-
-      const { error: stepErr } = await supabase
-        .from("workflow_steps")
-        .insert(stepsPayload);
-
-      if (stepErr) {
-        set({ saving: false, error: stepErr.message });
-        return workflowId;
-      }
+      await supabase.from("workflow_steps").insert(
+        wf.steps.map((s: any, i: number) => ({
+          workflow_id: workflowId,
+          step_order: i + 1,
+          action: {
+            ai_action: s.ai_action,
+            instruction_text: s.instruction_text ?? "",
+            expected_user_input: s.expected_user_input ?? "",
+            metadata: s.metadata ?? {},
+          },
+        }))
+      );
     }
 
     await get().fetchWorkflowSteps(workflowId);
+    await get().fetchWorkflows();
 
-    set({
-      workflows: [newWF, ...get().workflows],
-      saving: false,
-    });
+    set({ saving: false });
 
     return workflowId;
   },
