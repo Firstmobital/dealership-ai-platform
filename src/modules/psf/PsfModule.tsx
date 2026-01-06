@@ -1,3 +1,5 @@
+// /src/modules/psf/PsfModule.tsx
+
 import { useEffect, useState } from "react";
 import {
   MessageCircle,
@@ -5,9 +7,14 @@ import {
   AlertTriangle,
   Clock,
   X,
+  Bell,
 } from "lucide-react";
 
-import { usePsfStore, PsfCase, PsfSentiment } from "../../state/usePsfStore";
+import {
+  usePsfStore,
+  PsfCase,
+  PsfSentiment,
+} from "../../state/usePsfStore";
 import { useNavigate } from "react-router-dom";
 
 /* ============================================================================
@@ -33,8 +40,8 @@ function sentimentBadge(sentiment: PsfSentiment) {
 
   return (
     <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-gray-100 text-gray-600">
-      <Clock size={12} /> No Reply
-    </span>
+        <Clock size={12} /> No Reply
+      </span>
   );
 }
 
@@ -52,6 +59,7 @@ export function PsfModule() {
     fetchCases,
     selectCase,
     markResolved,
+    sendReminder,
   } = usePsfStore();
 
   const [sentimentFilter, setSentimentFilter] =
@@ -103,7 +111,9 @@ export function PsfModule() {
 
         <div className="flex-1 overflow-auto">
           {loading && (
-            <div className="p-4 text-sm text-gray-500">Loading PSF cases…</div>
+            <div className="p-4 text-sm text-gray-500">
+              Loading PSF cases…
+            </div>
           )}
 
           {!loading && cases.length === 0 && (
@@ -159,6 +169,7 @@ export function PsfModule() {
               )
             }
             onResolve={() => markResolved(selectedCase.id)}
+            onSendReminder={() => sendReminder(selectedCase.id)}
           />
         )}
       </div>
@@ -175,12 +186,21 @@ function PsfDetail({
   onClose,
   onOpenChat,
   onResolve,
+  onSendReminder,
 }: {
   psfCase: PsfCase;
   onClose: () => void;
   onOpenChat: () => void;
   onResolve: () => void;
+  onSendReminder: () => void;
 }) {
+  const maxReached =
+    typeof psfCase.reminders_sent_count === "number" &&
+    psfCase.reminders_sent_count >= 3;
+
+  const reminderDisabled =
+    psfCase.resolution_status === "resolved" || maxReached;
+
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b bg-white flex justify-between items-center">
@@ -197,7 +217,7 @@ function PsfDetail({
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
-        {/* Uploaded Data */}
+        {/* Service Data */}
         <section className="bg-white p-4 rounded border">
           <h4 className="text-sm font-semibold mb-2">Service Details</h4>
           <pre className="text-xs bg-gray-50 p-3 rounded overflow-auto">
@@ -216,7 +236,7 @@ function PsfDetail({
       </div>
 
       {/* Actions */}
-      <div className="p-4 border-t bg-white flex justify-between">
+      <div className="p-4 border-t bg-white flex justify-between gap-2">
         <button
           onClick={onOpenChat}
           disabled={!psfCase.conversation_id}
@@ -226,15 +246,31 @@ function PsfDetail({
           Open Chat
         </button>
 
-        {psfCase.resolution_status !== "resolved" && (
+        <div className="flex gap-2">
           <button
-            onClick={onResolve}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded bg-green-600 text-white hover:bg-green-700"
+            onClick={onSendReminder}
+            disabled={reminderDisabled}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded border bg-white hover:bg-gray-50 disabled:opacity-40"
+            title={
+              maxReached
+                ? "Maximum reminders sent"
+                : "Send WhatsApp reminder"
+            }
           >
-            <CheckCircle size={16} />
-            Mark Resolved
+            <Bell size={16} />
+            Send Reminder
           </button>
-        )}
+
+          {psfCase.resolution_status !== "resolved" && (
+            <button
+              onClick={onResolve}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded bg-green-600 text-white hover:bg-green-700"
+            >
+              <CheckCircle size={16} />
+              Mark Resolved
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

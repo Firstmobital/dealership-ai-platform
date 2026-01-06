@@ -1,3 +1,5 @@
+// /src/state/usePsfStore.ts
+
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import { useOrganizationStore } from "./useOrganizationStore";
@@ -60,6 +62,8 @@ type PsfState = {
   selectCase: (psfCase: PsfCase | null) => void;
 
   markResolved: (psfCaseId: string) => Promise<void>;
+
+  sendReminder: (psfCaseId: string) => Promise<void>;
 };
 
 /* ============================================================================
@@ -110,7 +114,6 @@ export const usePsfStore = create<PsfState>((set, get) => ({
       }
 
       const { data, error } = await query;
-
       if (error) throw error;
 
       set({ cases: (data ?? []) as PsfCase[] });
@@ -130,7 +133,7 @@ export const usePsfStore = create<PsfState>((set, get) => ({
   },
 
   /* ------------------------------------------------------------------------
-     MARK CASE AS RESOLVED (ORG SAFE)
+     MARK CASE AS RESOLVED
   ------------------------------------------------------------------------ */
   markResolved: async (psfCaseId: string) => {
     try {
@@ -141,33 +144,64 @@ export const usePsfStore = create<PsfState>((set, get) => ({
           action_required: false,
         })
         .eq("id", psfCaseId);
-
+  
       if (error) throw error;
-
-      // ✅ Optimistic update
+  
       const updatedCases: PsfCase[] = get().cases.map((c) =>
         c.id === psfCaseId
           ? {
               ...c,
-              resolution_status: "resolved",
+              resolution_status: "resolved" as const,
               action_required: false,
             }
           : c
       );
-
+  
       set({
         cases: updatedCases,
         selectedCase:
           get().selectedCase?.id === psfCaseId
             ? {
                 ...get().selectedCase!,
-                resolution_status: "resolved",
+                resolution_status: "resolved" as const,
                 action_required: false,
               }
             : get().selectedCase,
       });
     } catch (err) {
       console.error("[PSF] markResolved error", err);
+      throw err;
+    }
+  },  
+
+  /* ------------------------------------------------------------------------
+     SEND MANUAL REMINDER (EDGE FUNCTION)
+  ------------------------------------------------------------------------ */
+  sendReminder: async (psfCaseId: string) => {
+    try {
+      const { data: session } = await supabase.auth.getSession();
+
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/psf-send-manual-reminder`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.session?.access_token}`,
+          },
+          body: JSON.stringify({ psf_case_id: psfCaseId }),
+        }
+      );
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t);
+      }
+
+      // Refresh list to reflect reminder count + timestamps
+      await get().fetchCases();
+    } catch (err) {
+      console.error("[PSF] sendReminder error", err);
       throw err;
     }
   },

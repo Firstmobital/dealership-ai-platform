@@ -173,14 +173,12 @@ function buildTemplateHeaderComponents(template: WhatsappTemplate) {
 function resolveTemplateText(
   templateBody: string,
   contact: Record<string, any> | null,
-  mapping: Record<string, string> | null,
+  mapping: Record<string, string> | null
 ) {
   let text = templateBody ?? "";
   for (const [key, field] of Object.entries(mapping ?? {})) {
     const v =
-      contact?.[field] ??
-      contact?.[String(field ?? "").toLowerCase()] ??
-      "";
+      contact?.[field] ?? contact?.[String(field ?? "").toLowerCase()] ?? "";
     text = text.replaceAll(`{{${key}}}`, String(v ?? ""));
   }
   return text;
@@ -193,7 +191,7 @@ async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
   const { data, error } = await supabaseAdmin
     .from("whatsapp_templates")
     .select(
-      "name, language, status, body, header_type, header_media_url, header_media_mime",
+      "name, language, status, body, header_type, header_media_url, header_media_mime"
     )
     .eq("id", templateId)
     .single();
@@ -220,14 +218,14 @@ async function upsertContactByPhone(params: {
         phone: params.phoneDigits,
         name: params.name ?? null,
       },
-      { onConflict: "organization_id,phone" },
+      { onConflict: "organization_id,phone" }
     )
     .select("id, phone, name, first_name, last_name, model")
     .single();
 
   if (error || !data) {
     throw new Error(
-      `CONTACT_UPSERT_FAILED: ${error?.message ?? "unknown error"}`,
+      `CONTACT_UPSERT_FAILED: ${error?.message ?? "unknown error"}`
     );
   }
 
@@ -277,7 +275,7 @@ async function ensureConversationForContact(params: {
 
   if (insertError || !created) {
     throw new Error(
-      `CONVERSATION_CREATE_FAILED: ${insertError?.message ?? "unknown error"}`,
+      `CONVERSATION_CREATE_FAILED: ${insertError?.message ?? "unknown error"}`
     );
   }
 
@@ -345,7 +343,7 @@ async function fetchCampaignById(campaignId: string): Promise<Campaign | null> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping",
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping"
     )
     .eq("id", campaignId)
     .maybeSingle();
@@ -361,7 +359,7 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping",
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping"
     )
     .in("status", ["scheduled", "sending"])
     .lte("scheduled_at", nowIso)
@@ -378,7 +376,7 @@ async function fetchMessages(campaignId: string): Promise<CampaignMessage[]> {
   const { data, error } = await supabaseAdmin
     .from("campaign_messages")
     .select(
-      "id, organization_id, campaign_id, contact_id, phone, variables, status",
+      "id, organization_id, campaign_id, contact_id, phone, variables, status"
     )
     .eq("campaign_id", campaignId)
     .in("status", ["pending", "queued"])
@@ -386,6 +384,46 @@ async function fetchMessages(campaignId: string): Promise<CampaignMessage[]> {
 
   if (error) throw error;
   return (data ?? []) as CampaignMessage[];
+}
+
+/* ============================================================
+   ✅ PSF STEP 2 — CREATE PSF CASES FOR CAMPAIGN
+============================================================ */
+async function createPsfCasesForCampaign(params: {
+  campaign: Campaign;
+  messages: CampaignMessage[];
+}) {
+  const { campaign, messages } = params;
+
+  // 🔒 Only PSF campaigns
+  // Expectation: campaigns.meta.is_psf = true
+  const { data: campaignRow } = await supabaseAdmin
+    .from("campaigns")
+    .select("meta")
+    .eq("id", campaign.id)
+    .single();
+
+  if (!campaignRow?.meta?.is_psf) return;
+
+  const rows = messages.map((m) => ({
+    organization_id: m.organization_id,
+    campaign_id: m.campaign_id,
+    phone: normalizeToIndiaDigits(m.phone),
+    uploaded_data: m.variables ?? {},
+    initial_sent_at: new Date().toISOString(),
+  }));
+
+  if (rows.length === 0) return;
+
+  // Idempotent insert: avoid duplicates
+  const { error } = await supabaseAdmin
+    .from("psf_cases")
+    .insert(rows, { ignoreDuplicates: true });
+
+  if (error) {
+    console.error("[PSF] Failed to create PSF cases", error);
+    throw error;
+  }
 }
 
 /* ============================================================
@@ -504,7 +542,10 @@ async function ensureContactForCampaignMessage(params: {
     name: null,
   });
 
-  if (params.msg.contact_id !== contact.id || params.msg.phone !== phoneDigits) {
+  if (
+    params.msg.contact_id !== contact.id ||
+    params.msg.phone !== phoneDigits
+  ) {
     await setMessageContactAndPhone({
       campaignMessageId: params.msg.id,
       contactId: contact.id,
@@ -549,10 +590,16 @@ async function linkMessageToConversationAndPsf(params: {
 ============================================================ */
 async function dispatchCampaignImmediate(campaign: Campaign) {
   if (!campaign.whatsapp_template_id) return;
-  if (campaign.status === "completed" || campaign.status === "cancelled") return;
+  if (campaign.status === "completed" || campaign.status === "cancelled")
+    return;
 
   const template = await fetchTemplate(campaign.whatsapp_template_id);
   const messages = await fetchMessages(campaign.id);
+  // ✅ PSF STEP 2 — create PSF cases before sending
+  await createPsfCasesForCampaign({
+    campaign,
+    messages,
+  });
 
   let sentGlobal = 0;
   const sentPerOrg: Record<string, number> = {};
@@ -583,7 +630,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
           renderedText = resolveTemplateText(
             template.body,
             contactRow,
-            campaign.variable_mapping,
+            campaign.variable_mapping
           );
         }
         await setRenderedText(msg.id, renderedText);
@@ -673,20 +720,24 @@ serve(async (req: Request) => {
     if (mode === "immediate") {
       if (!immediateCampaignId) {
         return new Response(
-          JSON.stringify({ error: "campaign_id is required for mode=immediate" }),
-          { status: 400 },
+          JSON.stringify({
+            error: "campaign_id is required for mode=immediate",
+          }),
+          { status: 400 }
         );
       }
 
       const campaign = await fetchCampaignById(immediateCampaignId);
       if (!campaign) {
-        return new Response(JSON.stringify({ error: "Campaign not found" }), { status: 404 });
+        return new Response(JSON.stringify({ error: "Campaign not found" }), {
+          status: 404,
+        });
       }
 
       if (campaign.status === "sending" || campaign.status === "completed") {
         return new Response(
           JSON.stringify({ error: "Campaign already sent or in progress" }),
-          { status: 400 },
+          { status: 400 }
         );
       }
 
@@ -695,14 +746,21 @@ serve(async (req: Request) => {
       try {
         await dispatchCampaignImmediate({ ...campaign, status: "sending" });
         return new Response(
-          JSON.stringify({ success: true, mode: "immediate", campaign_id: campaign.id }),
-          { status: 200 },
+          JSON.stringify({
+            success: true,
+            mode: "immediate",
+            campaign_id: campaign.id,
+          }),
+          { status: 200 }
         );
       } catch (e) {
-        await markCampaignFailed(campaign.id, e instanceof Error ? e.message : String(e));
+        await markCampaignFailed(
+          campaign.id,
+          e instanceof Error ? e.message : String(e)
+        );
         return new Response(
           JSON.stringify({ error: "Dispatch failed", details: String(e) }),
-          { status: 500 },
+          { status: 500 }
         );
       }
     }
@@ -726,6 +784,11 @@ serve(async (req: Request) => {
 
       const template = await fetchTemplate(campaign.whatsapp_template_id);
       const messages = await fetchMessages(campaign.id);
+      // ✅ PSF STEP 2 — create PSF cases before sending
+      await createPsfCasesForCampaign({
+        campaign,
+        messages,
+      });
 
       for (const msg of messages) {
         if (globalSent >= GLOBAL_MAX_MESSAGES_PER_RUN) break;
@@ -734,10 +797,11 @@ serve(async (req: Request) => {
         if (orgCount >= ORG_RATE_LIMIT_PER_RUN) continue;
 
         try {
-          const { contactId, phoneDigits } = await ensureContactForCampaignMessage({
-            organizationId: msg.organization_id,
-            msg,
-          });
+          const { contactId, phoneDigits } =
+            await ensureContactForCampaignMessage({
+              organizationId: msg.organization_id,
+              msg,
+            });
 
           const phonePlus = toE164Plus(phoneDigits);
           if (!phonePlus) {
@@ -753,7 +817,7 @@ serve(async (req: Request) => {
               renderedText = resolveTemplateText(
                 template.body,
                 contactRow,
-                campaign.variable_mapping,
+                campaign.variable_mapping
               );
             }
             await setRenderedText(msg.id, renderedText);
@@ -763,9 +827,13 @@ serve(async (req: Request) => {
 
           // Phase 2.4: media templates must have media attached
           const headerType = String(template.header_type ?? "").toUpperCase();
-          const needsMedia = headerType === "IMAGE" || headerType === "DOCUMENT";
+          const needsMedia =
+            headerType === "IMAGE" || headerType === "DOCUMENT";
           if (needsMedia && !template.header_media_url) {
-            await markFailed(msg.id, "Missing template media (header_media_url)");
+            await markFailed(
+              msg.id,
+              "Missing template media (header_media_url)"
+            );
             continue;
           }
 
@@ -830,13 +898,13 @@ serve(async (req: Request) => {
         campaigns_processed: campaignsProcessed,
         messages_dispatched: globalSent,
       }),
-      { status: 200 },
+      { status: 200 }
     );
   } catch (e) {
     console.error("campaign-dispatch fatal", e);
     return new Response(
       JSON.stringify({ error: "Internal Error", details: String(e) }),
-      { status: 500 },
+      { status: 500 }
     );
   }
 });

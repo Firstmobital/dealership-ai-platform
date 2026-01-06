@@ -266,10 +266,9 @@ function buildChatMessagesFromHistory(
 async function loadOpenPsfCaseByConversation(conversationId: string) {
   const { data } = await supabase
     .from("psf_cases")
-    .select("id, campaign_id")
+    .select("id, campaign_id, sentiment")
     .eq("conversation_id", conversationId)
     .eq("resolution_status", "open")
-    .eq("source", "psf_campaign") // 🔒 IMPORTANT
     .maybeSingle();
 
   return data;
@@ -834,9 +833,7 @@ async function detectWorkflowTrigger(
     () =>
       supabase
         .from("workflows")
-        .select(
-          "id, organization_id, trigger, mode, is_active"
-        )
+        .select("id, organization_id, trigger, mode, is_active")
         .eq("organization_id", organizationId)
         .eq("is_active", true)
   );
@@ -1140,25 +1137,24 @@ serve(async (req: Request): Promise<Response> => {
       return new Response("AI disabled", { status: 200 });
 
     // 🔒 SECURITY: Ensure organization exists and is active
-const org = await safeSupabase<{ status: string }>(
-  "load_organization_status",
-  baseLogger,
-  () =>
-    supabase
-      .from("organizations")
-      .select("status")
-      .eq("id", conv.organization_id)
-      .maybeSingle()
-);
+    const org = await safeSupabase<{ status: string }>(
+      "load_organization_status",
+      baseLogger,
+      () =>
+        supabase
+          .from("organizations")
+          .select("status")
+          .eq("id", conv.organization_id)
+          .maybeSingle()
+    );
 
-if (!org || org.status !== "active") {
-  baseLogger.error("[org] inactive or missing organization", {
-    organization_id: conv.organization_id,
-  });
+    if (!org || org.status !== "active") {
+      baseLogger.error("[org] inactive or missing organization", {
+        organization_id: conv.organization_id,
+      });
 
-  return new Response("Organization inactive", { status: 403 });
-}
-
+      return new Response("Organization inactive", { status: 403 });
+    }
 
     // Phase 1 — AI mode guard
     const aiMode: AiMode = (conv.ai_mode as AiMode) || "auto";
@@ -1190,6 +1186,31 @@ if (!org || org.status !== "active") {
             no_reply: true,
             request_id,
             reason: "HUMAN_ACTIVE",
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    // 🔒 PSF HARD GUARD — longer cooldown if PSF
+    const psfCaseForGuard = await loadOpenPsfCaseByConversation(
+      conversation_id
+    );
+
+    if (psfCaseForGuard) {
+      const humanActive = await wasHumanActiveRecently({
+        conversationId: conversation_id,
+        logger: baseLogger,
+        seconds: 600, // ⏱ 10 minutes for PSF
+      });
+
+      if (humanActive) {
+        return new Response(
+          JSON.stringify({
+            conversation_id,
+            no_reply: true,
+            request_id,
+            reason: "PSF_HUMAN_ACTIVE",
           }),
           { headers: { "Content-Type": "application/json" } }
         );
@@ -1261,7 +1282,7 @@ if (!org || org.status !== "active") {
 
     // 4) Personality (needed for greeting + fallback)
     const personality = await loadBotPersonality({
-      organizationId
+      organizationId,
     });
 
     const fallbackMessage =
@@ -1348,10 +1369,26 @@ ${personality.donts || "- None specified."}
         .update({
           sentiment: result.sentiment,
           ai_summary: result.summary,
-          action_required: result.sentiment !== "positive",
+          action_required: result.sentiment === "negative",
+          first_customer_reply_at:
+            psfCase.first_customer_reply_at ?? new Date().toISOString(),
           last_customer_reply_at: new Date().toISOString(),
         })
         .eq("id", psfCase.id);
+
+      // 🚫 PSF NEGATIVE — DO NOT AUTO REPLY
+      if (result.sentiment === "negative") {
+        return new Response(
+          JSON.stringify({
+            conversation_id,
+            psf_handled: true,
+            sentiment: "negative",
+            no_auto_reply: true,
+            request_id,
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
 
       // 🔍 AUDIT: PSF feedback received
       await logAuditEvent(supabase, {
@@ -1374,9 +1411,7 @@ ${personality.donts || "- None specified."}
       const replyText =
         result.sentiment === "positive"
           ? "Thank you for your feedback! We’re glad you had a good experience 😊"
-          : result.sentiment === "negative"
-          ? "Thank you for sharing your feedback. Our team will review this and connect with you shortly."
-          : "Thank you for your feedback. We appreciate you taking the time to respond.";
+          : "Thank you for sharing your feedback. We appreciate you taking the time to respond.";
 
       // Save bot reply
       await supabase.from("messages").insert({
