@@ -38,7 +38,6 @@ type CampaignStatus =
 type Campaign = {
   id: string;
   organization_id: string;
-  sub_organization_id: string | null;
   whatsapp_template_id: string | null;
   status: CampaignStatus;
   scheduled_at: string | null;
@@ -59,7 +58,6 @@ type CampaignMessage = {
   id: string;
   organization_id: string;
   campaign_id: string;
-  sub_organization_id: string | null;
   contact_id: string | null;
   phone: string;
   variables: Record<string, unknown> | null;
@@ -213,7 +211,6 @@ async function upsertContactByPhone(params: {
   organizationId: string;
   phoneDigits: string; // "91XXXXXXXXXX"
   name?: string | null;
-  subOrganizationId?: string | null;
 }) {
   const { data, error } = await supabaseAdmin
     .from("contacts")
@@ -250,7 +247,6 @@ async function upsertContactByPhone(params: {
 ============================================================ */
 async function ensureConversationForContact(params: {
   organizationId: string;
-  subOrganizationId: string | null;
   contactId: string;
   channel: string;
 }) {
@@ -272,7 +268,6 @@ async function ensureConversationForContact(params: {
     .from("conversations")
     .insert({
       organization_id: params.organizationId,
-      sub_organization_id: params.subOrganizationId,
       contact_id: params.contactId,
       channel: params.channel,
       ai_enabled: true,
@@ -294,7 +289,6 @@ async function ensureConversationForContact(params: {
 ============================================================ */
 async function sendWhatsappTemplate(params: {
   organizationId: string;
-  subOrganizationId: string | null;
   contactId: string;
   phonePlusE164: string; // "+91..."
   templateName: string;
@@ -316,7 +310,6 @@ async function sendWhatsappTemplate(params: {
     },
     body: JSON.stringify({
       organization_id: params.organizationId,
-      sub_organization_id: params.subOrganizationId,
       contact_id: params.contactId,
       to: waToFromE164(params.phonePlusE164),
       type: "template",
@@ -352,7 +345,7 @@ async function fetchCampaignById(campaignId: string): Promise<Campaign | null> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, sub_organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping",
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping",
     )
     .eq("id", campaignId)
     .maybeSingle();
@@ -368,7 +361,7 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, sub_organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping",
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping",
     )
     .in("status", ["scheduled", "sending"])
     .lte("scheduled_at", nowIso)
@@ -385,7 +378,7 @@ async function fetchMessages(campaignId: string): Promise<CampaignMessage[]> {
   const { data, error } = await supabaseAdmin
     .from("campaign_messages")
     .select(
-      "id, organization_id, campaign_id, sub_organization_id, contact_id, phone, variables, status",
+      "id, organization_id, campaign_id, contact_id, phone, variables, status",
     )
     .eq("campaign_id", campaignId)
     .in("status", ["pending", "queued"])
@@ -498,7 +491,6 @@ async function markCampaignFailed(campaignId: string, err: string) {
 ============================================================ */
 async function ensureContactForCampaignMessage(params: {
   organizationId: string;
-  subOrganizationId: string | null;
   msg: CampaignMessage;
 }): Promise<{ contactId: string; phoneDigits: string }> {
   const phoneDigits = normalizeToIndiaDigits(params.msg.phone);
@@ -510,7 +502,6 @@ async function ensureContactForCampaignMessage(params: {
     organizationId: params.organizationId,
     phoneDigits,
     name: null,
-    subOrganizationId: params.subOrganizationId,
   });
 
   if (params.msg.contact_id !== contact.id || params.msg.phone !== phoneDigits) {
@@ -535,7 +526,6 @@ async function linkMessageToConversationAndPsf(params: {
 }) {
   const conversationId = await ensureConversationForContact({
     organizationId: params.msg.organization_id,
-    subOrganizationId: params.msg.sub_organization_id,
     contactId: params.contactId,
     channel: "whatsapp",
   });
@@ -576,7 +566,6 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
     try {
       const { contactId, phoneDigits } = await ensureContactForCampaignMessage({
         organizationId: msg.organization_id,
-        subOrganizationId: msg.sub_organization_id,
         msg,
       });
 
@@ -620,7 +609,6 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
 
       const waId = await sendWhatsappTemplate({
         organizationId: msg.organization_id,
-        subOrganizationId: msg.sub_organization_id,
         contactId,
         phonePlusE164: phonePlus,
         templateName: template.name,
@@ -748,7 +736,6 @@ serve(async (req: Request) => {
         try {
           const { contactId, phoneDigits } = await ensureContactForCampaignMessage({
             organizationId: msg.organization_id,
-            subOrganizationId: msg.sub_organization_id,
             msg,
           });
 
@@ -792,7 +779,6 @@ serve(async (req: Request) => {
 
           const waId = await sendWhatsappTemplate({
             organizationId: msg.organization_id,
-            subOrganizationId: msg.sub_organization_id,
             contactId,
             phonePlusE164: phonePlus,
             templateName: template.name,

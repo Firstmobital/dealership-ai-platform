@@ -1,3 +1,5 @@
+// supabase/functions/whatsapp-template-submit/index.ts
+
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -15,7 +17,6 @@ const corsHeaders = {
    MAIN
 ===================================================================================== */
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -34,13 +35,13 @@ serve(async (req) => {
     if (!template_id) {
       return new Response(
         JSON.stringify({ error: "template_id required" }),
-        { status: 400, headers: corsHeaders }
+        { status: 400, headers: corsHeaders },
       );
     }
 
     const supabase = createClient(
       Deno.env.get("PROJECT_URL")!,
-      Deno.env.get("SERVICE_ROLE_KEY")!
+      Deno.env.get("SERVICE_ROLE_KEY")!,
     );
 
     /* ------------------------------------------------------------------
@@ -55,7 +56,7 @@ serve(async (req) => {
     if (tplError || !template) {
       return new Response(
         JSON.stringify({ error: "Template not found" }),
-        { status: 404, headers: corsHeaders }
+        { status: 404, headers: corsHeaders },
       );
     }
 
@@ -63,42 +64,31 @@ serve(async (req) => {
     if (template.meta_template_id) {
       return new Response(
         JSON.stringify({ error: "Template already submitted" }),
-        { status: 409, headers: corsHeaders }
+        { status: 409, headers: corsHeaders },
       );
     }
 
     if (template.status !== "draft") {
       return new Response(
         JSON.stringify({ error: "Only draft templates can be submitted" }),
-        { status: 400, headers: corsHeaders }
+        { status: 400, headers: corsHeaders },
       );
     }
 
     /* ------------------------------------------------------------------
-       Fetch WhatsApp settings
+       Fetch WhatsApp settings (ORG ONLY)
     ------------------------------------------------------------------ */
-    let settingsQuery = supabase
+    const { data: settings, error: settingsError } = await supabase
       .from("whatsapp_settings")
       .select("whatsapp_business_id, api_token")
       .eq("organization_id", template.organization_id)
-      .eq("is_active", true);
-
-    if (template.sub_organization_id) {
-      settingsQuery = settingsQuery.eq(
-        "sub_organization_id",
-        template.sub_organization_id
-      );
-    } else {
-      settingsQuery = settingsQuery.is("sub_organization_id", null);
-    }
-
-    const { data: settings, error: settingsError } =
-      await settingsQuery.single();
+      .eq("is_active", true)
+      .single();
 
     if (settingsError || !settings) {
       return new Response(
         JSON.stringify({ error: "WhatsApp settings not found" }),
-        { status: 400, headers: corsHeaders }
+        { status: 400, headers: corsHeaders },
       );
     }
 
@@ -146,7 +136,7 @@ serve(async (req) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
-      }
+      },
     );
 
     const metaJson = await metaRes.json().catch(() => null);
@@ -172,13 +162,13 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ success: true, meta: metaJson }),
-      { headers: corsHeaders }
+      { headers: corsHeaders },
     );
   } catch (err) {
     console.error("Template submit fatal error", err);
     return new Response(
       JSON.stringify({ error: "Internal server error" }),
-      { status: 500, headers: corsHeaders }
+      { status: 500, headers: corsHeaders },
     );
   }
 });

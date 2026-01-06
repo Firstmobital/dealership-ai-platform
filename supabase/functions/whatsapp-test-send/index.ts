@@ -1,5 +1,4 @@
 // supabase/functions/whatsapp-test-send/index.ts
-// supabase/functions/whatsapp-test-send/index.ts
 // deno-lint-ignore-file no-explicit-any
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -15,20 +14,21 @@ if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
 }
 
 /* ============================================================
-   PHONE NORMALIZATION
+   PHONE NORMALIZATION (INDIA)
 ============================================================ */
 function normalizePhoneToE164India(raw: string): string | null {
   if (!raw) return null;
   const d = raw.replace(/\D/g, "");
 
+  if (/^\+91\d{10}$/.test(raw)) return raw;
   if (/^91\d{10}$/.test(d)) return `+${d}`;
   if (/^\d{10}$/.test(d)) return `+91${d}`;
-  if (/^\+91\d{10}$/.test(raw)) return raw;
 
   return null;
 }
 
 function waToFromE164(phone: string) {
+  // "+91XXXXXXXXXX" → "91XXXXXXXXXX"
   return phone.replace(/^\+/, "");
 }
 
@@ -39,14 +39,12 @@ type TestSendBody =
   | {
       mode?: "text";
       organization_id: string;
-      sub_organization_id?: string | null;
       to: string;
       text: string;
     }
   | {
       mode: "template";
       organization_id: string;
-      sub_organization_id?: string | null;
       to: string;
       whatsapp_template_id: string;
       template_variables?: string[];
@@ -60,29 +58,24 @@ serve(async (req: Request) => {
     if (req.method !== "POST") {
       return new Response(
         JSON.stringify({ error: "Method not allowed" }),
-        { status: 405, headers: { "Content-Type": "application/json" } }
+        { status: 405, headers: { "Content-Type": "application/json" } },
       );
     }
 
     const body = (await req.json()) as TestSendBody;
 
-    const orgId = body.organization_id?.trim();
-    const subOrgId =
-      body.sub_organization_id === undefined
-        ? null
-        : body.sub_organization_id;
-
-    if (!orgId) {
+    const organizationId = body.organization_id?.trim();
+    if (!organizationId) {
       return new Response(
-        JSON.stringify({ error: "Missing organization_id" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        JSON.stringify({ error: "organization_id required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
     if (!body.to?.trim()) {
       return new Response(
-        JSON.stringify({ error: "Missing phone number" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        JSON.stringify({ error: "Phone number required" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
@@ -90,18 +83,18 @@ serve(async (req: Request) => {
     if (!phoneE164) {
       return new Response(
         JSON.stringify({ error: "Invalid phone number format" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
     /* ======================================================
-       TEXT MODE (backward compatible)
+       TEXT MODE (DEFAULT)
     ======================================================= */
     if (!("mode" in body) || body.mode === "text") {
       if (!("text" in body) || !body.text?.trim()) {
         return new Response(
-          JSON.stringify({ error: "Missing text" }),
-          { status: 400, headers: { "Content-Type": "application/json" } }
+          JSON.stringify({ error: "text required" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
         );
       }
 
@@ -112,8 +105,7 @@ serve(async (req: Request) => {
           Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
         },
         body: JSON.stringify({
-          organization_id: orgId,
-          sub_organization_id: subOrgId,
+          organization_id: organizationId,
           to: waToFromE164(phoneE164),
           type: "text",
           text: body.text,
@@ -124,24 +116,32 @@ serve(async (req: Request) => {
 
       if (!res.ok) {
         return new Response(
-          JSON.stringify({ error: "Failed to send text", details: result }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
+          JSON.stringify({
+            error: "Failed to send text",
+            details: result,
+          }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
         );
       }
 
       return new Response(
-        JSON.stringify({ success: true, phone: phoneE164, meta: result }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: true,
+          mode: "text",
+          phone: phoneE164,
+          meta: result,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
 
     /* ======================================================
-       TEMPLATE MODE (Joyz-style test)
+       TEMPLATE MODE
     ======================================================= */
-    if (!body.whatsapp_template_id) {
+    if (body.mode !== "template") {
       return new Response(
-        JSON.stringify({ error: "Missing whatsapp_template_id" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        JSON.stringify({ error: "Invalid mode for template send" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
@@ -152,12 +152,11 @@ serve(async (req: Request) => {
         Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
       },
       body: JSON.stringify({
-        organization_id: orgId,
-        sub_organization_id: subOrgId,
+        organization_id: organizationId,
         to: waToFromE164(phoneE164),
         type: "template",
-        template_name: body.whatsapp_template_id, // resolved inside whatsapp-send
-        template_language: "en", // whatsapp-send already resolves real language
+        template_name: body.whatsapp_template_id,
+        template_language: "en", // resolved internally by whatsapp-send
         template_variables: body.template_variables ?? [],
       }),
     });
@@ -170,23 +169,24 @@ serve(async (req: Request) => {
           error: "Failed to send template test",
           details: result,
         }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
+        { status: 500, headers: { "Content-Type": "application/json" } },
       );
     }
 
     return new Response(
       JSON.stringify({
         success: true,
+        mode: "template",
         phone: phoneE164,
         meta: result,
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
+      { status: 200, headers: { "Content-Type": "application/json" } },
     );
   } catch (e) {
     console.error("[whatsapp-test-send] fatal", e);
     return new Response(
       JSON.stringify({ error: "Internal Server Error" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
 });

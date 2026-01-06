@@ -33,10 +33,6 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
 /* ============================================================
    HELPERS
 ============================================================ */
-function hoursAgoIso(hours: number) {
-  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-}
-
 function shouldSendReminder(params: {
   now: Date;
   createdAt: string | null;
@@ -54,11 +50,11 @@ function shouldSendReminder(params: {
     ? Date.parse(params.lastReminderSentAt)
     : NaN;
 
-  const remindersSent = params.remindersSent ?? 0;
+  const remindersSent =
+    typeof params.remindersSent === "number" ? params.remindersSent : 0;
 
   if (remindersSent >= MAX_REMINDERS_PER_CASE) return false;
 
-  // Must have waited at least REMINDER_AFTER_HOURS since last customer reply OR case creation (if no reply)
   const baseTs = Number.isFinite(lastCustomerReplyTs)
     ? lastCustomerReplyTs
     : Number.isFinite(createdTs)
@@ -70,7 +66,6 @@ function shouldSendReminder(params: {
   const elapsedSinceBaseHours = (now - baseTs) / (1000 * 60 * 60);
   if (elapsedSinceBaseHours < REMINDER_AFTER_HOURS) return false;
 
-  // Cooldown between reminders
   if (Number.isFinite(lastReminderTs)) {
     const elapsedSinceReminderHours = (now - lastReminderTs) / (1000 * 60 * 60);
     if (elapsedSinceReminderHours < REMINDER_COOLDOWN_HOURS) return false;
@@ -92,7 +87,7 @@ async function safeWhatsAppSend(payload: any) {
   const json = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    return { ok: false, error: json?.error ?? JSON.stringify(json) ?? "send_failed" };
+    return { ok: false, error: json?.error ?? JSON.stringify(json) };
   }
 
   const waId =
@@ -102,7 +97,7 @@ async function safeWhatsAppSend(payload: any) {
     json?.message_id ??
     null;
 
-  return { ok: true, waId, raw: json };
+  return { ok: true, waId };
 }
 
 function defaultReminderText() {
@@ -119,30 +114,29 @@ serve(async (req: Request) => {
   const now = new Date();
 
   try {
-    // Allow both GET and POST (POST can override text)
     let body: any = {};
     if (req.method === "POST") {
       body = await req.json().catch(() => ({}));
     }
 
-    const reminderText: string = String(body?.text ?? defaultReminderText()).trim() ||
-      defaultReminderText();
+    const reminderText =
+      String(body?.text ?? "").trim() || defaultReminderText();
 
-    // Optional: limit to one org/sub-org
     const organizationIdFilter: string | null = body?.organization_id ?? null;
 
-    // Fetch candidate cases:
-    // - open
-    // - action_required = true (i.e., negative sentiment) OR sentiment is null but case is open
-    // - has conversation_id (so we can reach contact)
-    // - not cancelled/resolved
-    //
-    // NOTE: We do NOT assume "campaign sent time" exists.
-    // We use psf_cases.created_at and last_customer_reply_at.
     let q = supabase
       .from("psf_cases")
       .select(
-        "id, organization_id, conversation_id, resolution_status, sentiment, action_required, created_at, last_customer_reply_at, last_reminder_sent_at, reminders_sent_count"
+        `
+        id,
+        organization_id,
+        conversation_id,
+        resolution_status,
+        created_at,
+        last_customer_reply_at,
+        last_reminder_sent_at,
+        reminders_sent_count
+      `,
       )
       .eq("resolution_status", "open")
       .not("conversation_id", "is", null)
@@ -153,150 +147,89 @@ serve(async (req: Request) => {
       q = q.eq("organization_id", organizationIdFilter);
     }
 
-    const { data: cases, error: casesErr } = await q;
+    const { data: cases, error } = await q;
 
-    if (casesErr) {
+    if (error) {
       return new Response(
-        JSON.stringify({ error: "Failed to load PSF cases", details: casesErr.message }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
+        JSON.stringify({ error: "Failed to load PSF cases", details: error.message }),
+        { status: 500 },
       );
     }
 
-    const candidates = (cases ?? []).filter((c: any) => {
-      // You can tighten this if you want ONLY negative:
-      // return c.action_required === true;
-      return true;
-    });
-
-    let scanned = candidates.length;
+    let scanned = cases?.length ?? 0;
     let eligible = 0;
     let sent = 0;
     let failed = 0;
-
     const results: any[] = [];
 
-    for (const psf of candidates) {
+    for (const psf of cases ?? []) {
       const ok = shouldSendReminder({
         now,
         createdAt: psf.created_at ?? null,
         lastCustomerReplyAt: psf.last_customer_reply_at ?? null,
         lastReminderSentAt: psf.last_reminder_sent_at ?? null,
-        remindersSent: psf.reminders_sent_count ?? 0,
+        remindersSent: psf.reminders_sent_count ?? null,
       });
 
       if (!ok) continue;
       eligible++;
 
-      // Load conversation -> contact_id, channel, sub_organization_id
-      const { data: conv, error: convErr } = await supabase
+      const { data: conv } = await supabase
         .from("conversations")
-        .select("id, organization_id, channel, contact_id, sub_organization_id")
+        .select("id, organization_id, channel, contact_id")
         .eq("id", psf.conversation_id)
         .maybeSingle();
 
-      if (convErr || !conv?.contact_id) {
+      if (!conv?.contact_id || conv.channel !== "whatsapp") {
         failed++;
-        results.push({
-          psf_case_id: psf.id,
-          status: "failed",
-          reason: "CONVERSATION_OR_CONTACT_MISSING",
-        });
         continue;
       }
 
-      // We only send reminders on WhatsApp conversations
-      if ((conv.channel ?? "") !== "whatsapp") {
-        results.push({
-          psf_case_id: psf.id,
-          status: "skipped",
-          reason: "CHANNEL_NOT_WHATSAPP",
-        });
-        continue;
-      }
-
-      // Load contact phone
-      const { data: contact, error: contactErr } = await supabase
+      const { data: contact } = await supabase
         .from("contacts")
-        .select("id, phone, name, first_name")
+        .select("phone")
         .eq("id", conv.contact_id)
         .maybeSingle();
 
-      const phone = contact?.phone ?? null;
-
-      if (contactErr || !phone) {
+      if (!contact?.phone) {
         failed++;
-        results.push({
-          psf_case_id: psf.id,
-          status: "failed",
-          reason: "CONTACT_PHONE_MISSING",
-        });
         continue;
       }
 
-      // 1) Send WhatsApp message
       const sendRes = await safeWhatsAppSend({
         organization_id: conv.organization_id,
-        sub_organization_id: conv.sub_organization_id ?? null,
-        to: phone, // your system stores digits-only "91XXXXXXXXXX"
+        to: contact.phone,
         type: "text",
         text: reminderText,
       });
 
       if (!sendRes.ok) {
         failed++;
-        results.push({
-          psf_case_id: psf.id,
-          status: "failed",
-          reason: "WHATSAPP_SEND_FAILED",
-          details: sendRes.error,
-        });
         continue;
       }
 
-      // 2) Save into messages table (so chat timeline shows the reminder)
-      // NOTE: This is important for your UI + audit trail.
-      const { error: msgErr } = await supabase.from("messages").insert({
+      await supabase.from("messages").insert({
         conversation_id: conv.id,
         sender: "bot",
         message_type: "text",
         text: reminderText,
         channel: "whatsapp",
-        sub_organization_id: conv.sub_organization_id ?? null,
-        whatsapp_message_id: sendRes.waId ?? null,
+        whatsapp_message_id: sendRes.waId,
       });
 
-      // Don't fail the whole case if message insert fails; still update psf case
-      if (msgErr) {
-        results.push({
-          psf_case_id: psf.id,
-          status: "warn",
-          reason: "MESSAGE_INSERT_FAILED",
-          details: msgErr.message,
-        });
-      }
+      const currentCount =
+        typeof psf.reminders_sent_count === "number"
+          ? psf.reminders_sent_count
+          : 0;
 
-      // 3) Update PSF case reminder markers
-      const { error: updErr } = await supabase
+      await supabase
         .from("psf_cases")
         .update({
           last_reminder_sent_at: now.toISOString(),
-          reminders_sent_count: (psf.reminders_sent_count ?? 0) + 1,
+          reminders_sent_count: currentCount + 1,
         })
         .eq("id", psf.id);
 
-      if (updErr) {
-        // Message already sent; record failure but don't revert send
-        failed++;
-        results.push({
-          psf_case_id: psf.id,
-          status: "failed",
-          reason: "PSF_UPDATE_FAILED",
-          details: updErr.message,
-        });
-        continue;
-      }
-
-      // 4) Keep conversation fresh
       await supabase
         .from("conversations")
         .update({ last_message_at: now.toISOString() })
@@ -306,12 +239,9 @@ serve(async (req: Request) => {
       results.push({
         psf_case_id: psf.id,
         status: "sent",
-        to: phone,
-        whatsapp_message_id: sendRes.waId ?? null,
-        reminders_sent_count: (psf.reminders_sent_count ?? 0) + 1,
+        reminders_sent_count: currentCount + 1,
       });
 
-      // Respect max-per-run hard cap
       if (sent >= MAX_CASES_PER_RUN) break;
     }
 
@@ -319,25 +249,25 @@ serve(async (req: Request) => {
       JSON.stringify({
         success: true,
         now: now.toISOString(),
+        scanned,
+        eligible,
+        sent,
+        failed,
         config: {
           REMINDER_AFTER_HOURS,
           REMINDER_COOLDOWN_HOURS,
           MAX_REMINDERS_PER_CASE,
           MAX_CASES_PER_RUN,
         },
-        scanned,
-        eligible,
-        sent,
-        failed,
         results,
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
+      { status: 200 },
     );
   } catch (e: any) {
     console.error("[psf-create-reminder] fatal", e);
     return new Response(
-      JSON.stringify({ error: "Internal Error", details: e?.message ?? String(e) }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
+      JSON.stringify({ error: "Internal Error", details: e?.message }),
+      { status: 500 },
     );
   }
 });

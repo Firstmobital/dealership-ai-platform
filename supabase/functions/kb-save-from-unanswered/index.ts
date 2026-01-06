@@ -212,7 +212,6 @@ serve(async (req: Request): Promise<Response> => {
 
     const {
       organization_id,
-      sub_organization_id,
       question_id,
       title,
       summary,
@@ -245,21 +244,6 @@ serve(async (req: Request): Promise<Response> => {
           .single()
     );
 
-    // AUDIT: unanswered question resolved
-    await logAuditEvent(supabase, {
-      organization_id,
-      action: "unanswered_resolved",
-      entity_type: "unanswered_question",
-      entity_id: question_id,
-      actor_user_id: null,
-      actor_email: null,
-      metadata: {
-        article_id: article.id,
-        title: articleTitle,
-        request_id,
-      },
-    });
-
     if (!question) {
       return cors(
         new Response(
@@ -285,7 +269,6 @@ serve(async (req: Request): Promise<Response> => {
           .from("knowledge_articles")
           .insert({
             organization_id,
-            sub_organization_id: sub_organization_id ?? null,
             title: articleTitle,
             content: articleSummary,
           })
@@ -293,8 +276,17 @@ serve(async (req: Request): Promise<Response> => {
           .single()
     );
 
-    // AUDIT: KB article created
-    await logAuditEvent(supabase, {
+    if (!article) {
+      return cors(
+        new Response(
+          JSON.stringify({ error: "Failed to create article", request_id }),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    }
+
+     // AUDIT: KB article created
+     await logAuditEvent(supabase, {
       organization_id,
       action: "kb_article_created",
       entity_type: "knowledge_article",
@@ -305,19 +297,9 @@ serve(async (req: Request): Promise<Response> => {
         source: "unanswered_question",
         question_id,
         title: articleTitle,
-        sub_organization_id: sub_organization_id ?? null,
         request_id,
       },
     });
-
-    if (!article) {
-      return cors(
-        new Response(
-          JSON.stringify({ error: "Failed to create article", request_id }),
-          { status: 500, headers: { "Content-Type": "application/json" } }
-        )
-      );
-    }
 
     /* ------------------------------------------------------------------
        STEP 3 — Chunk + Embed

@@ -381,7 +381,6 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     const orgId = String(body.organization_id).trim();
-    const subOrgId = body.sub_organization_id ?? null;
 
     const sourceType = (body.source_type ?? "text") as string;
     const incomingTitle = body.title?.trim?.() || "Untitled article";
@@ -400,7 +399,6 @@ serve(async (req: Request): Promise<Response> => {
 
     logger.info("Start KB generation", {
       orgId,
-      subOrgId,
       sourceType,
       replace: !!replaceArticleId,
       keywords_count: keywords.length,
@@ -570,7 +568,6 @@ serve(async (req: Request): Promise<Response> => {
 
       // 2) Update article
       const updatePayload: any = {
-        sub_organization_id: subOrgId,
         title: incomingTitle || existingTitle || "Untitled article",
         content: fullText,
 
@@ -618,7 +615,6 @@ serve(async (req: Request): Promise<Response> => {
       // CREATE MODE
       const insertPayload: any = {
         organization_id: orgId,
-        sub_organization_id: subOrgId,
         title: incomingTitle,
         description: null,
         content: fullText,

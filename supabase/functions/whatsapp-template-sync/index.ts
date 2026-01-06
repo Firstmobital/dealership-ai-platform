@@ -1,10 +1,12 @@
+// supabase/functions/whatsapp-template-sync/index.ts
 // deno-lint-ignore-file no-explicit-any
+
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/* ------------------------------------------------------------------ */
-/* CORS                                                               */
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   CORS
+------------------------------------------------------------------ */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -19,9 +21,9 @@ function jsonResponse(status: number, payload: any) {
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* STATUS MAP                                                         */
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   STATUS MAP (Meta → Local)
+------------------------------------------------------------------ */
 function mapStatus(metaStatus: string | null | undefined) {
   const s = String(metaStatus ?? "").toUpperCase();
   if (s === "APPROVED") return "approved";
@@ -31,9 +33,9 @@ function mapStatus(metaStatus: string | null | undefined) {
   return "pending";
 }
 
-/* ------------------------------------------------------------------ */
-/* META FETCH (PAGINATED)                                              */
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   FETCH ALL META TEMPLATES (PAGINATED)
+------------------------------------------------------------------ */
 async function fetchAllMetaTemplates(params: {
   wabaId: string;
   token: string;
@@ -66,9 +68,9 @@ async function fetchAllMetaTemplates(params: {
   return results;
 }
 
-/* ------------------------------------------------------------------ */
-/* HANDLER                                                            */
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   HANDLER
+------------------------------------------------------------------ */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -94,48 +96,22 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const organization_id = body?.organization_id as string | undefined;
-    const sub_organization_id =
-      (body?.sub_organization_id ?? null) as string | null;
 
     if (!organization_id) {
       return jsonResponse(400, { error: "organization_id required" });
     }
 
     /* =========================================================
-       1️⃣ LOAD WHATSAPP SETTINGS (SUB-ORG → ORG FALLBACK)
+       1️⃣ LOAD WHATSAPP SETTINGS (ORG-LEVEL ONLY)
     ========================================================= */
-    let settings: {
-      whatsapp_business_id: string | null;
-      api_token: string | null;
-    } | null = null;
+    const { data: settings, error: settingsErr } = await supabase
+      .from("whatsapp_settings")
+      .select("whatsapp_business_id, api_token")
+      .eq("organization_id", organization_id)
+      .eq("is_active", true)
+      .maybeSingle();
 
-    // Try sub-organization settings first
-    if (sub_organization_id) {
-      const { data } = await supabase
-        .from("whatsapp_settings")
-        .select("whatsapp_business_id, api_token")
-        .eq("organization_id", organization_id)
-        .eq("sub_organization_id", sub_organization_id)
-        .eq("is_active", true)
-        .maybeSingle();
-
-      settings = data ?? null;
-    }
-
-    // Fallback to organization-level
-    if (!settings) {
-      const { data } = await supabase
-        .from("whatsapp_settings")
-        .select("whatsapp_business_id, api_token")
-        .eq("organization_id", organization_id)
-        .is("sub_organization_id", null)
-        .eq("is_active", true)
-        .maybeSingle();
-
-      settings = data ?? null;
-    }
-
-    if (!settings?.whatsapp_business_id || !settings?.api_token) {
+    if (settingsErr || !settings?.whatsapp_business_id || !settings?.api_token) {
       return jsonResponse(400, {
         error: "Active WhatsApp settings not found",
       });
@@ -158,30 +134,22 @@ serve(async (req) => {
     }
 
     /* =========================================================
-       3️⃣ LOAD LOCAL TEMPLATES (SCOPED)
+       3️⃣ LOAD LOCAL TEMPLATES (ORG ONLY)
     ========================================================= */
-    let localQuery = supabase
+    const { data: locals, error: localErr } = await supabase
       .from("whatsapp_templates")
       .select("id, name, language, meta_template_id, status")
       .eq("organization_id", organization_id);
 
-    if (sub_organization_id) {
-      localQuery = localQuery.eq(
-        "sub_organization_id",
-        sub_organization_id,
-      );
-    } else {
-      localQuery = localQuery.is("sub_organization_id", null);
-    }
-
-    const { data: locals, error: localErr } = await localQuery;
-
     if (localErr) {
-      return jsonResponse(500, { error: "DB read failed", db: localErr });
+      return jsonResponse(500, {
+        error: "DB read failed",
+        db: localErr,
+      });
     }
 
     /* =========================================================
-       4️⃣ MATCH & PREPARE SAFE UPDATES
+       4️⃣ MATCH META ↔ LOCAL
     ========================================================= */
     const metaById = new Map<string, any>();
     const metaByNameLang = new Map<string, any>();
@@ -189,7 +157,8 @@ serve(async (req) => {
     for (const mt of metaTemplates) {
       const metaId = mt?.id ? String(mt.id) : null;
       const name = String(mt?.name ?? "");
-      const lang = String(mt?.language ?? mt?.languages?.[0]?.code ?? "");
+      const lang =
+        String(mt?.language ?? mt?.languages?.[0]?.code ?? "");
 
       if (metaId) metaById.set(metaId, mt);
       if (name && lang) metaByNameLang.set(`${name}::${lang}`, mt);
@@ -232,24 +201,22 @@ serve(async (req) => {
     /* =========================================================
        5️⃣ APPLY UPDATES
     ========================================================= */
-    if (updates.length > 0) {
-      for (const row of updates) {
-        const { error } = await supabase
-          .from("whatsapp_templates")
-          .update({
-            status: row.status,
-            meta_template_id: row.meta_template_id,
-            updated_at: row.updated_at,
-          })
-          .eq("id", row.id);
-      
-        if (error) {
-          return jsonResponse(500, {
-            error: "DB update failed",
-            db: error,
-          });
-        }
-      }      
+    for (const row of updates) {
+      const { error } = await supabase
+        .from("whatsapp_templates")
+        .update({
+          status: row.status,
+          meta_template_id: row.meta_template_id,
+          updated_at: row.updated_at,
+        })
+        .eq("id", row.id);
+
+      if (error) {
+        return jsonResponse(500, {
+          error: "DB update failed",
+          db: error,
+        });
+      }
     }
 
     return jsonResponse(200, {

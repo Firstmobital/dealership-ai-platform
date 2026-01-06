@@ -32,7 +32,6 @@ const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 type LogContext = {
   request_id: string;
   organization_id?: string | null;
-  sub_organization_id?: string | null;
   conversation_id?: string | null;
 };
 
@@ -123,7 +122,7 @@ async function processStatusReceipt(
 
   const settings = await supabase
     .from("whatsapp_settings")
-    .select("organization_id, sub_organization_id")
+    .select("organization_id")
     .eq("whatsapp_phone_id", phoneNumberId)
     .neq("is_active", false)
     .limit(1)
@@ -207,7 +206,7 @@ async function processInboundMessage(
 
   const settings = await supabase
     .from("whatsapp_settings")
-    .select("organization_id, api_token, sub_organization_id")
+    .select("organization_id, api_token")
     .eq("whatsapp_phone_id", phoneNumberId)
     .neq("is_active", false)
     .limit(1)
@@ -255,7 +254,7 @@ async function processInboundMessage(
         channel: "whatsapp",
         ai_enabled: true,
         last_message_at: new Date().toISOString(),
-        sub_organization_id: settings.data.sub_organization_id,
+
         whatsapp_user_phone: waNumber,
       })
       .select()

@@ -1,5 +1,6 @@
 // supabase/functions/whatsapp-send/index.ts
 // deno-lint-ignore-file no-explicit-any
+
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
@@ -33,76 +34,54 @@ type MessageType =
 
 type SendBody = {
   organization_id?: string;
-  sub_organization_id?: string | null;
   contact_id?: string | null;
   to?: string;
   type?: MessageType;
 
-  // text
   text?: string;
 
-  // template
   template_name?: string;
   template_language?: string;
   template_variables?: string[];
   template_components?: any[] | null;
 
-  // direct media
   image_url?: string;
   video_url?: string;
   audio_url?: string;
   document_url?: string;
   filename?: string;
 
-  // logging helpers
   message_type?: MessageType;
   media_url?: string | null;
   mime_type?: string | null;
 };
 
 /* ===========================================================================
-   RESOLVE SETTINGS
+   RESOLVE SETTINGS (ORG ONLY)
 =========================================================================== */
 
-async function resolveWhatsappSettings(
-  orgId: string,
-  subOrgId: string | null,
-) {
-  if (subOrgId) {
-    const { data } = await supabase
-      .from("whatsapp_settings")
-      .select("*")
-      .eq("organization_id", orgId)
-      .eq("sub_organization_id", subOrgId)
-      .maybeSingle();
-
-    if (data && data.is_active !== false) return data;
-  }
-
+async function resolveWhatsappSettings(orgId: string) {
   const { data } = await supabase
     .from("whatsapp_settings")
     .select("*")
     .eq("organization_id", orgId)
-    .is("sub_organization_id", null)
+    .neq("is_active", false)
     .maybeSingle();
 
-  if (data && data.is_active !== false) return data;
-  return null;
+  return data ?? null;
 }
 
 /* ===========================================================================
-   BUILD TEMPLATE COMPONENTS (Phase 2.4)
+   TEMPLATE COMPONENTS
 =========================================================================== */
 
 function buildTemplateComponents(body: SendBody): any[] {
   const components: any[] = [];
 
-  // 1️⃣ Header components (image / document) — already built upstream
   if (Array.isArray(body.template_components)) {
     components.push(...body.template_components);
   }
 
-  // 2️⃣ Body parameters (variables)
   if (Array.isArray(body.template_variables) && body.template_variables.length) {
     components.push({
       type: "body",
@@ -130,13 +109,11 @@ function buildWhatsappPayload(body: SendBody) {
     type,
   };
 
-  /* ---------------- TEXT ---------------- */
   if (type === "text") {
     if (!body.text?.trim()) throw new Error("Missing text");
     return { ...payload, text: { body: body.text.trim() } };
   }
 
-  /* ---------------- TEMPLATE ---------------- */
   if (type === "template") {
     if (!body.template_name || !body.template_language) {
       throw new Error("Missing template_name or template_language");
@@ -152,7 +129,6 @@ function buildWhatsappPayload(body: SendBody) {
     };
   }
 
-  /* ---------------- DIRECT MEDIA ---------------- */
   if (type === "image") {
     if (!body.image_url) throw new Error("Missing image_url");
     return { ...payload, image: { link: body.image_url } };
@@ -199,7 +175,6 @@ serve(async (req: Request) => {
     const body = (await req.json()) as SendBody;
 
     const orgId = body.organization_id?.trim();
-    const subOrgId = body.sub_organization_id ?? null;
     const contactId = body.contact_id ?? null;
     const type = body.type;
     const to = body.to?.trim();
@@ -215,7 +190,7 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
 
-    const settings = await resolveWhatsappSettings(orgId, subOrgId);
+    const settings = await resolveWhatsappSettings(orgId);
     if (!settings?.api_token || !settings?.whatsapp_phone_id) {
       return new Response(
         JSON.stringify({ error: "WhatsApp settings not found" }),
@@ -253,12 +228,10 @@ serve(async (req: Request) => {
       metaResponse?.message_id ??
       null;
 
-    /* ---------------- CHAT LOGGING ---------------- */
-
     if (contactId) {
       const { data: conversation } = await supabase
         .from("conversations")
-        .select("id, sub_organization_id")
+        .select("id")
         .eq("organization_id", orgId)
         .eq("contact_id", contactId)
         .eq("channel", "whatsapp")
@@ -274,7 +247,6 @@ serve(async (req: Request) => {
           media_url: body.media_url ?? null,
           mime_type: body.mime_type ?? null,
           whatsapp_message_id: waMessageId,
-          sub_organization_id: conversation.sub_organization_id,
         });
 
         await supabase
