@@ -1,7 +1,5 @@
 // supabase/functions/ai-handler/index.ts
 // deno-lint-ignore-file no-explicit-any
-// PHASE 5 — WALLET ENFORCEMENT FINAL
-// PART 1 / 4
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
@@ -44,7 +42,6 @@ type LogContext = {
   request_id: string;
   conversation_id?: string;
   organization_id?: string;
-  sub_organization_id?: string | null;
   channel?: string;
 };
 
@@ -53,7 +50,6 @@ function createLogger(ctx: LogContext) {
     request_id: ctx.request_id,
     conversation_id: ctx.conversation_id,
     organization_id: ctx.organization_id,
-    sub_organization_id: ctx.sub_organization_id,
     channel: ctx.channel,
   };
 
@@ -229,7 +225,6 @@ async function wasHumanActiveRecently(params: {
   return ageMs >= 0 && ageMs <= seconds * 1000;
 }
 
-
 /* ============================================================================
    CHAT HISTORY → LLM MESSAGES (STATEFUL FIX)
 ============================================================================ */
@@ -268,9 +263,7 @@ function buildChatMessagesFromHistory(
    PSF HELPERS
 ============================================================================ */
 
-async function loadOpenPsfCaseByConversation(
-  conversationId: string
-) {
+async function loadOpenPsfCaseByConversation(conversationId: string) {
   const { data } = await supabase
     .from("psf_cases")
     .select("id, campaign_id")
@@ -282,11 +275,13 @@ async function loadOpenPsfCaseByConversation(
   return data;
 }
 
-
 async function classifyPsfSentiment(
   logger: ReturnType<typeof createLogger>,
   message: string
-): Promise<{ sentiment: "positive" | "negative" | "neutral"; summary: string }> {
+): Promise<{
+  sentiment: "positive" | "negative" | "neutral";
+  summary: string;
+}> {
   const prompt = `
 You are classifying customer service feedback.
 
@@ -320,7 +315,6 @@ Return STRICT JSON:
     return { sentiment: "neutral", summary: "Feedback received" };
   }
 }
-
 
 /* ============================================================================
    WALLET HELPERS — PHASE 5
@@ -396,24 +390,6 @@ function isGreetingMessage(input: string): boolean {
 
   return false;
 }
-/* ============================================================================
-   EMBEDDINGS + CHAT (SAFE)
-============================================================================ */
-async function safeEmbedding(
-  logger: ReturnType<typeof createLogger>,
-  input: string
-): Promise<number[] | null> {
-  try {
-    const resp = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input,
-    });
-    return resp.data?.[0]?.embedding ?? null;
-  } catch (err) {
-    logger.error("[openai] embedding error", { error: err });
-    return null;
-  }
-}
 
 async function safeChatCompletion(
   logger: ReturnType<typeof createLogger>,
@@ -484,41 +460,20 @@ function estimateActualCost(params: {
   return 0;
 }
 
-/* ============================================================================
-   PHASE 4 — AI SETTINGS (ORG → SUB-ORG OVERRIDE)
-============================================================================ */
 async function resolveAISettings(params: {
   organizationId: string;
-  subOrganizationId: string | null;
   logger: ReturnType<typeof createLogger>;
-}): Promise<{
-  provider: "openai" | "gemini";
-  model: string;
-}> {
-  const { organizationId, subOrganizationId, logger } = params;
+}): Promise<{ provider: "openai" | "gemini"; model: string }> {
+  const { organizationId, logger } = params;
 
-  if (subOrganizationId) {
-    const { data } = await supabase
-      .from("ai_settings")
-      .select("provider, model")
-      .eq("organization_id", organizationId)
-      .eq("sub_organization_id", subOrganizationId)
-      .maybeSingle();
-
-    if (data?.provider && data?.model) {
-      return { provider: data.provider, model: data.model };
-    }
-  }
-
-  const { data: orgWide } = await supabase
+  const { data } = await supabase
     .from("ai_settings")
     .select("provider, model")
     .eq("organization_id", organizationId)
-    .is("sub_organization_id", null)
     .maybeSingle();
 
-  if (orgWide?.provider && orgWide?.model) {
-    return { provider: orgWide.provider, model: orgWide.model };
+  if (data?.provider && data?.model) {
+    return { provider: data.provider, model: data.model };
   }
 
   logger.warn("[ai-settings] fallback to default");
@@ -628,52 +583,6 @@ async function runAICompletion(params: {
 }
 
 /* ============================================================================
-   PHASE 4 — AI USAGE LOGGING (helper, optional)
-============================================================================ */
-async function logAIUsage(params: {
-  organizationId: string;
-  subOrganizationId: string | null;
-  conversationId: string;
-  provider: "openai" | "gemini";
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCost: number;
-  chargedAmount: number;
-  logger: ReturnType<typeof createLogger>;
-}) {
-  const {
-    organizationId,
-    subOrganizationId,
-    conversationId,
-    provider,
-    model,
-    inputTokens,
-    outputTokens,
-    estimatedCost,
-    chargedAmount,
-    logger,
-  } = params;
-
-  try {
-    const { error } = await supabase.from("ai_usage_logs").insert({
-      organization_id: organizationId,
-      sub_organization_id: subOrganizationId,
-      conversation_id: conversationId,
-      provider,
-      model,
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      estimated_cost: estimatedCost,
-      charged_amount: chargedAmount,
-    });
-
-    if (error) logger.error("[ai-usage] insert failed", { error });
-  } catch (err) {
-    logger.error("[ai-usage] fatal error", { error: err });
-  }
-}
-/* ============================================================================
    PHASE 7A — CAMPAIGN CONTEXT HELPERS (FIXED: NO last_delivered_at)
 ============================================================================ */
 async function fetchCampaignContextForContact(
@@ -741,36 +650,19 @@ Rules you MUST follow:
 /* ============================================================================
    BOT PERSONALITY (ORG → SUB-ORG OVERRIDE)
 ============================================================================ */
-async function loadBotPersonality(params: {
-  organizationId: string;
-  subOrganizationId: string | null;
-}) {
-  const { organizationId, subOrganizationId } = params;
+async function loadBotPersonality(params: { organizationId: string }) {
+  const { organizationId } = params;
 
-  if (subOrganizationId) {
-    const { data } = await supabase
-      .from("bot_personality")
-      .select(
-        "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts"
-      )
-      .eq("organization_id", organizationId)
-      .eq("sub_organization_id", subOrganizationId)
-      .maybeSingle();
-
-    if (data) return data;
-  }
-
-  const { data: orgWide } = await supabase
+  const { data } = await supabase
     .from("bot_personality")
     .select(
       "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts"
     )
     .eq("organization_id", organizationId)
-    .is("sub_organization_id", null)
     .maybeSingle();
 
   return (
-    orgWide ?? {
+    data ?? {
       tone: "Professional",
       language: "English",
       short_responses: true,
@@ -785,9 +677,6 @@ async function loadBotPersonality(params: {
   );
 }
 
-/* ============================================================================
-   RAG HELPER — SUB-ORG SCOPED + SEMANTIC FALLBACK
-============================================================================ */
 /* ============================================================================
    PHASE 6 — DETERMINISTIC KB RESOLVER (NO VECTORS, NO SCORING)
    Order:
@@ -812,11 +701,9 @@ function containsPhrase(haystack: string, needle: string): boolean {
   return h.includes(n);
 }
 
-
 async function resolveKnowledgeContext(params: {
   userMessage: string;
   organizationId: string;
-  subOrganizationId: string | null;
   logger: ReturnType<typeof createLogger>;
 }): Promise<{
   context: string;
@@ -824,32 +711,24 @@ async function resolveKnowledgeContext(params: {
   article_id: string;
   title: string;
 } | null> {
-  const { userMessage, organizationId, subOrganizationId, logger } = params;
+  const { userMessage, organizationId, logger } = params;
 
   const msg = normalizeForMatch(userMessage);
   if (!msg) return null;
 
   // Load articles in scope (sub-org: allow null/global + exact division)
   const { data: articles, error } = await supabase
-  .from("knowledge_articles")
-  .select("id, title, content, sub_organization_id, keywords, status")
-  .eq("organization_id", organizationId)
-  .eq("status", "published");
+    .from("knowledge_articles")
+    .select("id, title, content, keywords, status")
+    .eq("organization_id", organizationId)
+    .eq("status", "published");
 
   if (error || !articles?.length) {
     logger.debug("[kb] no articles or load error", { error });
     return null;
   }
 
-  const scoped = (articles as any[]).filter((a) => {
-    if (!subOrganizationId) return true;
-    return (
-      a.sub_organization_id === null ||
-      a.sub_organization_id === subOrganizationId
-    );
-  });
-
-  if (!scoped.length) return null;
+  const scoped = articles as any[];
 
   // -------------------------
   // PASS 1 — EXACT TITLE MATCH
@@ -927,7 +806,6 @@ async function resolveKnowledgeContext(params: {
 type WorkflowRow = {
   id: string;
   organization_id: string | null;
-  sub_organization_id: string | null;
   trigger: any | null;
   mode: "smart" | "strict" | null;
   is_active: boolean | null;
@@ -948,7 +826,6 @@ type WorkflowLogRow = {
 async function detectWorkflowTrigger(
   user_message: string,
   organizationId: string,
-  subOrgId: string | null,
   logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowRow | null> {
   const workflows = await safeSupabase<WorkflowRow[]>(
@@ -958,7 +835,7 @@ async function detectWorkflowTrigger(
       supabase
         .from("workflows")
         .select(
-          "id, organization_id, sub_organization_id, trigger, mode, is_active"
+          "id, organization_id, trigger, mode, is_active"
         )
         .eq("organization_id", organizationId)
         .eq("is_active", true)
@@ -974,9 +851,6 @@ async function detectWorkflowTrigger(
   for (const wf of workflows) {
     const trigger = wf.trigger ?? {};
     const triggerType = trigger.type ?? "always";
-
-    // Sub-org scoping
-    if (wf.sub_organization_id && wf.sub_organization_id !== subOrgId) continue;
 
     if (triggerType === "keyword") {
       const keywords: string[] = trigger.keywords ?? [];
@@ -1157,7 +1031,6 @@ async function saveWorkflowProgress(
 
 async function logUnansweredQuestion(params: {
   organization_id: string;
-  sub_organization_id: string | null;
   conversation_id: string;
   channel: string;
   question: string;
@@ -1167,7 +1040,6 @@ async function logUnansweredQuestion(params: {
   try {
     const { error } = await supabase.rpc("phase6_log_unanswered_question", {
       p_organization_id: params.organization_id,
-      p_sub_organization_id: params.sub_organization_id,
       p_conversation_id: params.conversation_id,
       p_channel: params.channel,
       p_question: params.question,
@@ -1214,7 +1086,6 @@ Return ONLY the suggested message text.
 `.trim();
 }
 
-
 /* ============================================================================
    MAIN HANDLER
 ============================================================================ */
@@ -1248,9 +1119,8 @@ serve(async (req: Request): Promise<Response> => {
       organization_id: string;
       channel: string;
       contact_id: string | null;
-      sub_organization_id: string | null;
       ai_enabled: boolean | null;
-    
+
       // Phase 1
       ai_mode: AiMode | null;
       ai_summary: string | null;
@@ -1259,58 +1129,76 @@ serve(async (req: Request): Promise<Response> => {
       supabase
         .from("conversations")
         .select(
-          "id, organization_id, channel, contact_id, sub_organization_id, ai_enabled, ai_mode, ai_summary, ai_last_entities"
+          "id, organization_id, channel, contact_id, ai_enabled, ai_mode, ai_summary, ai_last_entities"
         )
         .eq("id", conversation_id)
         .maybeSingle()
     );
-    
 
     if (!conv) return new Response("Conversation not found", { status: 404 });
     if (conv.ai_enabled === false)
       return new Response("AI disabled", { status: 200 });
 
-    // Phase 1 — AI mode guard
-const aiMode: AiMode = (conv.ai_mode as AiMode) || "auto";
+    // 🔒 SECURITY: Ensure organization exists and is active
+const org = await safeSupabase<{ status: string }>(
+  "load_organization_status",
+  baseLogger,
+  () =>
+    supabase
+      .from("organizations")
+      .select("status")
+      .eq("id", conv.organization_id)
+      .maybeSingle()
+);
 
-if (aiMode === "off") {
-  return new Response(
-    JSON.stringify({
-      conversation_id,
-      no_reply: true,
-      request_id,
-      reason: "AI_MODE_OFF",
-    }),
-    { headers: { "Content-Type": "application/json" } }
-  );
-}
-
-// If human is actively handling, block auto replies
-if (aiMode === "auto") {
-  const humanActive = await wasHumanActiveRecently({
-    conversationId: conversation_id,
-    logger: baseLogger,
-    seconds: 60,
+if (!org || org.status !== "active") {
+  baseLogger.error("[org] inactive or missing organization", {
+    organization_id: conv.organization_id,
   });
 
-  if (humanActive) {
-    return new Response(
-      JSON.stringify({
-        conversation_id,
-        no_reply: true,
-        request_id,
-        reason: "HUMAN_ACTIVE",
-      }),
-      { headers: { "Content-Type": "application/json" } }
-    );
-  }
+  return new Response("Organization inactive", { status: 403 });
 }
 
-const isSuggestOnly = aiMode === "suggest";
 
+    // Phase 1 — AI mode guard
+    const aiMode: AiMode = (conv.ai_mode as AiMode) || "auto";
+
+    if (aiMode === "off") {
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          no_reply: true,
+          request_id,
+          reason: "AI_MODE_OFF",
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // If human is actively handling, block auto replies
+    if (aiMode === "auto") {
+      const humanActive = await wasHumanActiveRecently({
+        conversationId: conversation_id,
+        logger: baseLogger,
+        seconds: 60,
+      });
+
+      if (humanActive) {
+        return new Response(
+          JSON.stringify({
+            conversation_id,
+            no_reply: true,
+            request_id,
+            reason: "HUMAN_ACTIVE",
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    const isSuggestOnly = aiMode === "suggest";
 
     const organizationId = conv.organization_id;
-    const subOrganizationId = conv.sub_organization_id ?? null;
     const channel = conv.channel || "web";
     const contactId = conv.contact_id;
 
@@ -1318,10 +1206,8 @@ const isSuggestOnly = aiMode === "suggest";
       request_id,
       conversation_id,
       organization_id: organizationId,
-      sub_organization_id: subOrganizationId,
       channel,
     });
-
 
     // 2) Wallet (required for any AI call; greetings are free)
     const wallet = await loadWalletForOrg(organizationId);
@@ -1375,8 +1261,7 @@ const isSuggestOnly = aiMode === "suggest";
 
     // 4) Personality (needed for greeting + fallback)
     const personality = await loadBotPersonality({
-      organizationId,
-      subOrganizationId,
+      organizationId
     });
 
     const fallbackMessage =
@@ -1416,7 +1301,6 @@ ${personality.donts || "- None specified."}
         message_type: "text",
         text: greetText,
         channel,
-        sub_organization_id: subOrganizationId,
       });
 
       // Update conversation timestamp
@@ -1429,7 +1313,6 @@ ${personality.donts || "- None specified."}
       if (channel === "whatsapp" && contactPhone) {
         await safeWhatsAppSend(logger, {
           organization_id: organizationId,
-          sub_organization_id: subOrganizationId,
           to: contactPhone,
           type: "text",
           text: greetText,
@@ -1451,109 +1334,106 @@ ${personality.donts || "- None specified."}
    PSF FLOW — SHORT CIRCUIT
 ============================================================================ */
 
-const psfCase = await loadOpenPsfCaseByConversation(conversation_id);
+    const psfCase = await loadOpenPsfCaseByConversation(conversation_id);
 
-if (psfCase) {
-  logger.info("[psf] handling feedback reply", {
-    psf_case_id: psfCase.id,
-  });
+    if (psfCase) {
+      logger.info("[psf] handling feedback reply", {
+        psf_case_id: psfCase.id,
+      });
 
-  const result = await classifyPsfSentiment(logger, user_message);
+      const result = await classifyPsfSentiment(logger, user_message);
 
-  await supabase
-    .from("psf_cases")
-    .update({
-      sentiment: result.sentiment,
-      ai_summary: result.summary,
-      action_required: result.sentiment !== "positive",
-      last_customer_reply_at: new Date().toISOString(),
-    })
-    .eq("id", psfCase.id);
+      await supabase
+        .from("psf_cases")
+        .update({
+          sentiment: result.sentiment,
+          ai_summary: result.summary,
+          action_required: result.sentiment !== "positive",
+          last_customer_reply_at: new Date().toISOString(),
+        })
+        .eq("id", psfCase.id);
 
       // 🔍 AUDIT: PSF feedback received
-  await logAuditEvent(supabase, {
-    organization_id: organizationId,
-    action: "psf_feedback_received",
-    entity_type: "psf_case",
-    entity_id: psfCase.id,
-    actor_user_id: null,
-    actor_email: null,
-    metadata: {
-      sentiment: result.sentiment,
-      summary: result.summary,
-      conversation_id,
-      campaign_id: psfCase.campaign_id,
-      channel,
-      request_id,
-    },
-  });
+      await logAuditEvent(supabase, {
+        organization_id: organizationId,
+        action: "psf_feedback_received",
+        entity_type: "psf_case",
+        entity_id: psfCase.id,
+        actor_user_id: null,
+        actor_email: null,
+        metadata: {
+          sentiment: result.sentiment,
+          summary: result.summary,
+          conversation_id,
+          campaign_id: psfCase.campaign_id,
+          channel,
+          request_id,
+        },
+      });
 
-  const replyText =
-    result.sentiment === "positive"
-      ? "Thank you for your feedback! We’re glad you had a good experience 😊"
-      : result.sentiment === "negative"
-      ? "Thank you for sharing your feedback. Our team will review this and connect with you shortly."
-      : "Thank you for your feedback. We appreciate you taking the time to respond.";
+      const replyText =
+        result.sentiment === "positive"
+          ? "Thank you for your feedback! We’re glad you had a good experience 😊"
+          : result.sentiment === "negative"
+          ? "Thank you for sharing your feedback. Our team will review this and connect with you shortly."
+          : "Thank you for your feedback. We appreciate you taking the time to respond.";
 
-  // Save bot reply
-  await supabase.from("messages").insert({
-    conversation_id,
-    sender: "bot",
-    message_type: "text",
-    text: replyText,
-    channel,
-    sub_organization_id: subOrganizationId,
-  });
+      // Save bot reply
+      await supabase.from("messages").insert({
+        conversation_id,
+        sender: "bot",
+        message_type: "text",
+        text: replyText,
+        channel,
+      });
 
-  await supabase
-    .from("conversations")
-    .update({ last_message_at: new Date().toISOString() })
-    .eq("id", conversation_id);
+      await supabase
+        .from("conversations")
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", conversation_id);
 
-  if (channel === "whatsapp" && contactPhone) {
-    await safeWhatsAppSend(logger, {
-      organization_id: organizationId,
-      sub_organization_id: subOrganizationId,
-      to: contactPhone,
-      type: "text",
-      text: replyText,
-    });
-  }
+      if (channel === "whatsapp" && contactPhone) {
+        await safeWhatsAppSend(logger, {
+          organization_id: organizationId,
+          to: contactPhone,
+          type: "text",
+          text: replyText,
+        });
+      }
 
-  return new Response(
-    JSON.stringify({
-      conversation_id,
-      psf_handled: true,
-      sentiment: result.sentiment,
-      request_id,
-    }),
-    { headers: { "Content-Type": "application/json" } }
-  );
-}
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          psf_handled: true,
+          sentiment: result.sentiment,
+          request_id,
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     /* ---------------------------------------------------------------------------
    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
 --------------------------------------------------------------------------- */
 
-// Detect model from user message
-const detectedModel = detectModelFromText(user_message);
+    // Detect model from user message
+    const detectedModel = detectModelFromText(user_message);
 
-// Merge with previously locked entities
-const prevEntities = conv.ai_last_entities ?? {};
-const nextEntities = mergeEntities(
-  prevEntities,
-  detectedModel ? { model: detectedModel } : null
-);
+    // Merge with previously locked entities
+    const prevEntities = conv.ai_last_entities ?? {};
+    const nextEntities = mergeEntities(
+      prevEntities,
+      detectedModel ? { model: detectedModel } : null
+    );
 
-// Persist entity lock (best-effort)
-await supabase
-  .from("conversations")
-  .update({
-    ai_last_entities: nextEntities,
-    ai_context_updated_at: new Date().toISOString(),
-  })
-  .eq("id", conversation_id);
-
+    // Persist entity lock (best-effort)
+    await supabase
+      .from("conversations")
+      .update({
+        ai_last_entities: nextEntities,
+        ai_context_updated_at: new Date().toISOString(),
+      })
+      .eq("id", conversation_id);
 
     // 5) Follow-up suggestion mode (NO send, NO DB write)
     if (mode === "suggest_followup") {
@@ -1595,7 +1475,6 @@ await supabase
     if (channel === "whatsapp" && contactPhone) {
       await safeWhatsAppSend(logger, {
         organization_id: organizationId,
-        sub_organization_id: subOrganizationId,
         to: contactPhone,
         type: "typing_on",
       });
@@ -1635,7 +1514,6 @@ await supabase
       }
     }
 
-    // 10) RAG
     // 10) Phase 6 — Deterministic KB (no vectors)
     let contextText = "";
     let kbMatchMeta: {
@@ -1647,7 +1525,6 @@ await supabase
     const resolvedKB = await resolveKnowledgeContext({
       userMessage: user_message,
       organizationId,
-      subOrganizationId,
       logger,
     });
 
@@ -1673,7 +1550,6 @@ await supabase
       const wf = await detectWorkflowTrigger(
         user_message,
         organizationId,
-        subOrganizationId,
         logger
       );
 
@@ -1700,7 +1576,7 @@ await supabase
         const step = steps[index];
         workflowInstructionText = safeText(
           (step as any).instruction_text ?? step.action?.instruction_text
-        );        
+        );
       }
     }
 
@@ -1726,7 +1602,6 @@ Your job:
 DEALERSHIP INFORMATION
 ------------------------
 - Organization ID: ${organizationId}
-- Division: ${subOrganizationId || "general"}
 - Channel: ${channel}
 
 ------------------------
@@ -1765,7 +1640,6 @@ EACH TIME.
 - Do NOT mention workflows, steps, or instructions.
 - Ask at most ONE relevant question if needed.
 
-
 These rules OVERRIDE default AI behavior.
 
 ------------------------
@@ -1781,7 +1655,6 @@ KNOWLEDGE USAGE RULES (CRITICAL)
 - ALWAYS summarize, rephrase, and explain in your own words.
 - Use bullet points where helpful.
 - Answer like a dealership executive, not a document.
-
 
 ------------------------
 CAMPAIGN HISTORY CONTEXT
@@ -1803,7 +1676,6 @@ MODEL & OFFER SAFETY RULE (CRITICAL)
 - Do NOT upsell without explicit customer intent.
 - If a locked model exists, ask clarifying questions ONLY within that model (variant, fuel, price, availability).
 - Do not propose a different model as an alternative unless the user asks for comparisons or more information.
-
 
 ------------------------
 RESPONSE DECISION RULES (CRITICAL)
@@ -1837,7 +1709,6 @@ Respond now to the customer's latest message only.
     // 12) AI settings
     const aiSettings = await resolveAISettings({
       organizationId,
-      subOrganizationId,
       logger,
     });
 
@@ -1916,7 +1787,6 @@ Respond now to the customer's latest message only.
         .from("ai_usage_logs")
         .insert({
           organization_id: organizationId,
-          sub_organization_id: subOrganizationId,
           conversation_id: conversation_id,
           provider: aiResult.provider,
           model: aiResult.model,
@@ -1965,7 +1835,6 @@ Respond now to the customer's latest message only.
           provider: aiResult.provider,
           model: aiResult.model,
           conversation_id,
-          sub_organization_id: subOrganizationId,
           channel,
           request_id,
           ai_usage_id: usage.id,
@@ -2033,54 +1902,51 @@ Respond now to the customer's latest message only.
     }
 
     // 16) Phase 6.3 — Log unanswered question (fallback only)
-    // 16) Phase 6.3 — Log unanswered question (fallback only)
-if (aiResponseText === fallbackMessage) {
-  await logUnansweredQuestion({
-    organization_id: organizationId,
-    sub_organization_id: subOrganizationId,
-    conversation_id,
-    channel,
-    question: user_message,
-    ai_response: aiResponseText,
-    logger,
-  });
+    if (aiResponseText === fallbackMessage) {
+      await logUnansweredQuestion({
+        organization_id: organizationId,
+        conversation_id,
+        channel,
+        question: user_message,
+        ai_response: aiResponseText,
+        logger,
+      });
 
-  // AUDIT: unanswered saved (fallback used)
-  await logAuditEvent(supabase, {
-    organization_id: organizationId,
-    action: "unanswered_logged",
-    entity_type: "conversation",
-    entity_id: conversation_id,
-    actor_user_id: null,
-    actor_email: null,
-    metadata: {
-      channel,
-      request_id,
-      question: user_message.slice(0, 500),
-      kb_match: kbMatchMeta ?? null,
-      has_workflow: Boolean(workflowInstructionText?.trim()),
-    },
-  });
-}
-  
+      // AUDIT: unanswered saved (fallback used)
+      await logAuditEvent(supabase, {
+        organization_id: organizationId,
+        action: "unanswered_logged",
+        entity_type: "conversation",
+        entity_id: conversation_id,
+        actor_user_id: null,
+        actor_email: null,
+        metadata: {
+          channel,
+          request_id,
+          question: user_message.slice(0, 500),
+          kb_match: kbMatchMeta ?? null,
+          has_workflow: Boolean(workflowInstructionText?.trim()),
+        },
+      });
+    }
+
     /* ---------------------------------------------------------------------------
    PHASE 1 — SUGGEST MODE HARD STOP (STEP 7)
 --------------------------------------------------------------------------- */
 
-if (isSuggestOnly) {
-  logger.info("[ai-handler] suggest-only mode — returning draft");
+    if (isSuggestOnly) {
+      logger.info("[ai-handler] suggest-only mode — returning draft");
 
-  return new Response(
-    JSON.stringify({
-      conversation_id,
-      draft: aiResponseText,
-      auto_send: false,
-      request_id,
-    }),
-    { headers: { "Content-Type": "application/json" } }
-  );
-}
-
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          draft: aiResponseText,
+          auto_send: false,
+          request_id,
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     // 17) Save message + update conversation
     await supabase.from("messages").insert({
@@ -2089,7 +1955,6 @@ if (isSuggestOnly) {
       message_type: "text",
       text: aiResponseText,
       channel,
-      sub_organization_id: subOrganizationId,
     });
 
     await supabase
@@ -2101,7 +1966,6 @@ if (isSuggestOnly) {
     if (channel === "whatsapp" && contactPhone) {
       await safeWhatsAppSend(logger, {
         organization_id: organizationId,
-        sub_organization_id: subOrganizationId,
         to: contactPhone,
         type: "text",
         text: aiResponseText,
