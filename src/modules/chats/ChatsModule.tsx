@@ -199,12 +199,26 @@ export function ChatsModule() {
 
         await supabase.from("messages").insert({
           conversation_id: conv.id,
-          sender: "user",
+          sender: "agent",
           message_type: msgType,
           text: text || null,
           media_url: url,
           channel: "whatsapp",
         });
+        
+        // P1-C: Agent takeover lock (30 mins)
+        const until = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        
+        await supabase
+          .from("conversations")
+          .update({
+            ai_locked: true,
+            ai_locked_at: new Date().toISOString(),
+            ai_locked_until: until,
+            ai_lock_reason: "agent_manual_send",
+          })
+          .eq("id", conv.id);
+        
       } else {
         await sendMessage(activeConversationId, {
           text,

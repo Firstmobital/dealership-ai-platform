@@ -316,7 +316,7 @@ export type CampaignMessage = {
 // PSF (POST SERVICE FEEDBACK)
 // -------------------------------------------------------------
 
-export type PsfSentiment = "positive" | "negative" | "neutral";
+export type PsfSentiment = "positive" | "negative" | "neutral" | "no_reply";
 
 export type PsfResolutionStatus = "open" | "resolved";
 

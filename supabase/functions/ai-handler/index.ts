@@ -1119,7 +1119,9 @@ serve(async (req: Request): Promise<Response> => {
       ai_enabled: boolean | null;
       ai_locked: boolean | null;
       ai_locked_by: string | null;
+      ai_locked_until: string | null;
       ai_locked_at: string | null;
+
       ai_lock_reason: string | null;
 
       // Phase 1
@@ -1144,6 +1146,7 @@ serve(async (req: Request): Promise<Response> => {
           ai_locked,
           ai_locked_by,
           ai_locked_at,
+          ai_locked_until,
           ai_lock_reason
           `
         )        
@@ -1179,39 +1182,69 @@ serve(async (req: Request): Promise<Response> => {
    4.1 AGENT TAKEOVER — HARD AI LOCK (SERVER ENFORCED)
 ============================================================================ */
 
+/* ============================================================================
+   AGENT TAKEOVER — EXPIRING AI LOCK (P1-C)
+============================================================================ */
+
 if (conv.ai_locked === true) {
-  baseLogger.warn("[ai-handler] blocked by agent takeover", {
+  const until = conv.ai_locked_until
+    ? Date.parse(conv.ai_locked_until)
+    : NaN;
+  const now = Date.now();
+
+  // 🔒 Lock active → block AI
+  if (!Number.isNaN(until) && until > now) {
+    baseLogger.warn("[ai-handler] blocked by agent takeover (active lock)", {
+      conversation_id,
+      organization_id: conv.organization_id,
+      ai_locked_by: conv.ai_locked_by,
+      ai_locked_at: conv.ai_locked_at,
+      ai_locked_until: conv.ai_locked_until,
+      ai_lock_reason: conv.ai_lock_reason,
+    });
+
+    await logAuditEvent(supabase, {
+      organization_id: conv.organization_id,
+      action: "ai_reply_blocked_agent_takeover",
+      entity_type: "conversation",
+      entity_id: conversation_id,
+      actor_user_id: conv.ai_locked_by ?? null,
+      actor_email: null,
+      metadata: {
+        reason: conv.ai_lock_reason ?? "agent_takeover",
+        channel: conv.channel,
+        request_id,
+        locked_until: conv.ai_locked_until,
+      },
+    });
+
+    return new Response(
+      JSON.stringify({
+        conversation_id,
+        no_reply: true,
+        reason: "AI_LOCKED_BY_AGENT",
+        request_id,
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  // ⏱️ Lock expired → auto-unlock
+  await supabase
+    .from("conversations")
+    .update({
+      ai_locked: false,
+      ai_locked_by: null,
+      ai_locked_at: null,
+      ai_locked_until: null,
+      ai_lock_reason: null,
+    })
+    .eq("id", conversation_id);
+
+  baseLogger.info("[ai-handler] agent lock expired → auto-unlocked", {
     conversation_id,
     organization_id: conv.organization_id,
-    ai_locked_by: conv.ai_locked_by,
-    ai_locked_at: conv.ai_locked_at,
-    ai_lock_reason: conv.ai_lock_reason,
   });
-
-  // 🔍 AUDIT: AI blocked due to agent takeover
-  await logAuditEvent(supabase, {
-    organization_id: conv.organization_id,
-    action: "ai_reply_blocked_agent_takeover",
-    entity_type: "conversation",
-    entity_id: conversation_id,
-    actor_user_id: conv.ai_locked_by ?? null,
-    actor_email: null,
-    metadata: {
-      reason: conv.ai_lock_reason ?? "agent_takeover",
-      channel: conv.channel,
-      request_id,
-    },
-  });
-
-  return new Response(
-    JSON.stringify({
-      conversation_id,
-      no_reply: true,
-      reason: "AI_LOCKED_BY_AGENT",
-      request_id,
-    }),
-    { headers: { "Content-Type": "application/json" } }
-  );
 }
 
     // Phase 1 — AI mode guard

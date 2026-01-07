@@ -327,7 +327,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     await supabase.from("messages").insert({
       conversation_id: conversationId,
-      sender: payload.sender ?? "user",
+      sender: payload.sender ?? "agent",
       message_type: payload.message_type ?? "text",
       text,
       channel: payload.channel ?? "web",

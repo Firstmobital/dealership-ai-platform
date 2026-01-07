@@ -20,6 +20,30 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
 });
 
 /* ===========================================================================
+   IDEMPOTENCY HELPERS (P1-A)
+=========================================================================== */
+
+function stableJsonStringify(obj: any): string {
+  if (obj === null || obj === undefined) return "";
+  if (typeof obj !== "object") return String(obj);
+  if (Array.isArray(obj)) {
+    return `[${obj.map(stableJsonStringify).join(",")}]`;
+  }
+  const keys = Object.keys(obj).sort();
+  return `{${keys
+    .map((k) => `${k}:${stableJsonStringify(obj[k])}`)
+    .join(",")}}`;
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/* ===========================================================================
    TYPES
 =========================================================================== */
 
@@ -203,6 +227,71 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
 
+    /* ============================================================
+       P1-A — OUTBOUND IDEMPOTENCY
+    ============================================================ */
+
+    let conversationId: string | null = null;
+
+    if (contactId) {
+      const { data: conversation } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("organization_id", orgId)
+        .eq("contact_id", contactId)
+        .eq("channel", "whatsapp")
+        .maybeSingle();
+
+      conversationId = conversation?.id ?? null;
+    }
+
+    let outboundDedupeKey: string | null = null;
+
+    if (conversationId) {
+      const keyMaterial = stableJsonStringify({
+        orgId,
+        conversationId,
+        to,
+        type,
+        text: body.text ?? null,
+        template_name: body.template_name ?? null,
+        template_language: body.template_language ?? null,
+        template_variables: body.template_variables ?? null,
+        template_components: body.template_components ?? null,
+        image_url: body.image_url ?? null,
+        video_url: body.video_url ?? null,
+        audio_url: body.audio_url ?? null,
+        document_url: body.document_url ?? null,
+        filename: body.filename ?? null,
+        media_url: body.media_url ?? null,
+        mime_type: body.mime_type ?? null,
+      });
+
+      outboundDedupeKey = await sha256Hex(keyMaterial);
+
+      const { data: existing } = await supabase
+        .from("messages")
+        .select("id, whatsapp_message_id")
+        .eq("conversation_id", conversationId)
+        .eq("outbound_dedupe_key", outboundDedupeKey)
+        .maybeSingle();
+
+      if (existing?.id) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            deduped: true,
+            whatsapp_message_id: existing.whatsapp_message_id ?? null,
+          }),
+          { status: 200 },
+        );
+      }
+    }
+
+    /* ============================================================
+       SEND TO META
+    ============================================================ */
+
     const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
 
     const waRes = await fetch(url, {
@@ -228,32 +317,23 @@ serve(async (req: Request) => {
       metaResponse?.message_id ??
       null;
 
-    if (contactId) {
-      const { data: conversation } = await supabase
+    if (conversationId) {
+      await supabase.from("messages").insert({
+        conversation_id: conversationId,
+        sender: "bot",
+        channel: "whatsapp",
+        message_type: body.message_type ?? type,
+        text: type === "text" ? body.text ?? null : null,
+        media_url: body.media_url ?? null,
+        mime_type: body.mime_type ?? null,
+        whatsapp_message_id: waMessageId,
+        outbound_dedupe_key: outboundDedupeKey,
+      });
+
+      await supabase
         .from("conversations")
-        .select("id")
-        .eq("organization_id", orgId)
-        .eq("contact_id", contactId)
-        .eq("channel", "whatsapp")
-        .maybeSingle();
-
-      if (conversation) {
-        await supabase.from("messages").insert({
-          conversation_id: conversation.id,
-          sender: "bot",
-          channel: "whatsapp",
-          message_type: body.message_type ?? type,
-          text: type === "text" ? body.text ?? null : null,
-          media_url: body.media_url ?? null,
-          mime_type: body.mime_type ?? null,
-          whatsapp_message_id: waMessageId,
-        });
-
-        await supabase
-          .from("conversations")
-          .update({ last_message_at: new Date().toISOString() })
-          .eq("id", conversation.id);
-      }
+        .update({ last_message_at: new Date().toISOString() })
+        .eq("id", conversationId);
     }
 
     return new Response(
