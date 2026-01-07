@@ -1117,6 +1117,10 @@ serve(async (req: Request): Promise<Response> => {
       channel: string;
       contact_id: string | null;
       ai_enabled: boolean | null;
+      ai_locked: boolean | null;
+      ai_locked_by: string | null;
+      ai_locked_at: string | null;
+      ai_lock_reason: string | null;
 
       // Phase 1
       ai_mode: AiMode | null;
@@ -1126,8 +1130,23 @@ serve(async (req: Request): Promise<Response> => {
       supabase
         .from("conversations")
         .select(
-          "id, organization_id, channel, contact_id, ai_enabled, ai_mode, ai_summary, ai_last_entities"
-        )
+          `
+          id,
+          organization_id,
+          channel,
+          contact_id,
+          ai_enabled,
+          ai_mode,
+          ai_summary,
+          ai_last_entities,
+        
+          -- 4.1 Agent takeover
+          ai_locked,
+          ai_locked_by,
+          ai_locked_at,
+          ai_lock_reason
+          `
+        )        
         .eq("id", conversation_id)
         .maybeSingle()
     );
@@ -1155,6 +1174,45 @@ serve(async (req: Request): Promise<Response> => {
 
       return new Response("Organization inactive", { status: 403 });
     }
+
+    /* ============================================================================
+   4.1 AGENT TAKEOVER — HARD AI LOCK (SERVER ENFORCED)
+============================================================================ */
+
+if (conv.ai_locked === true) {
+  baseLogger.warn("[ai-handler] blocked by agent takeover", {
+    conversation_id,
+    organization_id: conv.organization_id,
+    ai_locked_by: conv.ai_locked_by,
+    ai_locked_at: conv.ai_locked_at,
+    ai_lock_reason: conv.ai_lock_reason,
+  });
+
+  // 🔍 AUDIT: AI blocked due to agent takeover
+  await logAuditEvent(supabase, {
+    organization_id: conv.organization_id,
+    action: "ai_reply_blocked_agent_takeover",
+    entity_type: "conversation",
+    entity_id: conversation_id,
+    actor_user_id: conv.ai_locked_by ?? null,
+    actor_email: null,
+    metadata: {
+      reason: conv.ai_lock_reason ?? "agent_takeover",
+      channel: conv.channel,
+      request_id,
+    },
+  });
+
+  return new Response(
+    JSON.stringify({
+      conversation_id,
+      no_reply: true,
+      reason: "AI_LOCKED_BY_AGENT",
+      request_id,
+    }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
 
     // Phase 1 — AI mode guard
     const aiMode: AiMode = (conv.ai_mode as AiMode) || "auto";

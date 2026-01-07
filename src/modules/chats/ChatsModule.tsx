@@ -35,9 +35,50 @@ export function ChatsModule() {
   const [search, setSearch] = useState("");
   const [sending, setSending] = useState(false);
 
+  /* ---------------- AI TAKEOVER ---------------- */
+  const handleTakeOverAI = async () => {
+    if (!activeConversationId) return;
+
+    const { data: user } = await supabase.auth.getUser();
+
+    await supabase
+      .from("conversations")
+      .update({
+        ai_locked: true,
+        ai_lock_reason: "agent_takeover",
+        ai_locked_at: new Date().toISOString(),
+        ai_locked_by: user?.user?.id ?? null,
+      })
+      .eq("id", activeConversationId);
+
+    if (activeOrganization?.id) {
+      await fetchConversations(activeOrganization.id);
+    }
+  };
+
+  const handleUnlockAI = async () => {
+    if (!activeConversationId) return;
+
+    await supabase
+      .from("conversations")
+      .update({
+        ai_locked: false,
+        ai_locked_by: null,
+        ai_locked_at: null,
+        ai_lock_reason: null,
+      })
+      .eq("id", activeConversationId);
+
+    if (activeOrganization?.id) {
+      await fetchConversations(activeOrganization.id);
+    }
+  };
+
   /* ---------------- PSF + CAMPAIGN CONTEXT ---------------- */
   const [campaignContext, setCampaignContext] = useState<any | null>(null);
-  const [followupSuggestion, setFollowupSuggestion] = useState<string | null>(null);
+  const [followupSuggestion, setFollowupSuggestion] = useState<string | null>(
+    null
+  );
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const [aiNoReply, setAiNoReply] = useState(false);
 
@@ -60,7 +101,6 @@ export function ChatsModule() {
       fetchConversations(activeOrganization.id).catch(console.error);
     }
   }, [activeOrganization?.id, fetchConversations]);
-
 
   useEffect(() => {
     if (!activeConversationId) return;
@@ -147,9 +187,7 @@ export function ChatsModule() {
         if (file) {
           const path = `org_${conv.organization_id}/${activeConversationId}/${Date.now()}_${file.name}`;
 
-          await supabase.storage
-            .from(WHATSAPP_MEDIA_BUCKET)
-            .upload(path, file);
+          await supabase.storage.from(WHATSAPP_MEDIA_BUCKET).upload(path, file);
 
           const { data } = supabase.storage
             .from(WHATSAPP_MEDIA_BUCKET)
@@ -183,7 +221,7 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-     FILTER + SEARCH (PSF SAFE)
+     FILTER + SEARCH
   ------------------------------------------------------- */
   const filteredConversations: Conversation[] = conversations
     .filter((c) => {
@@ -215,6 +253,7 @@ export function ChatsModule() {
   );
 
   const isPsfConversation = Boolean(activeConversation?.meta?.psf_case_id);
+  const isAiLocked = Boolean(activeConversation?.ai_locked);
 
   /* -------------------------------------------------------
      UI
@@ -266,6 +305,12 @@ export function ChatsModule() {
                       <ThumbsUp size={12} /> PSF
                     </span>
                   )}
+
+                  {isAiLocked && (
+                    <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-700">
+                      AI Locked
+                    </span>
+                  )}
                 </div>
 
                 <div className="text-xs text-slate-500">
@@ -273,13 +318,35 @@ export function ChatsModule() {
                 </div>
               </div>
 
-              <button
-                onClick={handleSuggestFollowup}
-                className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1 text-xs hover:bg-slate-50"
-              >
-                <Sparkles size={14} />
-                Suggest follow-up
-              </button>
+              <div className="flex items-center gap-2">
+                {!isAiLocked && (
+                  <button
+                    onClick={handleSuggestFollowup}
+                    className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1 text-xs hover:bg-slate-50"
+                  >
+                    <Sparkles size={14} />
+                    Suggest follow-up
+                  </button>
+                )}
+
+                {!isAiLocked && (
+                  <button
+                    onClick={handleTakeOverAI}
+                    className="rounded-md bg-orange-600 px-3 py-1 text-xs text-white hover:bg-orange-700"
+                  >
+                    Take Over
+                  </button>
+                )}
+
+                {isAiLocked && (
+                  <button
+                    onClick={handleUnlockAI}
+                    className="rounded-md bg-slate-700 px-3 py-1 text-xs text-white hover:bg-slate-800"
+                  >
+                    Unlock AI
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* MESSAGES */}
@@ -309,7 +376,9 @@ export function ChatsModule() {
                 <input
                   name="message"
                   placeholder={
-                    isPsfConversation
+                    isAiLocked
+                      ? "You are handling this conversation…"
+                      : isPsfConversation
                       ? "Type response to customer..."
                       : "Type your message..."
                   }
@@ -318,7 +387,11 @@ export function ChatsModule() {
                 />
                 <button
                   disabled={sending}
-                  className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+                  className={`rounded-md px-4 py-2 text-white ${
+                    isAiLocked
+                      ? "bg-slate-500 cursor-default"
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }`}
                 >
                   <SendHorizonal size={16} />
                 </button>

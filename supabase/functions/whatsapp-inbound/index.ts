@@ -42,7 +42,9 @@ function createLogger(ctx: LogContext) {
     warn: (m: string, e = {}) =>
       console.warn(JSON.stringify({ level: "warn", ...ctx, message: m, ...e })),
     error: (m: string, e = {}) =>
-      console.error(JSON.stringify({ level: "error", ...ctx, message: m, ...e })),
+      console.error(
+        JSON.stringify({ level: "error", ...ctx, message: m, ...e }),
+      ),
     debug: (m: string, e = {}) =>
       DEBUG &&
       console.log(JSON.stringify({ level: "debug", ...ctx, message: m, ...e })),
@@ -63,6 +65,71 @@ function normalizeWaPhone(input?: string | null): string | null {
   return d || null;
 }
 
+/* =====================================================================================
+   MEDIA HELPERS (PHASE 3.2)
+===================================================================================== */
+
+async function fetchWhatsappMedia(
+  mediaId: string,
+  accessToken: string,
+): Promise<{ buffer: Uint8Array; mimeType: string }> {
+  // Step 1: Get media URL + mime_type from Graph API
+  const metaRes = await fetch(`${WHATSAPP_API_BASE_URL}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!metaRes.ok) {
+    const t = await metaRes.text().catch(() => "");
+    throw new Error(`Failed to fetch media metadata: ${t}`);
+  }
+
+  const meta = await metaRes.json();
+
+  // Step 2: Download media binary
+  const mediaRes = await fetch(meta.url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!mediaRes.ok) {
+    const t = await mediaRes.text().catch(() => "");
+    throw new Error(`Failed to download media: ${t}`);
+  }
+
+  const buffer = new Uint8Array(await mediaRes.arrayBuffer());
+  const mimeType =
+    mediaRes.headers.get("content-type") ??
+    meta.mime_type ??
+    "application/octet-stream";
+
+  return { buffer, mimeType };
+}
+
+async function storeWhatsappMedia(
+  organizationId: string,
+  conversationId: string,
+  messageId: string,
+  buffer: Uint8Array,
+  mimeType: string,
+) {
+  const ext = mimeType.split("/")[1] || "bin";
+  const path = `${organizationId}/${conversationId}/${messageId}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(WHATSAPP_MEDIA_BUCKET)
+    .upload(path, buffer, {
+      contentType: mimeType,
+      upsert: true,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from(WHATSAPP_MEDIA_BUCKET)
+    .getPublicUrl(path);
+
+  return data.publicUrl;
+}
+
 async function classifyIntent(text: string) {
   if (!openai) return "general";
   try {
@@ -75,7 +142,7 @@ async function classifyIntent(text: string) {
           content:
             "Classify message into EXACTLY one of: sales, service, finance, accessories, general.",
         },
-        { role: "user", content: text },
+        { role: "user", content: text.slice(0, MAX_TEXT_LENGTH) },
       ],
     });
     const i = r.choices[0]?.message?.content?.trim().toLowerCase();
@@ -148,12 +215,12 @@ async function processStatusReceipt(
     case "read":
       patch = { status: "delivered", delivered_at: ts };
       break;
-    case "failed":
-      patch = {
-        status: "failed",
-        failure_reason: status.errors?.[0]?.title ?? "unknown",
-      };
-      break;
+      case "failed":
+        patch = {
+          status: "failed",
+          error: status.errors?.[0]?.title ?? "unknown",
+        };
+        break;
     default:
       return;
   }
@@ -194,7 +261,7 @@ async function verifyWebhook(req: Request) {
 }
 
 /* =====================================================================================
-   MAIN INBOUND MESSAGE HANDLER (UNCHANGED)
+   MAIN INBOUND MESSAGE HANDLER
 ===================================================================================== */
 async function processInboundMessage(
   msg: any,
@@ -254,7 +321,6 @@ async function processInboundMessage(
         channel: "whatsapp",
         ai_enabled: true,
         last_message_at: new Date().toISOString(),
-
         whatsapp_user_phone: waNumber,
       })
       .select()
@@ -274,21 +340,80 @@ async function processInboundMessage(
 
   const text = msg.text?.body ?? null;
 
+  /* ============================================================
+     PHASE 3.1 — IDEMPOTENCY GUARD (MANDATORY)
+  ============================================================ */
+  const { data: existingMessage } = await supabase
+    .from("messages")
+    .select("id")
+    .eq("whatsapp_message_id", msg.id)
+    .maybeSingle();
+
+  if (existingMessage) {
+    convLogger.warn("DUPLICATE_WHATSAPP_MESSAGE_IGNORED", {
+      whatsapp_message_id: msg.id,
+    });
+    return;
+  }
+
+  /* ============================================================
+     PHASE 3.2 — MEDIA HANDLING
+  ============================================================ */
+  let mediaUrl: string | null = null;
+  let mimeType: string | null = null;
+
+  // For non-text messages, WhatsApp payload generally includes:
+  // msg.image.id / msg.document.id / msg.audio.id / msg.video.id, etc.
+  if (msg.type !== "text" && msg[msg.type]?.id && settings.data.api_token) {
+    try {
+      const mediaId = msg[msg.type].id;
+
+      const media = await fetchWhatsappMedia(mediaId, settings.data.api_token);
+
+      mediaUrl = await storeWhatsappMedia(
+        orgId,
+        conversationId,
+        msg.id,
+        media.buffer,
+        media.mimeType,
+      );
+
+      mimeType = media.mimeType;
+
+      convLogger.info("MEDIA_STORED", { type: msg.type, media_url: mediaUrl });
+    } catch (err) {
+      convLogger.error("MEDIA_PROCESSING_FAILED", {
+        error: String(err),
+        type: msg.type,
+      });
+    }
+  }
+
+  /* ============================================================
+     INSERT MESSAGE (TEXT OR MEDIA)
+  ============================================================ */
   await supabase.from("messages").insert({
     conversation_id: conversationId,
     sender: "customer",
     message_type: msg.type ?? "text",
     text,
+    media_url: mediaUrl,
+    mime_type: mimeType,
     channel: "whatsapp",
     whatsapp_message_id: msg.id,
     wa_received_at: new Date().toISOString(),
   });
 
+  /* ============================================================
+     AI TRIGGER ONLY FOR TEXT
+  ============================================================ */
   if (text) {
-    convLogger.info("TRIGGER_AI_HANDLER");
-    await triggerAIHandler({ conversationId, userMessage: text });
+    const safeText = text.slice(0, MAX_TEXT_LENGTH);
 
-    const intent = await classifyIntent(text);
+    convLogger.info("TRIGGER_AI_HANDLER");
+    await triggerAIHandler({ conversationId, userMessage: safeText });
+
+    const intent = await classifyIntent(safeText);
     await supabase
       .from("conversations")
       .update({ intent, intent_source: "ai" })

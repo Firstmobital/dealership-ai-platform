@@ -1,6 +1,4 @@
-// /src/modules/psf/PsfModule.tsx
-
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
   MessageCircle,
   CheckCircle,
@@ -9,39 +7,28 @@ import {
   X,
   Bell,
 } from "lucide-react";
-
-import {
-  usePsfStore,
-  PsfCase,
-  PsfSentiment,
-} from "../../state/usePsfStore";
 import { useNavigate } from "react-router-dom";
+
+import { usePsfStore } from "../../state/usePsfStore";
+import type { PsfCase, PsfSentiment } from "../../types/database";
 
 /* ============================================================================
    HELPERS
 ============================================================================ */
 
-function sentimentBadge(sentiment: PsfSentiment) {
-  if (sentiment === "positive") {
+function replyBadge(psfCase: PsfCase) {
+  if (psfCase.last_customer_reply_at) {
     return (
       <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-green-100 text-green-700">
-        <CheckCircle size={12} /> Positive
-      </span>
-    );
-  }
-
-  if (sentiment === "negative") {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-red-100 text-red-700">
-        <AlertTriangle size={12} /> Negative
+        <CheckCircle size={12} /> Replied
       </span>
     );
   }
 
   return (
     <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-gray-100 text-gray-600">
-        <Clock size={12} /> No Reply
-      </span>
+      <Clock size={12} /> No Reply
+    </span>
   );
 }
 
@@ -62,19 +49,12 @@ export function PsfModule() {
     sendReminder,
   } = usePsfStore();
 
-  const [sentimentFilter, setSentimentFilter] =
-    useState<PsfSentiment | "all">("all");
-
   /* ------------------------------------------------------------------------
      LOAD
   ------------------------------------------------------------------------ */
   useEffect(() => {
-    if (sentimentFilter === "all") {
-      fetchCases();
-    } else {
-      fetchCases({ sentiment: sentimentFilter });
-    }
-  }, [sentimentFilter]);
+    fetchCases();
+  }, []);
 
   /* ------------------------------------------------------------------------
      RENDER
@@ -87,26 +67,9 @@ export function PsfModule() {
       <div className="w-[420px] border-r bg-white flex flex-col">
         <div className="p-4 border-b">
           <h2 className="text-lg font-semibold">Post Service Feedback</h2>
-
-          <div className="mt-3 flex gap-2">
-            {["all", "positive", "negative", null].map((f) => (
-              <button
-                key={String(f)}
-                onClick={() => setSentimentFilter(f as any)}
-                className={`text-xs px-3 py-1 rounded border ${
-                  sentimentFilter === f
-                    ? "bg-black text-white"
-                    : "bg-white text-gray-600"
-                }`}
-              >
-                {f === "all"
-                  ? "All"
-                  : f === null
-                  ? "No Reply"
-                  : f.charAt(0).toUpperCase() + f.slice(1)}
-              </button>
-            ))}
-          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Track customer responses and follow-ups
+          </p>
         </div>
 
         <div className="flex-1 overflow-auto">
@@ -133,15 +96,17 @@ export function PsfModule() {
               >
                 <div className="flex justify-between items-center">
                   <div className="font-medium text-sm">
-                    {c.uploaded_data?.name || c.phone}
+                    {c.phone}
                   </div>
-                  {sentimentBadge(c.sentiment)}
+                  {replyBadge(c)}
                 </div>
 
                 <div className="mt-1 text-xs text-gray-500">
-                  {c.uploaded_data?.vehicle ||
-                    c.uploaded_data?.model ||
-                    "—"}
+                  Campaign: {c.campaign_name ?? "—"}
+                </div>
+
+                <div className="mt-1 text-xs text-gray-400">
+                  Reminders sent: {c.reminders_sent_count ?? 0}
                 </div>
               </button>
             ))}
@@ -196,7 +161,8 @@ function PsfDetail({
 }) {
   const maxReached =
     typeof psfCase.reminders_sent_count === "number" &&
-    psfCase.reminders_sent_count >= 3;
+    (psfCase.reminders_sent_count ?? 0) >= 3
+;
 
   const reminderDisabled =
     psfCase.resolution_status === "resolved" || maxReached;
@@ -205,10 +171,10 @@ function PsfDetail({
     <div className="h-full flex flex-col">
       <div className="p-4 border-b bg-white flex justify-between items-center">
         <div>
-          <div className="font-semibold">
-            {psfCase.uploaded_data?.name || psfCase.phone}
+          <div className="font-semibold">{psfCase.phone}</div>
+          <div className="text-xs text-gray-500">
+            Campaign: {psfCase.campaign_name ?? "—"}
           </div>
-          <div className="text-xs text-gray-500">{psfCase.phone}</div>
         </div>
 
         <button onClick={onClose}>
@@ -217,21 +183,31 @@ function PsfDetail({
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
-        {/* Service Data */}
         <section className="bg-white p-4 rounded border">
-          <h4 className="text-sm font-semibold mb-2">Service Details</h4>
-          <pre className="text-xs bg-gray-50 p-3 rounded overflow-auto">
-            {JSON.stringify(psfCase.uploaded_data, null, 2)}
-          </pre>
-        </section>
+          <h4 className="text-sm font-semibold mb-2">Status</h4>
 
-        {/* AI Summary */}
-        <section className="bg-white p-4 rounded border">
-          <h4 className="text-sm font-semibold mb-2">Feedback Summary</h4>
-          <div className="mb-2">{sentimentBadge(psfCase.sentiment)}</div>
-          <p className="text-sm text-gray-700">
-            {psfCase.ai_summary || "No feedback received yet."}
-          </p>
+          <div className="flex items-center gap-2 text-sm">
+            {replyBadge(psfCase)}
+            <span className="text-gray-500">
+              Resolution: {psfCase.resolution_status}
+            </span>
+          </div>
+
+          <div className="mt-2 text-xs text-gray-500">
+            Sent at:{" "}
+            {psfCase.initial_sent_at
+              ? new Date(psfCase.initial_sent_at).toLocaleString()
+              : "—"}
+          </div>
+
+          <div className="mt-1 text-xs text-gray-500">
+            First reply:{" "}
+            {psfCase.last_customer_reply_at
+              ? new Date(
+                  psfCase.last_customer_reply_at
+                ).toLocaleString()
+              : "No reply yet"}
+          </div>
         </section>
       </div>
 
