@@ -1,4 +1,3 @@
-// src/components/auth/RequireOrgRole.tsx
 import React from "react";
 
 /**
