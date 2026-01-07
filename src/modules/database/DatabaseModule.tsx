@@ -1,7 +1,4 @@
 // src/modules/database/DatabaseModule.tsx
-// FULL + FINAL — Tier 5 (Phase 6)
-// Enterprise CRM Database UI
-// Logic untouched
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
@@ -23,7 +20,7 @@ export type DatabaseFiltersState = {
 };
 
 export function DatabaseModule() {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const [rows, setRows] = useState<ContactCampaignSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -40,14 +37,14 @@ export function DatabaseModule() {
   /* FETCH DATABASE SUMMARY                                        */
   /* -------------------------------------------------------------- */
   const fetchData = async () => {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
     setLoading(true);
 
     const { data, error } = await supabase
       .from("contact_campaign_summary")
       .select("*")
-      .eq("organization_id", currentOrganization.id);
+      .eq("organization_id", activeOrganization.id);
 
     if (error) {
       console.error("[DatabaseModule] fetch error", error);
@@ -60,7 +57,7 @@ export function DatabaseModule() {
 
   useEffect(() => {
     fetchData();
-  }, [currentOrganization?.id]);
+  }, [activeOrganization?.id]);
 
   /* -------------------------------------------------------------- */
   /* UI                                                           */

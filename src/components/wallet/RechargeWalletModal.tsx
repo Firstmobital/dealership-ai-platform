@@ -30,7 +30,7 @@ async function loadRazorpayScript(): Promise<boolean> {
 }
 
 export default function RechargeWalletModal({ open, onClose }: Props) {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const quickAmounts = useMemo(() => [499, 999, 1999, 4999, 9999], []);
   const [amount, setAmount] = useState<number>(999);
@@ -40,7 +40,7 @@ export default function RechargeWalletModal({ open, onClose }: Props) {
   if (!open) return null;
 
   const startPayment = async () => {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
 
     setLoading(true);
     setError(null);
@@ -67,7 +67,7 @@ export default function RechargeWalletModal({ open, onClose }: Props) {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            organization_id: currentOrganization.id,
+            organization_id: activeOrganization.id,
             amount_rupees: amount,
           }),
         }

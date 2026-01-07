@@ -19,7 +19,7 @@ import LowBalanceBanner from "../../components/wallet/LowBalanceBanner";
 import RechargeWalletModal from "../../components/wallet/RechargeWalletModal";
 
 export default function WalletPage() {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
   const { user } = useAuthStore();
 
   const {
@@ -43,17 +43,17 @@ export default function WalletPage() {
   /* LOAD WALLET + TRANSACTIONS                                                  */
   /* -------------------------------------------------------------------------- */
   useEffect(() => {
-    if (currentOrganization?.id) {
-      fetchWallet(currentOrganization.id);
-      fetchTransactions(currentOrganization.id);
+    if (activeOrganization?.id) {
+      fetchWallet(activeOrganization.id);
+      fetchTransactions(activeOrganization.id);
     }
-  }, [currentOrganization?.id, fetchWallet, fetchTransactions]);
+  }, [activeOrganization?.id, fetchWallet, fetchTransactions]);
 
   /* -------------------------------------------------------------------------- */
   /* MANUAL CREDIT HANDLER                                                       */
   /* -------------------------------------------------------------------------- */
   const handleManualCredit = async () => {
-    if (!currentOrganization?.id || !amount) return;
+    if (!activeOrganization?.id || !amount) return;
 
     setSubmitting(true);
     setError(null);
@@ -61,7 +61,7 @@ export default function WalletPage() {
     const { error } = await supabase.rpc(
       "phase5_wallet_manual_credit",
       {
-        p_organization_id: currentOrganization.id,
+        p_organization_id: activeOrganization.id,
         p_amount: Number(amount),
         p_note: note || null,
       }
@@ -72,8 +72,8 @@ export default function WalletPage() {
     } else {
       setAmount("");
       setNote("");
-      await fetchWallet(currentOrganization.id);
-      await fetchTransactions(currentOrganization.id);
+      await fetchWallet(activeOrganization.id);
+      await fetchTransactions(activeOrganization.id);
     }
 
     setSubmitting(false);

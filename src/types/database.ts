@@ -409,3 +409,4 @@ export type WalletTransaction = {
 
   created_at: string;
 };
+

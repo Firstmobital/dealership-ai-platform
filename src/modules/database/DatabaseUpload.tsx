@@ -35,7 +35,7 @@ export function DatabaseUpload({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { currentOrganization } = useOrganizationStore();
+  const { activeOrganization } = useOrganizationStore();
 
   const [raw, setRaw] = useState("");
   const [rows, setRows] = useState<ParsedRow[]>([]);
@@ -54,7 +54,7 @@ export function DatabaseUpload({
   };
 
   const handleUpload = async () => {
-    if (!currentOrganization?.id) return;
+    if (!activeOrganization?.id) return;
     if (rows.length === 0) return alert("No rows to import");
 
     setLoading(true);
@@ -63,7 +63,7 @@ export function DatabaseUpload({
         "contact-bulk-upload",
         {
           body: {
-            organization_id: currentOrganization.id,
+            organization_id: activeOrganization.id,
             rows,
             label: label || null,
           },
