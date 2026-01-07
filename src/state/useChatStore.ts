@@ -5,10 +5,35 @@ import { supabase } from "../lib/supabaseClient";
 import type { Conversation, Message } from "../types/database";
 
 /* ========================================================================== */
-/*  REALTIME INIT GUARD (CRITICAL)                                             */
+/*  REALTIME STATE (P0-B — ORG SAFE + CLEANUP)                                 */
 /* ========================================================================== */
 
-let realtimeInitialized = false;
+let realtimeOrgId: string | null = null;
+
+let rtConversations:
+  | ReturnType<typeof supabase.channel>
+  | null = null;
+
+let rtMessages:
+  | ReturnType<typeof supabase.channel>
+  | null = null;
+
+function teardownRealtime() {
+  try {
+    if (rtMessages) supabase.removeChannel(rtMessages);
+  } catch {
+    // ignore
+  }
+  try {
+    if (rtConversations) supabase.removeChannel(rtConversations);
+  } catch {
+    // ignore
+  }
+
+  rtMessages = null;
+  rtConversations = null;
+  realtimeOrgId = null;
+}
 
 /* ========================================================================== */
 /*  FILTER TYPES                                                              */
@@ -210,12 +235,76 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* REALTIME                                                                  */
   /* -------------------------------------------------------------------------- */
   initRealtime: (organizationId) => {
-    if (realtimeInitialized) return;
-    realtimeInitialized = true;
+    // P0-B: Make realtime deterministic and org-safe.
+    // If org changes, teardown everything and re-init.
+    if (!organizationId) return;
+    if (realtimeOrgId && realtimeOrgId !== organizationId) {
+      // Global cleanup prevents cross-org listeners.
+      try {
+        supabase.removeAllChannels();
+      } catch {
+        // ignore
+      }
+      teardownRealtime();
+    }
+
+    if (realtimeOrgId === organizationId && rtConversations) {
+      return;
+    }
+
+    realtimeOrgId = organizationId;
 
     /* ------------------ CONVERSATIONS ------------------ */
-    supabase
-      .channel("rt-conversations")
+    rtConversations = supabase
+      .channel(`rt-conversations:${organizationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "conversations",
+          filter: `organization_id=eq.${organizationId}`,
+        },
+        (payload) => {
+          const next = payload.new as any;
+          const prev = payload.old as any;
+
+          // Reorder + update the conversation in store.
+          set((state) => {
+            const existing = state.conversations;
+            const idx = existing.findIndex((c) => c.id === next.id);
+            if (idx === -1) return state;
+
+            const updated = normalizeConversation({
+              ...existing[idx],
+              ...next,
+              contacts: (existing[idx] as any).contact ?? (existing[idx] as any).contacts,
+            });
+
+            const reordered = [
+              updated,
+              ...existing.slice(0, idx),
+              ...existing.slice(idx + 1),
+            ];
+
+            // Unread bump: only when last_message_at changes and convo isn't active.
+            const lastChanged =
+              (prev?.last_message_at ?? null) !== (next?.last_message_at ?? null);
+            const isActive = state.activeConversationId === next.id;
+
+            const unreadNext = { ...state.unread };
+            if (lastChanged && !isActive) {
+              unreadNext[next.id] = (unreadNext[next.id] ?? 0) + 1;
+            }
+
+            return {
+              ...state,
+              conversations: reordered as any,
+              unread: unreadNext,
+            };
+          });
+        },
+      )
       .on(
         "postgres_changes",
         {
@@ -240,37 +329,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       )
       .subscribe();
-
-    /* ------------------ MESSAGES ------------------ */
-    supabase
-      .channel("rt-messages")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages" },
-        (payload) => {
-          const msg = payload.new as Message;
-          const existing = get().messages[msg.conversation_id] ?? [];
-
-          if (existing.some((m) => m.id === msg.id)) return;
-
-          const isActive =
-            get().activeConversationId === msg.conversation_id;
-
-          set({
-            messages: {
-              ...get().messages,
-              [msg.conversation_id]: [...existing, msg],
-            },
-            unread: {
-              ...get().unread,
-              [msg.conversation_id]: isActive
-                ? 0
-                : (get().unread[msg.conversation_id] ?? 0) + 1,
-            },
-          });
-        }
-      )
-      .subscribe();
   },
 
   /* -------------------------------------------------------------------------- */
@@ -283,6 +341,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
         unread: { ...state.unread, [conversationId]: 0 },
       }));
     }
+
+    // P0-B: Subscribe to messages for the active conversation only.
+    try {
+      if (rtMessages) supabase.removeChannel(rtMessages);
+    } catch {
+      // ignore
+    }
+    rtMessages = null;
+
+    if (!conversationId) return;
+
+    rtMessages = supabase
+      .channel(`rt-messages:${conversationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          const msg = payload.new as Message;
+          const existing = get().messages[msg.conversation_id] ?? [];
+          if (existing.some((m) => m.id === msg.id)) return;
+
+          set({
+            messages: {
+              ...get().messages,
+              [msg.conversation_id]: [...existing, msg],
+            },
+            unread: {
+              ...get().unread,
+              [msg.conversation_id]: 0,
+            },
+          });
+        },
+      )
+      .subscribe();
   },
 
   setFilter: (filter) => set({ filter }),

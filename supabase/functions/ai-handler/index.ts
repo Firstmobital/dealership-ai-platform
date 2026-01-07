@@ -202,21 +202,22 @@ async function wasHumanActiveRecently(params: {
 }): Promise<boolean> {
   const seconds = params.seconds ?? 60;
 
-  const lastAgent = await safeSupabase<{ sender: string; created_at: string }>(
+  // P1-A: load the most recent *agent* message, not the most recent message overall.
+  const lastAgent = await safeSupabase<{ created_at: string }>(
     "load_last_agent_message",
     params.logger,
     () =>
       supabase
         .from("messages")
-        .select("sender, created_at")
+        .select("created_at")
         .eq("conversation_id", params.conversationId)
+        .eq("sender", "agent")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle()
   );
 
   if (!lastAgent) return false;
-  if ((lastAgent.sender || "").toLowerCase() !== "agent") return false;
 
   const ts = Date.parse(lastAgent.created_at);
   if (!Number.isFinite(ts)) return false;
@@ -1303,6 +1304,16 @@ if (conv.ai_locked === true) {
       });
 
       if (humanActive) {
+        await logAuditEvent(supabase, {
+          organization_id: conv.organization_id,
+          action: "ai_reply_skipped_human_active",
+          entity_type: "conversation",
+          entity_id: conversation_id,
+          actor_user_id: null,
+          actor_email: null,
+          metadata: { ai_mode: aiMode, seconds: 60 },
+        });
+
         return new Response(
           JSON.stringify({
             conversation_id,
@@ -1328,6 +1339,16 @@ if (conv.ai_locked === true) {
       });
 
       if (humanActive) {
+        await logAuditEvent(supabase, {
+          organization_id: conv.organization_id,
+          action: "ai_reply_skipped_psf_human_active",
+          entity_type: "conversation",
+          entity_id: conversation_id,
+          actor_user_id: null,
+          actor_email: null,
+          metadata: { seconds: 600 },
+        });
+
         return new Response(
           JSON.stringify({
             conversation_id,

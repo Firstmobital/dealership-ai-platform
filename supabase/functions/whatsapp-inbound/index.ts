@@ -160,19 +160,32 @@ async function classifyIntent(text: string) {
 async function triggerAIHandler(params: {
   conversationId: string;
   userMessage: string;
+  logger: ReturnType<typeof createLogger>;
 }) {
-  await fetch(`${PROJECT_URL}/functions/v1/ai-handler`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-    },
-    body: JSON.stringify({
-      conversation_id: params.conversationId,
-      user_message: params.userMessage,
-      mode: "reply",
-    }),
-  }).catch(() => {});
+  try {
+    const res = await fetch(`${PROJECT_URL}/functions/v1/ai-handler`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        conversation_id: params.conversationId,
+        user_message: params.userMessage,
+        mode: "reply",
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      params.logger.error("AI_TRIGGER_FAILED", {
+        status: res.status,
+        body: body?.slice(0, 500),
+      });
+    }
+  } catch (err) {
+    params.logger.error("AI_TRIGGER_FAILED", { error: String(err) });
+  }
 }
 
 /* =====================================================================================
@@ -187,16 +200,24 @@ async function processStatusReceipt(
   const phoneNumberId = value?.metadata?.phone_number_id;
   if (!phoneNumberId) return;
 
-  const settings = await supabase
+  const { data: settings, error: settingsErr } = await supabase
     .from("whatsapp_settings")
     .select("organization_id")
     .eq("whatsapp_phone_id", phoneNumberId)
     .neq("is_active", false)
     .maybeSingle();
 
-  if (!settings.data) return;
+  if (settingsErr) {
+    baseLogger.error("RECEIPT_SETTINGS_LOOKUP_FAILED", {
+      error: settingsErr,
+      phoneNumberId,
+    });
+    return;
+  }
 
-  const orgId = settings.data.organization_id;
+  if (!settings) return;
+
+  const orgId = settings.organization_id;
   const logger = baseLogger.with({ organization_id: orgId });
 
   const waId = status.id;
@@ -259,22 +280,33 @@ async function processStatusReceipt(
 
   // Update inbox messages receipts too (org-scoped via conversation)
   if (messagePatch) {
-    const { data: msgRows } = await supabase
+    const { data: msgRows, error: msgRowsErr } = await supabase
       .from("messages")
       .select("id, conversation_id")
       .eq("whatsapp_message_id", waId)
       .limit(50);
+
+    if (msgRowsErr) {
+      logger.error("[inbox] receipt lookup failed", { error: msgRowsErr, waId });
+    }
 
     const convIds = Array.from(
       new Set((msgRows ?? []).map((r: any) => r.conversation_id).filter(Boolean)),
     );
 
     if (convIds.length) {
-      const { data: allowedConvs } = await supabase
+      const { data: allowedConvs, error: allowedErr } = await supabase
         .from("conversations")
         .select("id")
         .eq("organization_id", orgId)
         .in("id", convIds);
+
+      if (allowedErr) {
+        logger.error("[inbox] receipt conv scope failed", {
+          error: allowedErr,
+          waId,
+        });
+      }
 
       const allowedIds = (allowedConvs ?? []).map((c: any) => c.id);
 
@@ -285,21 +317,31 @@ async function processStatusReceipt(
           .eq("whatsapp_message_id", waId)
           .in("conversation_id", allowedIds);
 
-        if (!mErr) updatedAny = true;
+        if (mErr) {
+          logger.error("[inbox] receipt update failed", { error: mErr, waId });
+        } else {
+          updatedAny = true;
+        }
       }
     }
   }
 
   if (!updatedAny) {
     // 🔒 P1-B: DEAD-LETTER unmatched receipts
-    await supabase.from("campaign_delivery_receipt_failures").insert({
-      organization_id: orgId,
-      whatsapp_message_id: waId,
-      status: patch.status,
-      error_title: patch.error ?? null,
-      raw_status: status ?? {},
-      raw_value: value ?? {},
-    });
+    const { error: dlqErr } = await supabase
+      .from("campaign_delivery_receipt_failures")
+      .insert({
+        organization_id: orgId,
+        whatsapp_message_id: waId,
+        status: patch.status,
+        error_title: patch.error ?? null,
+        raw_status: status ?? {},
+        raw_value: value ?? {},
+      });
+
+    if (dlqErr) {
+      logger.error("[campaign] dead-letter insert failed", { error: dlqErr, waId });
+    }
 
     logger.warn("[campaign] receipt unmatched (logged)", {
       waId,
@@ -458,7 +500,7 @@ async function processInboundMessage(
      INSERT MESSAGE
   ============================================================ */
 
-  await supabase.from("messages").insert({
+  const { error: insertErr } = await supabase.from("messages").insert({
     conversation_id: conversationId,
     sender: "customer",
     channel: "whatsapp",
@@ -470,19 +512,39 @@ async function processInboundMessage(
     wa_received_at: new Date().toISOString(),
   });
 
+  if (insertErr) {
+    convLogger.error("MESSAGE_INSERT_FAILED", {
+      error: insertErr,
+      conversationId,
+      whatsapp_message_id: msg.id,
+    });
+    return;
+  }
+
   /* ============================================================
      AI TRIGGER (TEXT ONLY)
   ============================================================ */
 
   if (text) {
     const safeText = text.slice(0, MAX_TEXT_LENGTH);
-    await triggerAIHandler({ conversationId, userMessage: safeText });
+    await triggerAIHandler({
+      conversationId,
+      userMessage: safeText,
+      logger: convLogger,
+    });
 
     const intent = await classifyIntent(safeText);
-    await supabase
+    const { error: intentErr } = await supabase
       .from("conversations")
       .update({ intent, intent_source: "ai" })
       .eq("id", conversationId);
+
+    if (intentErr) {
+      convLogger.error("INTENT_UPDATE_FAILED", {
+        error: intentErr,
+        conversationId,
+      });
+    }
   }
 
   convLogger.info("INBOUND_MESSAGE_OK");

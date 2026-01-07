@@ -341,3 +341,12 @@ Multi-currency wallets
 **DB impact**
 - Added receipt columns to `public.messages`: `whatsapp_status`, `sent_at`, `delivered_at`, `read_at`.
 
+# Codex Logs
+
+## 2026-01-07 — Consolidated P0-A + P0-B + P1 rollout (P3 deferred)
+
+### Summary
+- **P0-A**: Inbox WhatsApp agent send through `whatsapp-send` (JWT verified), internal typing indicators (broadcast), and WhatsApp read receipts UI using `messages.whatsapp_status` and receipt timestamps.
+- **P0-B**: Realtime isolation and org switching safety by scoping message realtime subscription to the active conversation only and tearing down channels on organization or conversation switches.
+- **P1-A**: AI human-active guard corrected to check the most recent agent message and audit when auto-reply is skipped.
+- **P1-B**: WhatsApp inbound pipeline now logs and surfaces DB and AI-trigger failures instead of silently swallowing them.
