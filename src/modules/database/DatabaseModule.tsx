@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
-import type { ContactCampaignSummary } from "../../types/database";
+import type { ContactCampaignSummary } from "../../types/contactCampaignSummary";
 import { DatabaseFilters } from "./DatabaseFilters";
 import { ContactsTable } from "./ContactsTable";
 import { DatabaseUpload } from "./DatabaseUpload";
