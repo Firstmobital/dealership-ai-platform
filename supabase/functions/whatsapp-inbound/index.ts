@@ -205,24 +205,34 @@ async function processStatusReceipt(
   const ts = new Date(Number(status.timestamp) * 1000).toISOString();
 
   let patch: Record<string, any>;
+  let messagePatch: Record<string, any> | null = null;
 
   switch (status.status) {
     case "sent":
       patch = { status: "sent", dispatched_at: ts };
+      messagePatch = { whatsapp_status: "sent", sent_at: ts };
       break;
     case "delivered":
-    case "read":
       patch = { status: "delivered", delivered_at: ts };
+      messagePatch = { whatsapp_status: "delivered", delivered_at: ts };
+      break;
+    case "read":
+      // campaign_messages enum doesn't have "read"; treat as delivered.
+      patch = { status: "delivered", delivered_at: ts };
+      messagePatch = { whatsapp_status: "read", read_at: ts, delivered_at: ts };
       break;
     case "failed":
       patch = {
         status: "failed",
         error: status.errors?.[0]?.title ?? "unknown",
       };
+      messagePatch = { whatsapp_status: "failed" };
       break;
     default:
       return;
   }
+
+  let updatedAny = false;
 
   const { data, error } = await supabase
     .from("campaign_messages")
@@ -238,28 +248,64 @@ async function processStatusReceipt(
   }
 
   if (data?.length) {
+    updatedAny = true;
     logger.info("[campaign] receipt updated", {
       waId,
       status: patch.status,
       updated: data.length,
     });
-    return;
+    // continue to also update messages table
   }
 
-  // 🔒 P1-B: DEAD-LETTER unmatched receipts
-  await supabase.from("campaign_delivery_receipt_failures").insert({
-    organization_id: orgId,
-    whatsapp_message_id: waId,
-    status: patch.status,
-    error_title: patch.error ?? null,
-    raw_status: status ?? {},
-    raw_value: value ?? {},
-  });
+  // Update inbox messages receipts too (org-scoped via conversation)
+  if (messagePatch) {
+    const { data: msgRows } = await supabase
+      .from("messages")
+      .select("id, conversation_id")
+      .eq("whatsapp_message_id", waId)
+      .limit(50);
 
-  logger.warn("[campaign] receipt unmatched (logged)", {
-    waId,
-    status: patch.status,
-  });
+    const convIds = Array.from(
+      new Set((msgRows ?? []).map((r: any) => r.conversation_id).filter(Boolean)),
+    );
+
+    if (convIds.length) {
+      const { data: allowedConvs } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("organization_id", orgId)
+        .in("id", convIds);
+
+      const allowedIds = (allowedConvs ?? []).map((c: any) => c.id);
+
+      if (allowedIds.length) {
+        const { error: mErr } = await supabase
+          .from("messages")
+          .update(messagePatch)
+          .eq("whatsapp_message_id", waId)
+          .in("conversation_id", allowedIds);
+
+        if (!mErr) updatedAny = true;
+      }
+    }
+  }
+
+  if (!updatedAny) {
+    // 🔒 P1-B: DEAD-LETTER unmatched receipts
+    await supabase.from("campaign_delivery_receipt_failures").insert({
+      organization_id: orgId,
+      whatsapp_message_id: waId,
+      status: patch.status,
+      error_title: patch.error ?? null,
+      raw_status: status ?? {},
+      raw_value: value ?? {},
+    });
+
+    logger.warn("[campaign] receipt unmatched (logged)", {
+      waId,
+      status: patch.status,
+    });
+  }
 }
 
 /* =====================================================================================

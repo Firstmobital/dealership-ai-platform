@@ -1087,16 +1087,48 @@ Return ONLY the suggested message text.
    MAIN HANDLER
 ============================================================================ */
 serve(async (req: Request): Promise<Response> => {
+
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { status: 200 });
+  }
+  
   const request_id = crypto.randomUUID();
   const baseLogger = createLogger({ request_id });
 
   try {
-    // 0) Parse body
-    const body = (await req.json()) as {
-      conversation_id?: string;
-      user_message?: string;
-      mode?: "reply" | "suggest_followup";
-    };
+    // 0) Parse body — SAFE (prevents crash on empty / invalid JSON)
+let body: {
+  conversation_id?: string;
+  user_message?: string;
+  mode?: "reply" | "suggest_followup";
+} | null = null;
+
+const rawBody = await req.text();
+
+if (rawBody && rawBody.trim().length > 0) {
+  try {
+    body = JSON.parse(rawBody);
+  } catch (err) {
+    baseLogger.error("[validation] Invalid JSON body", {
+      body_length: rawBody.length,
+      error: String(err),
+    });    
+
+    return new Response(
+      JSON.stringify({ error: "Invalid JSON body" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+}
+
+if (!body) {
+  baseLogger.warn("[validation] Empty request body");
+  return new Response(
+    JSON.stringify({ error: "Empty request body" }),
+    { status: 400, headers: { "Content-Type": "application/json" } }
+  );
+}
+
 
     const conversation_id = body.conversation_id;
     const raw_message = body.user_message;

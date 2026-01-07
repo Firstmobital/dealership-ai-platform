@@ -323,3 +323,21 @@ Multi-currency wallets
 - Added `conversations.ai_locked_until`.
 - Updated `ai-handler` to block replies only while lock is active; auto-unlocks when expired.
 - Updated frontend manual sends to use `sender="agent"` and apply a 30-minute takeover lock.
+
+# Codex Logs
+
+## 2026-01-07 — P0-A Inbox WhatsApp Send + Typing Indicators + Read Receipts UI
+
+**Scope (P0-A)**
+- Enable WhatsApp agent sends from inbox using `whatsapp-send` Edge Function (JWT verified).
+- Add internal typing indicators (agent + AI suggestion) via Supabase Realtime broadcast.
+- Add delivery/read receipts storage (messages table) and UI display for outbound WhatsApp messages.
+
+**Key changes**
+- `whatsapp-send` now supports `conversation_id` payload (inbox agent send). It resolves org/contact/phone, checks org membership, sends to Meta, inserts message with `sender=agent`, and takes AI takeover lock.
+- `whatsapp-inbound` now updates inbox `messages` receipts (sent/delivered/read/failed) in addition to campaign receipt updates.
+- Frontend composer uses controlled draft + attachment picker; sends WhatsApp via `whatsapp-send` and shows typing indicators + receipts.
+
+**DB impact**
+- Added receipt columns to `public.messages`: `whatsapp_status`, `sent_at`, `delivered_at`, `read_at`.
+

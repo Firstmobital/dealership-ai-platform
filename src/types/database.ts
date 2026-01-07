@@ -121,6 +121,12 @@ export type Message = {
   whatsapp_message_id: string | null;
   wa_received_at: string | null;
 
+  // WhatsApp delivery/read receipts (optional)
+  whatsapp_status?: string | null;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
+
   created_at: string;
 };
 

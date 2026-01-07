@@ -10,7 +10,7 @@ import type { Message } from "../../../types/database";
  * ------------------------------------------------------- */
 function getSenderLabel(message: Message) {
   if (message.sender === "bot") return "AI";
-  if (message.sender === "user") return "Agent";
+  if (message.sender === "user" || message.sender === "agent") return "Agent";
   if (message.sender === "customer") return "Customer";
   return "System";
 }
@@ -22,10 +22,23 @@ function getSenderBadgeClass(message: Message) {
   if (message.sender === "customer")
     return "bg-green-100 text-green-700";
 
-  if (message.sender === "user")
+  if (message.sender === "user" || message.sender === "agent")
     return "bg-purple-100 text-purple-700";
 
   return "bg-slate-200 text-slate-700";
+}
+
+function getWhatsappReceiptLabel(message: Message): string | null {
+  if (message.channel !== "whatsapp") return null;
+  if (message.sender === "customer") return null;
+
+  const st = (message.whatsapp_status ?? "").toLowerCase();
+
+  if (message.read_at || st === "read") return "✓✓ Read";
+  if (message.delivered_at || st === "delivered") return "✓✓ Delivered";
+  if (message.sent_at || st === "sent") return "✓ Sent";
+  if (st === "failed") return "⚠ Failed";
+  return null;
 }
 
 /* -------------------------------------------------------
@@ -33,7 +46,7 @@ function getSenderBadgeClass(message: Message) {
  * ------------------------------------------------------- */
 export function ChatMessageBubble({ message }: { message: Message }) {
   const isBot = message.sender === "bot";
-  const isUser = message.sender === "user";
+  const isUser = message.sender === "user" || message.sender === "agent";
   const isCustomer = message.sender === "customer";
 
   const isInbound = isCustomer;
@@ -112,6 +125,24 @@ export function ChatMessageBubble({ message }: { message: Message }) {
   };
 
   /* -------------------------------------------------------
+   * READ RECEIPTS (WHATSAPP)
+   * ------------------------------------------------------- */
+  const renderReceipt = () => {
+    if (message.channel !== "whatsapp") return null;
+    if (isCustomer) return null;
+    if (!message.whatsapp_message_id) return null;
+
+    const label = getWhatsappReceiptLabel(message);
+    if (!label) return <span title="Pending">…</span>;
+
+    if (label.includes("Failed")) return <span title="Failed">⚠</span>;
+    if (label.includes("Sent")) return <span title="Sent">✓</span>;
+    if (label.includes("Delivered")) return <span title="Delivered">✓✓</span>;
+    if (label.includes("Read")) return <span title="Read">✓✓</span>;
+    return null;
+  };
+
+  /* -------------------------------------------------------
    * UI
    * ------------------------------------------------------- */
   return (
@@ -138,7 +169,7 @@ export function ChatMessageBubble({ message }: { message: Message }) {
         {renderMedia()}
       </div>
 
-      {/* Timestamp */}
+      {/* Timestamp + receipt */}
       <span
         className={`text-[10px] text-slate-500 ${
           isInbound ? "self-start" : "self-end"
@@ -148,6 +179,9 @@ export function ChatMessageBubble({ message }: { message: Message }) {
           hour: "2-digit",
           minute: "2-digit",
         })}
+        {!isInbound && (
+          <span className="ml-2">{renderReceipt()}</span>
+        )}
       </span>
     </div>
   );

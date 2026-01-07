@@ -318,12 +318,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /* -------------------------------------------------------------------------- */
   sendMessage: async (conversationId, payload) => {
     const text = payload.text?.trim() ?? "";
-    if (!text) return { noReply: false };
 
+    // ✅ WhatsApp agent send (Edge Function)
     if (payload.channel === "whatsapp") {
-      console.warn("WhatsApp messages cannot be sent from frontend");
+      const messageType = (payload.message_type ?? "text").toString();
+      const type =
+        messageType === "image" ||
+        messageType === "document" ||
+        messageType === "video" ||
+        messageType === "audio"
+          ? messageType
+          : "text";
+
+      if (type === "text" && !text) return { noReply: false };
+      if (type !== "text" && !payload.media_url) return { noReply: false };
+
+      const { data, error } = await supabase.functions.invoke("whatsapp-send", {
+        body: {
+          conversation_id: conversationId,
+          type,
+          text: text || null,
+          media_url: payload.media_url ?? null,
+          mime_type: payload.mime_type ?? null,
+          filename: (payload as any).filename ?? null,
+          message_type: messageType,
+        },
+      });
+
+      if (error) {
+        console.error("[useChatStore] whatsapp-send invoke error", error);
+      } else if (data?.error) {
+        console.error("[useChatStore] whatsapp-send failed", data);
+      }
+
       return { noReply: false };
     }
+
+    if (!text) return { noReply: false };
 
     await supabase.from("messages").insert({
       conversation_id: conversationId,

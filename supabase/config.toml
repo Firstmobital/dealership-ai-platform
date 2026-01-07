@@ -174,7 +174,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.whatsapp-send]
-verify_jwt = false
+verify_jwt = true
 
 [functions.campaign-dispatch]
 verify_jwt = false

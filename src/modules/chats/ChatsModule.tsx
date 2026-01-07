@@ -34,6 +34,16 @@ export function ChatsModule() {
   /* ---------------- UI STATE ---------------- */
   const [search, setSearch] = useState("");
   const [sending, setSending] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+
+  // Typing indicators (internal)
+  const [typingAgents, setTypingAgents] = useState<string[]>([]);
+  const [aiTyping, setAiTyping] = useState(false);
+  const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const typingExpiryRef = useRef<Record<string, number>>({});
+  const typingHeartbeatRef = useRef<number>(0);
+  const selfStopTimerRef = useRef<number>(0);
 
   /* ---------------- AI TAKEOVER ---------------- */
   const handleTakeOverAI = async () => {
@@ -84,6 +94,7 @@ export function ChatsModule() {
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   /* -------------------------------------------------------
      INIT REALTIME
@@ -127,6 +138,111 @@ export function ChatsModule() {
   }, [activeConversationId, conversations, messages, fetchMessages]);
 
   /* -------------------------------------------------------
+     TYPING INDICATORS (INTERNAL)
+  ------------------------------------------------------- */
+  useEffect(() => {
+    // cleanup previous channel
+    if (typingChannelRef.current) {
+      supabase.removeChannel(typingChannelRef.current);
+      typingChannelRef.current = null;
+    }
+
+    setTypingAgents([]);
+
+    if (!activeConversationId) return;
+
+    const channel = supabase
+      .channel(`typing:${activeConversationId}`)
+      .on("broadcast", { event: "typing" }, ({ payload }) => {
+        const actor = String(payload?.actor ?? "");
+        const name = String(payload?.name ?? "").trim() || "Agent";
+        const state = String(payload?.state ?? "");
+
+        if (actor === "ai") {
+          setAiTyping(state === "start");
+          return;
+        }
+
+        if (actor !== "agent") return;
+
+        setTypingAgents((prev) => {
+          const next = new Set(prev);
+          if (state === "start") next.add(name);
+          if (state === "stop") next.delete(name);
+          return Array.from(next);
+        });
+
+        // auto-expire in case stop isn't sent
+        const key = `${name}`;
+        if (typingExpiryRef.current[key]) {
+          window.clearTimeout(typingExpiryRef.current[key]);
+        }
+        typingExpiryRef.current[key] = window.setTimeout(() => {
+          setTypingAgents((prev) => prev.filter((n) => n !== name));
+        }, 3000);
+      })
+      .subscribe();
+
+    typingChannelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      typingChannelRef.current = null;
+    };
+  }, [activeConversationId]);
+
+  const broadcastTyping = async (state: "start" | "stop") => {
+    if (!activeConversationId) return;
+    if (!typingChannelRef.current) return;
+
+    const { data } = await supabase.auth.getUser();
+    const user = data?.user;
+    const name =
+      (user?.user_metadata as any)?.full_name ||
+      user?.email ||
+      "Agent";
+
+    typingChannelRef.current.send({
+      type: "broadcast",
+      event: "typing",
+      payload: {
+        actor: "agent",
+        state,
+        name,
+      },
+    });
+  };
+
+  const broadcastAiTyping = (state: "start" | "stop") => {
+    if (!activeConversationId) return;
+    if (!typingChannelRef.current) return;
+    typingChannelRef.current.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { actor: "ai", state },
+    });
+  };
+
+  const handleDraftChange = (value: string) => {
+    setDraft(value);
+
+    // Throttle typing signals
+    const now = Date.now();
+    if (now - typingHeartbeatRef.current > 1500) {
+      typingHeartbeatRef.current = now;
+      void broadcastTyping("start");
+    }
+
+    // Auto-stop shortly after user pauses typing
+    if (selfStopTimerRef.current) {
+      window.clearTimeout(selfStopTimerRef.current);
+    }
+    selfStopTimerRef.current = window.setTimeout(() => {
+      void broadcastTyping("stop");
+    }, 1200);
+  };
+
+  /* -------------------------------------------------------
      SCROLL MANAGEMENT
   ------------------------------------------------------- */
   useEffect(() => {
@@ -148,6 +264,8 @@ export function ChatsModule() {
     if (!activeConversationId) return;
 
     setLoadingSuggestion(true);
+    setAiTyping(true);
+    broadcastAiTyping("start");
     setFollowupSuggestion(null);
 
     const { data } = await supabase.functions.invoke("ai-handler", {
@@ -160,6 +278,8 @@ export function ChatsModule() {
 
     setFollowupSuggestion(data?.suggestion ?? "No suggestion generated.");
     setLoadingSuggestion(false);
+    setAiTyping(false);
+    broadcastAiTyping("stop");
   };
 
   /* -------------------------------------------------------
@@ -172,14 +292,16 @@ export function ChatsModule() {
     const conv = conversations.find((c) => c.id === activeConversationId);
     if (!conv) return;
 
-    const fd = new FormData(e.currentTarget);
-    const text = fd.get("message")?.toString().trim() || "";
-    const file = fd.get("file") as File | null;
-
+    const text = draft.trim();
     if (!text && !file) return;
     setSending(true);
 
     try {
+      if (selfStopTimerRef.current) {
+        window.clearTimeout(selfStopTimerRef.current);
+        selfStopTimerRef.current = 0;
+      }
+
       if (conv.channel === "whatsapp") {
         let url: string | null = null;
         let msgType = "text";
@@ -197,28 +319,16 @@ export function ChatsModule() {
           msgType = file.type.startsWith("image/") ? "image" : "document";
         }
 
-        await supabase.from("messages").insert({
-          conversation_id: conv.id,
-          sender: "agent",
+        await sendMessage(activeConversationId, {
+          channel: "whatsapp",
           message_type: msgType,
           text: text || null,
           media_url: url,
-          channel: "whatsapp",
+          mime_type: file?.type ?? null,
+          // @ts-expect-error - extra field passed through for whatsapp-send
+          filename: file?.name ?? null,
         });
-        
-        // P1-C: Agent takeover lock (30 mins)
-        const until = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-        
-        await supabase
-          .from("conversations")
-          .update({
-            ai_locked: true,
-            ai_locked_at: new Date().toISOString(),
-            ai_locked_until: until,
-            ai_lock_reason: "agent_manual_send",
-          })
-          .eq("id", conv.id);
-        
+
       } else {
         await sendMessage(activeConversationId, {
           text,
@@ -228,7 +338,10 @@ export function ChatsModule() {
         });
       }
 
-      e.currentTarget.reset();
+      setDraft("");
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      await broadcastTyping("stop");
     } finally {
       setSending(false);
     }
@@ -368,9 +481,30 @@ export function ChatsModule() {
               ref={scrollRef}
               className="flex-1 space-y-4 overflow-y-auto p-6"
             >
+              {(typingAgents.length > 0 || aiTyping) && (
+                <div className="text-xs italic text-slate-400">
+                  {aiTyping
+                    ? "AI is typing…"
+                    : `${typingAgents.join(", ")} is typing…`}
+                </div>
+              )}
+
               {currentMessages.map((msg) => (
                 <ChatMessageBubble key={msg.id} message={msg} />
               ))}
+
+              {(typingAgents.length > 0 || aiTyping) && (
+                <div className="text-xs italic text-slate-400">
+                  {typingAgents.length > 0 && (
+                    <span>
+                      {typingAgents.slice(0, 2).join(", ")}
+                      {typingAgents.length > 2 ? "…" : ""} is typing…
+                    </span>
+                  )}
+                  {typingAgents.length > 0 && aiTyping && <span> · </span>}
+                  {aiTyping && <span>AI is typing…</span>}
+                </div>
+              )}
 
               {aiNoReply && (
                 <div className="text-xs italic text-slate-400">
@@ -388,7 +522,28 @@ export function ChatsModule() {
             >
               <div className="flex gap-3">
                 <input
+                  id="chat-file"
+                  ref={fileInputRef}
+                  type="file"
+                  name="file"
+                  className="hidden"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+
+                <label
+                  htmlFor="chat-file"
+                  title="Attach file"
+                  className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                >
+                  📎
+                </label>
+
+                <input
                   name="message"
+                  value={draft}
+                  onChange={(e) => handleDraftChange(e.target.value)}
+                  onFocus={() => void broadcastTyping("start")}
+                  onBlur={() => void broadcastTyping("stop")}
                   placeholder={
                     isAiLocked
                       ? "You are handling this conversation…"
@@ -410,6 +565,12 @@ export function ChatsModule() {
                   <SendHorizonal size={16} />
                 </button>
               </div>
+
+              {file && (
+                <div className="mt-2 text-xs text-slate-500">
+                  Attached: {file.name}
+                </div>
+              )}
             </form>
           </>
         )}
