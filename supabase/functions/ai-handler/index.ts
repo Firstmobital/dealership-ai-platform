@@ -306,7 +306,6 @@ async function loadWalletForOrg(organizationId: string) {
 }
 
 async function createWalletDebit(params: {
-  organizationId: string;
   walletId: string;
   amount: number;
   aiUsageId: string;
@@ -314,7 +313,6 @@ async function createWalletDebit(params: {
   const { data, error } = await supabase
     .from("wallet_transactions")
     .insert({
-      organization_id: params.organizationId,
       wallet_id: params.walletId,
       type: "debit",
       direction: "out",
@@ -325,9 +323,14 @@ async function createWalletDebit(params: {
     .select("id")
     .single();
 
-  if (error) return null;
+  if (error) {
+    console.error("[wallet] debit insert error", error);
+    return null;
+  }
+
   return data.id;
 }
+
 
 /* ============================================================================
    GREETING DETECTOR (HARD RULE)
@@ -1941,7 +1944,6 @@ Respond now to the customer's latest message only.
 
       // 2) Debit wallet
       const walletTxnId = await createWalletDebit({
-        organizationId,
         walletId: wallet.id,
         amount: chargedAmount,
         aiUsageId: usage.id,
