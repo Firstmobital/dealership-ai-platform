@@ -173,9 +173,9 @@ export default function DatabasePage() {
           No matching contacts found
         </div>
       ) : (
-        <div className="overflow-auto rounded-lg border">
+        <div className="max-h-[calc(100vh-280px)] overflow-auto rounded-lg border bg-white">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-slate-600">
+            <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-4 py-3 text-left">Phone</th>
                 <th className="px-4 py-3 text-left">Name</th>

@@ -81,6 +81,7 @@ function App() {
   const {
     activeOrganization,
     isBootstrapping,
+    initialized: orgInitialized,
     bootstrapOrganizations,
   } = useOrganizationStore();
 
@@ -106,9 +107,10 @@ function App() {
   }, [activeOrganization?.id, initRealtime, fetchConversations]);
 
   /* ---------------------------------------------------------------------- */
-  /* 3) Guard: if org bootstrap running, show loader                         */
+  /* 3) Guard: hold routing until org bootstrap has completed at least once  */
+  /*    (prevents refresh on /chats from jumping to /settings)               */
   /* ---------------------------------------------------------------------- */
-  if (user && isBootstrapping) {
+  if (user && (!orgInitialized || isBootstrapping)) {
     return <FullScreenLoader />;
   }
 
@@ -139,10 +141,7 @@ function App() {
         }
       >
         {/* If logged in but no org, force user to settings for now */}
-        <Route
-          index
-          element={hasOrg ? <ChatsModule /> : <Navigate to="/settings" replace />}
-        />
+        <Route index element={<Navigate to="/chats" replace />} />
 
         <Route
           path="chats"

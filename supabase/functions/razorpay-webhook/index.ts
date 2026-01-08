@@ -173,6 +173,7 @@ serve(async (req) => {
     const { error: creditErr } = await supabaseAdmin
       .from("wallet_transactions")
       .insert({
+        organization_id: orderRow.organization_id,
         wallet_id: orderRow.wallet_id,
         type: "credit",
         direction: "in",

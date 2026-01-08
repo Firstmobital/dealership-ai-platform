@@ -58,7 +58,7 @@ function renderStepSummary(step: WorkflowStep) {
   return (
     <>
       <div className="font-medium">Assistant Guidance</div>
-      <div className="text-sm text-slate-600">
+      <div className="text-sm text-slate-600 line-clamp-4">
         {safeString((step as any)?.action?.instruction_text) || "—"}
       </div>
     </>
@@ -259,7 +259,7 @@ export function WorkflowModule() {
 
   return (
     <div className="h-full w-full overflow-hidden bg-slate-50">
-      <div className="grid h-full grid-cols-[280px,1fr,360px] gap-6 px-6 py-6 overflow-hidden">
+      <div className="grid h-full grid-cols-[300px,1fr,380px] gap-8 px-8 py-6 overflow-hidden">
         {/* ============================================================ */}
         {/* LEFT — WORKFLOWS                                             */}
         {/* ============================================================ */}
@@ -526,7 +526,7 @@ export function WorkflowModule() {
               const isEditing = editingStepId === step.id;
 
               return (
-                <div key={step.id} className="border rounded p-3 bg-white">
+                <div key={step.id} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="flex justify-between items-center text-xs text-slate-500">
                     Stage {index + 1}
                     <div className="flex gap-2">
@@ -556,7 +556,7 @@ export function WorkflowModule() {
                   </div>
 
                   {!isEditing ? (
-                    <div className="mt-2 bg-slate-50 p-3 rounded">
+                    <div className="mt-3 rounded-lg bg-slate-50 p-3">
                       {renderStepSummary(step)}
                     </div>
                   ) : (

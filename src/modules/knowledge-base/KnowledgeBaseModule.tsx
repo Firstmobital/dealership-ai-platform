@@ -334,7 +334,44 @@ export function KnowledgeBaseModule() {
                   {selectedArticle.title}
                 </h2>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedArticle.source_type === "text" && (
+                    <button
+                      onClick={() => handleEdit(selectedArticle)}
+                      className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                    >
+                      <Pencil size={14} />
+                      Edit
+                    </button>
+                  )}
+
+                  {selectedArticle.source_type === "file" && (
+                    <>
+                      <button
+                        onClick={() => downloadOriginalFile(selectedArticle)}
+                        className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        <Download size={14} />
+                        Download
+                      </button>
+
+                      <button
+                        onClick={() => setConfirmReplaceOpen(true)}
+                        className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        <RefreshCcw size={14} />
+                        Replace file
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    onClick={() => handleDelete(selectedArticle)}
+                    className="flex items-center gap-1 rounded-md border border-red-200 bg-white px-3 py-1 text-xs text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
                   {selectedArticle.status !== "published" && (
                     <button
                       onClick={() =>
@@ -408,6 +445,54 @@ export function KnowledgeBaseModule() {
           )}
         </div>
       </div>
+
+      {/* Replace File Confirm */}
+      {confirmReplaceOpen && selectedArticle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <div className="text-sm font-semibold text-slate-900">Replace file</div>
+                <div className="text-xs text-slate-500">This will upload a new PDF/Excel and re-process the content for AI.</div>
+              </div>
+              <button
+                onClick={() => setConfirmReplaceOpen(false)}
+                className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              <div className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
+                <AlertTriangle size={16} className="mt-0.5" />
+                <div>
+                  The old file stays in history, but the article content will be updated from the new file.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+              <button
+                onClick={() => setConfirmReplaceOpen(false)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmReplaceOpen(false);
+                  replaceFileInputRef.current?.click();
+                }}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Choose file
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <p className="mt-4 text-sm text-red-600">Error: {error}</p>}
     </div>

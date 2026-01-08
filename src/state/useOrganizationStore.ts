@@ -17,6 +17,8 @@ export type OrgState = {
   activeOrganization: Organization | null;
 
   isBootstrapping: boolean;
+  /** True once bootstrapOrganizations has completed at least once (success or empty). */
+  initialized: boolean;
   loading: boolean;
 
   /* -------------------------------------------------------------------------- */
@@ -24,6 +26,8 @@ export type OrgState = {
   /* -------------------------------------------------------------------------- */
   bootstrapOrganizations: () => Promise<void>;
   setActiveOrganization: (org: Organization) => Promise<void>;
+  /** Admin helper: create a new org + membership and switch into it. */
+  createOrganization: (name: string) => Promise<void>;
   clearOrganizationState: () => void;
 };
 
@@ -38,6 +42,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
   activeOrganization: null,
 
   isBootstrapping: false,
+  initialized: false,
   loading: false,
 
   /* -------------------------------------------------------------------------- */
@@ -60,7 +65,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
 
     if (error) {
       console.error("[Org] bootstrap error:", error);
-      set({ isBootstrapping: false, loading: false });
+      set({ isBootstrapping: false, loading: false, initialized: true });
       return;
     }
 
@@ -79,6 +84,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
         activeOrganization: null,
         isBootstrapping: false,
         loading: false,
+        initialized: true,
       });
       return;
     }
@@ -102,6 +108,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
       organizations: orgs,
       isBootstrapping: false,
       loading: false,
+      initialized: true,
     });
   },
 
@@ -128,6 +135,47 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
   },
 
   /* -------------------------------------------------------------------------- */
+  /* CREATE ORGANIZATION (ADMIN)                                                 */
+  /* -------------------------------------------------------------------------- */
+  createOrganization: async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    const { data: userRes } = await supabase.auth.getUser();
+    const user = userRes?.user;
+    if (!user) throw new Error("Not authenticated");
+
+    // 1) Create org
+    const { data: org, error: orgErr } = await supabase
+      .from("organizations")
+      .insert({ name: trimmed })
+      .select("*")
+      .single();
+
+    if (orgErr) {
+      console.error("[Org] create org failed:", orgErr);
+      throw orgErr;
+    }
+
+    // 2) Create membership
+    const { error: mErr } = await supabase.from("organization_users").insert({
+      organization_id: org.id,
+      user_id: user.id,
+      role: "admin",
+      last_active_at: new Date().toISOString(),
+    });
+
+    if (mErr) {
+      console.error("[Org] create membership failed:", mErr);
+      throw mErr;
+    }
+
+    // 3) Refresh + switch
+    await get().bootstrapOrganizations();
+    await get().setActiveOrganization(org);
+  },
+
+  /* -------------------------------------------------------------------------- */
   /* CLEAR STATE (LOGOUT)                                                        */
   /* -------------------------------------------------------------------------- */
   clearOrganizationState: () => {
@@ -135,6 +183,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
       organizations: [],
       activeOrganization: null,
       isBootstrapping: false,
+      initialized: false,
       loading: false,
     });
   },

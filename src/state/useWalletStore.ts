@@ -29,6 +29,7 @@ export type Wallet = {
 /* -------------------------------------------------------------------------- */
 export type WalletTransaction = {
   id: string;
+  organization_id?: string;
   wallet_id: string;
 
   type: "credit" | "debit" | "adjustment";

@@ -386,9 +386,9 @@ export function ChatsModule() {
      UI
   ------------------------------------------------------- */
   return (
-    <div className="flex h-full w-full bg-white">
+    <div className="flex h-full w-full bg-white overflow-hidden">
       {/* LEFT PANEL */}
-      <div className="w-80 border-r border-slate-200 p-3">
+      <div className="w-80 border-r border-slate-200 p-3 flex flex-col h-full overflow-hidden">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -397,15 +397,17 @@ export function ChatsModule() {
                      focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
 
-        {filteredConversations.map((c) => (
-          <ChatSidebarItem
-            key={c.id}
-            conversation={c}
-            isActive={c.id === activeConversationId}
-            unreadCount={unread[c.id] ?? 0}
-            onClick={() => setActiveConversation(c.id)}
-          />
-        ))}
+        <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+          {filteredConversations.map((c) => (
+            <ChatSidebarItem
+              key={c.id}
+              conversation={c}
+              isActive={c.id === activeConversationId}
+              unreadCount={unread[c.id] ?? 0}
+              onClick={() => setActiveConversation(c.id)}
+            />
+          ))}
+        </div>
       </div>
 
       {/* CENTER PANEL */}
