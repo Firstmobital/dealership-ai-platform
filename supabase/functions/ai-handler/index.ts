@@ -138,33 +138,6 @@ function safeText(v: any): string {
 ============================================================================ */
 type AiMode = "auto" | "suggest" | "off";
 
-function detectModelFromText(text: string): string | null {
-  const t = (text || "").toLowerCase();
-
-  // Tata models (extend anytime)
-  const models = [
-    "nexon",
-    "punch",
-    "harrier",
-    "safari",
-    "tiago",
-    "tigor",
-    "altroz",
-    "curvv",
-    "tiago ev",
-    "nexon ev",
-    "tigor ev",
-  ];
-
-  // Prefer longer matches first (e.g., "nexon ev" before "nexon")
-  const sorted = [...models].sort((a, b) => b.length - a.length);
-
-  for (const m of sorted) {
-    if (t.includes(m)) return m.toUpperCase();
-  }
-  return null;
-}
-
 function mergeEntities(
   prev: Record<string, any> | null,
   next: Record<string, any> | null
@@ -1176,8 +1149,6 @@ if (!body) {
           ai_mode,
           ai_summary,
           ai_last_entities,
-        
-          -- 4.1 Agent takeover
           ai_locked,
           ai_locked_by,
           ai_locked_at,
@@ -1457,9 +1428,10 @@ ${personality.donts || "- None specified."}
     // HARD GREETING RULE (NO AI) — ALWAYS REPLY TO hi/hello/hey/namaste etc.
     // ------------------------------------------------------------------
     if (isGreetingMessage(user_message)) {
-      const greetText = personality?.language?.toLowerCase?.().includes("hindi")
-        ? "Namaste 👋 Techwheels mein aapka swagat hai. Main aapki kaise madad kar sakta/ sakti hoon?"
-        : "Hello 👋 Welcome to Techwheels. How can I help you today?";
+      const greetText =
+  personality.greeting_message ??
+  personality.fallback_message ??
+  "Hello 👋 How can I help you today?";
 
       // Save bot message
       await supabase.from("messages").insert({
@@ -1597,24 +1569,8 @@ ${personality.donts || "- None specified."}
    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
 --------------------------------------------------------------------------- */
 
-    // Detect model from user message
-    const detectedModel = detectModelFromText(user_message);
+const nextEntities = conv.ai_last_entities ?? {};
 
-    // Merge with previously locked entities
-    const prevEntities = conv.ai_last_entities ?? {};
-    const nextEntities = mergeEntities(
-      prevEntities,
-      detectedModel ? { model: detectedModel } : null
-    );
-
-    // Persist entity lock (best-effort)
-    await supabase
-      .from("conversations")
-      .update({
-        ai_last_entities: nextEntities,
-        ai_context_updated_at: new Date().toISOString(),
-      })
-      .eq("id", conversation_id);
 
     // 5) Follow-up suggestion mode (NO send, NO DB write)
     if (mode === "suggest_followup") {
@@ -1770,7 +1726,7 @@ ${personality.donts || "- None specified."}
 
     // 11) System prompt
     const systemPrompt = `
-You are Techwheels AI — a professional automotive dealership assistant.
+You are an AI assistant representing this business.
 
 Your job:
 - Use Knowledge Base (KB) context FIRST.
@@ -1842,21 +1798,15 @@ CAMPAIGN HISTORY CONTEXT
 ------------------------
 ${campaignContextText || "No prior campaign history available."}
 
+ENTITY SAFETY RULE (CRITICAL)
 ------------------------
-MODEL & OFFER SAFETY RULE (CRITICAL)
-------------------------
-- NEVER suggest or assume a specific Tata model
-  (Nexon, Punch, Harrier, Safari, etc.)
-  unless ONE of the following is true:
-  1) The customer explicitly mentioned that model, OR
-  2) The Knowledge Context above explicitly discusses that model.
-- If the customer intent is unclear, ask ONE clarifying question
-  (example: "Are you asking about Nexon, Punch, Harrier, or Safari?")
+- NEVER assume a specific product, service, or offering
+  unless the customer explicitly mentions it OR
+  it is clearly defined in the Knowledge Context above.
+- If intent is unclear, ask ONE clarifying question.
 - Do NOT guess.
-- Do NOT recommend.
-- Do NOT upsell without explicit customer intent.
-- If a locked model exists, ask clarifying questions ONLY within that model (variant, fuel, price, availability).
-- Do not propose a different model as an alternative unless the user asks for comparisons or more information.
+- Do NOT invent offerings.
+
 
 ------------------------
 RESPONSE DECISION RULES (CRITICAL)

@@ -26,6 +26,8 @@ type PersonalityForm = {
   emoji_usage: boolean;
   gender_voice: string;
   fallback_message: string;
+  greeting_message: string;
+
 
   // Phase 3
   business_context: string;
@@ -51,6 +53,7 @@ export function BotPersonalityModule() {
     gender_voice: "Neutral",
     fallback_message:
       "I’m sorry, I don’t have enough information to answer that.",
+    greeting_message:"Hello, How can I help you today?",
 
     business_context: "",
     dos: "",
@@ -241,6 +244,26 @@ export function BotPersonalityModule() {
               className="mt-1 h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
           </div>
+
+          <div className="space-y-2">
+  <label className="text-sm font-medium">Greeting Message</label>
+  <textarea
+    className="w-full rounded-md border p-2 text-sm"
+    rows={3}
+    placeholder="Hello 👋 How can I help you today?"
+    value={form.greeting_message || ""}
+    onChange={(e) =>
+      setForm((prev) => ({
+        ...prev,
+        greeting_message: e.target.value,
+      }))
+    }
+  />
+  <p className="text-xs text-muted-foreground">
+    Used when the customer sends a greeting like “Hi” or “Hello”.
+  </p>
+</div>
+
         </div>
       </div>
 
