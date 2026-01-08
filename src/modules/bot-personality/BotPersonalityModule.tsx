@@ -86,6 +86,7 @@ export function BotPersonalityModule() {
           emoji_usage: personality.emoji_usage,
           gender_voice: personality.gender_voice,
           fallback_message: personality.fallback_message,
+          greeting_message: personality.greeting_message,
           response_length: personality.short_responses ? "Short" : "Medium",
 
           business_context: personality.business_context ?? "",
@@ -121,6 +122,7 @@ export function BotPersonalityModule() {
             emoji_usage: form.emoji_usage,
             gender_voice: form.gender_voice,
             fallback_message: form.fallback_message,
+            greeting_message: form.greeting_message,
             business_context: form.business_context,
             dos: form.dos,
             donts: form.donts,

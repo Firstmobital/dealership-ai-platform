@@ -631,7 +631,7 @@ async function loadBotPersonality(params: { organizationId: string }) {
   const { data } = await supabase
     .from("bot_personality")
     .select(
-      "tone, language, short_responses, emoji_usage, gender_voice, fallback_message, business_context, dos, donts"
+      "tone, language, short_responses, emoji_usage, gender_voice, greeting_message, fallback_message, business_context, dos, donts"
     )
     .eq("organization_id", organizationId)
     .maybeSingle();
@@ -643,6 +643,7 @@ async function loadBotPersonality(params: { organizationId: string }) {
       short_responses: true,
       emoji_usage: false,
       gender_voice: "Neutral",
+      greeting_message: "",
       fallback_message:
         "I’m sorry, I don’t have enough information to answer that.",
       business_context: "",
@@ -1405,6 +1406,10 @@ if (conv.ai_locked === true) {
     const fallbackMessage =
       personality?.fallback_message ??
       "I’m sorry, I don’t have enough information to answer that.";
+
+      const greetingMessage =
+      personality?.greeting_message ??
+      "Hello how can I help you today?";
 
     const personaBlock = `
 Tone & Language:
