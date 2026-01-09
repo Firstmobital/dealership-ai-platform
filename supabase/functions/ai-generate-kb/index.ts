@@ -215,7 +215,206 @@ function extractExcelText(logger: ReturnType<typeof createLogger>, uint8: Uint8A
     logger.error("EXCEL_PARSE_ERROR", { error: String(err) });
     return "";
   }
+}/* =====================================================================================
+   PHASE 6B — EXCEL PRICING SHEET → MODEL-WISE KB ARTICLES
+   Goal:
+   - Prevent gigantic single-article Excel dumps
+   - Create one published/draft KB article per Model
+   - Add scheme-aware keywords (consumer / intervention / exchange / corporate)
+===================================================================================== */
+
+function slugifyModel(model: string): string {
+  return (model || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
+
+function pickModelColumn(rows: Array<Record<string, any>>): string | null {
+  if (!rows?.length) return null;
+  const sample = rows[0];
+  const keys = Object.keys(sample || {});
+  const lower = keys.map((k) => ({ k, n: String(k).toLowerCase().trim() }));
+
+  // Prefer exact "model"
+  const exact = lower.find((x) => x.n === "model");
+  if (exact) return exact.k;
+
+  // Fallback: any column containing "model"
+  const partial = lower.find((x) => x.n.includes("model"));
+  return partial?.k ?? null;
+}
+
+function rupee(n: any): string {
+  const num = Number(n);
+  if (!isFinite(num)) return "—";
+  // Keep it readable; no locale dependencies in edge runtime.
+  return `₹${Math.round(num).toString()}`;
+}
+
+function buildModelPricingContent(params: {
+  model: string;
+  rows: Array<Record<string, any>>;
+  sourceFilename: string | null;
+}): string {
+  const { model, rows, sourceFilename } = params;
+
+  // Detect key columns (best-effort)
+  const cols = rows?.length ? Object.keys(rows[0]) : [];
+  const col = (name: string) =>
+    cols.find((c) => String(c).toLowerCase().trim() === name.toLowerCase().trim()) ?? null;
+
+  const variantCol = col("Variant") ?? col("variant") ?? null;
+  const fuelCol = col("Fuel") ?? col("fuel") ?? null;
+
+  const exShowroomCol =
+    cols.find((c) => String(c).toLowerCase().includes("ex-showroom")) ??
+    cols.find((c) => String(c).toLowerCase().includes("ex showroom")) ??
+    null;
+
+  // Scheme-related columns (consumer / intervention etc.)
+  const schemeCols = cols.filter((c) => {
+    const n = String(c).toLowerCase();
+    return (
+      n.includes("consumer") ||
+      n.includes("intervention") ||
+      n.includes("exchange") ||
+      n.includes("scrap") ||
+      n.includes("corporate") ||
+      n.includes("msme") ||
+      n.includes("green") ||
+      n.includes("solar") ||
+      n.includes("loyalty") ||
+      n.includes("bonus")
+    );
+  });
+
+  const lines: string[] = [];
+
+  lines.push(`# ${model} — Pricing, Offers & Schemes`);
+  if (sourceFilename) lines.push(`_Source: ${sourceFilename}_`);
+  lines.push("");
+  lines.push("## How to read offers / discounts");
+  lines.push("- **Consumer / Exchange / Corporate / Intervention** columns represent active schemes (amounts in ₹).");
+  lines.push("- Final discount depends on eligibility, stock, and dealership approval.");
+  lines.push("- If customer asks for **discount / offers / schemes**, use the scheme fields below.");
+  lines.push("");
+
+  if (schemeCols.length) {
+    lines.push("## Scheme fields available in this sheet");
+    for (const c of schemeCols) lines.push(`- ${c}`);
+    lines.push("");
+  }
+
+  lines.push("## Variant-wise lines (use these for exact price / offer replies)");
+  const maxRows = Math.min(rows.length, 400);
+
+  for (let i = 0; i < maxRows; i++) {
+    const r = rows[i] ?? {};
+    const variant = variantCol ? String(r[variantCol] ?? "").trim() : "";
+    const fuel = fuelCol ? String(r[fuelCol] ?? "").trim() : "";
+    const exShowroom = exShowroomCol ? rupee(r[exShowroomCol]) : "—";
+
+    const parts: string[] = [];
+    if (variant) parts.push(variant);
+    else parts.push(`Row ${i + 1}`);
+
+    if (fuel) parts.push(`Fuel: ${fuel}`);
+    if (exShowroomCol) parts.push(`Ex-Showroom: ${exShowroom}`);
+
+    // Key schemes first (best effort)
+    const keyOrder = ["consumer", "exchange", "scrap", "corporate", "intervention", "msme", "green", "solar"];
+    const schemeParts: string[] = [];
+
+    for (const key of keyOrder) {
+      const match = schemeCols.find((c) => String(c).toLowerCase().includes(key));
+      if (match) schemeParts.push(`${match}: ${rupee(r[match])}`);
+    }
+
+    // add remaining scheme cols not already added
+    for (const c of schemeCols) {
+      if (schemeParts.some((p) => p.toLowerCase().startsWith(String(c).toLowerCase() + ":"))) continue;
+      if (keyOrder.some((k) => String(c).toLowerCase().includes(k))) continue;
+      const v = r[c];
+      if (v === "" || v === null || v === undefined) continue;
+      schemeParts.push(`${c}: ${rupee(v)}`);
+    }
+
+    const line =
+      schemeParts.length > 0
+        ? `- ${parts.join(" | ")} | ${schemeParts.join(" | ")}`
+        : `- ${parts.join(" | ")}`;
+
+    lines.push(line);
+  }
+
+  if (rows.length > maxRows) {
+    lines.push("");
+    lines.push(`_Note: Only the first ${maxRows} rows are included for performance._`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildModelKeywords(model: string, base: string[]): string[] {
+  const m = slugifyModel(model);
+  const out = new Set<string>();
+  for (const k of base || []) out.add(String(k));
+  if (model) out.add(model);
+  if (m) out.add(m);
+
+  // Intent tags (so discount/offers queries can resolve deterministically)
+  [
+    "pricing",
+    "price",
+    "offers",
+    "offer",
+    "scheme",
+    "schemes",
+    "discount",
+    "consumer",
+    "intervention",
+    "exchange",
+    "scrap",
+    "corporate",
+    "msme",
+    "loyalty",
+    "bonus",
+  ].forEach((k) => out.add(k));
+
+  return Array.from(out)
+    .map((k) => String(k).trim())
+    .filter((k) => k.length >= 2)
+    .slice(0, 50);
+}
+
+function splitExcelRowsByModel(
+  logger: ReturnType<typeof createLogger>,
+  rows: Array<Record<string, any>>
+): Array<{ model: string; rows: Array<Record<string, any>> }> {
+  const modelCol = pickModelColumn(rows);
+  if (!modelCol) {
+    logger.warn("EXCEL_SPLIT_NO_MODEL_COLUMN");
+    return [{ model: "Unknown Model", rows }];
+  }
+
+  const map = new Map<string, Array<Record<string, any>>>();
+
+  for (const r of rows) {
+    const modelRaw = String(r?.[modelCol] ?? "").trim();
+    const model = modelRaw || "Unknown Model";
+    if (!map.has(model)) map.set(model, []);
+    map.get(model)!.push(r);
+  }
+
+  return Array.from(map.entries())
+    .map(([model, rs]) => ({ model, rows: rs }))
+    .sort((a, b) => a.model.localeCompare(b.model));
+}
+
+
 
 // Robustly get text from OpenAI Responses output
 function getResponseText(resp: any): string {
@@ -293,7 +492,7 @@ async function extractTextFromFile(
   bucket: string,
   path: string,
   mime: string | null
-): Promise<{ text: string | null; mimeType: string }> {
+): Promise<{ text: string | null; mimeType: string; excelRows?: Array<Record<string, any>> | null }> {
   const blob = await safeFileDownload(logger, bucket, path);
   if (!blob) return { text: null, mimeType: mime || "application/octet-stream" };
 
@@ -307,11 +506,32 @@ async function extractTextFromFile(
 
   const filename = path.split("/").pop() || "document";
 
-  // ✅ Excel: parse locally (NO OpenAI)
+  // ✅ Excel: parse locally (NO OpenAI) → return structured rows for smart splitting
   if (isExcelMime(mimeType)) {
-    const uint8 = new Uint8Array(await blob.arrayBuffer());
-    const parsed = extractExcelText(logger, uint8);
-    return { text: parsed || null, mimeType };
+    try {
+      const uint8 = new Uint8Array(await blob.arrayBuffer());
+      const wb = XLSX.read(uint8, { type: "array" });
+
+      // Prefer first sheet; if multiple sheets exist, we still only import the first
+      // because pricing sheets are typically normalized there.
+      const first = wb.SheetNames?.[0];
+      if (!first) return { text: null, mimeType, excelRows: [] };
+
+      const sheet = wb.Sheets[first];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Array<Record<string, any>>;
+
+      return {
+        text: null, // we will build model-wise articles instead of one giant text blob
+        mimeType,
+        excelRows: rows.slice(0, 5000),
+      };
+    } catch (err) {
+      logger.error("EXCEL_PARSE_ERROR", { error: String(err) });
+      // Fallback to previous behavior (best effort)
+      const uint8 = new Uint8Array(await blob.arrayBuffer());
+      const parsed = extractExcelText(logger, uint8);
+      return { text: parsed || null, mimeType };
+    }
   }
 
   // ✅ PDFs / other binaries: OpenAI extraction
@@ -385,6 +605,17 @@ serve(async (req: Request): Promise<Response> => {
     const sourceType = (body.source_type ?? "text") as string;
     const incomingTitle = body.title?.trim?.() || "Untitled article";
 
+const incomingStatus = (body.status ?? "draft") as string;
+const status =
+  incomingStatus === "published" || incomingStatus === "archived"
+    ? incomingStatus
+    : "draft";
+
+const published_at =
+  status === "published"
+    ? (body.published_at ? String(body.published_at) : new Date().toISOString())
+    : null;
+
     // Phase 6: optional keywords array for strict keyword matching in ai-handler
     const keywords = normalizeKeywords(body.keywords);
 
@@ -402,6 +633,8 @@ serve(async (req: Request): Promise<Response> => {
       sourceType,
       replace: !!replaceArticleId,
       keywords_count: keywords.length,
+      status,
+      published_at,
     });
 
     /* ============================================
@@ -472,15 +705,241 @@ serve(async (req: Request): Promise<Response> => {
         );
       }
 
-      const { text, mimeType } = await extractTextFromFile(
-        logger,
+      
+const { text, mimeType, excelRows } = await extractTextFromFile(
+  logger,
+  file_bucket,
+  file_path,
+  mime_type
+);
+resolvedMime = mimeType;
+
+// ✅ Excel pricing sheet: auto-split into model-wise KB articles (prevents huge context blobs)
+if (Array.isArray(excelRows) && excelRows.length > 0) {
+  const nowIso = new Date().toISOString();
+  const groups = splitExcelRowsByModel(logger, excelRows);
+
+  logger.info("EXCEL_SPLIT_START", { models: groups.length, rows: excelRows.length });
+
+  const created_article_ids: string[] = [];
+
+  for (const g of groups) {
+    const model = String(g.model || "Unknown Model").trim() || "Unknown Model";
+    const title = `${model} — Pricing, Offers & Schemes`;
+
+    const content = buildModelPricingContent({
+      model,
+      rows: g.rows,
+      sourceFilename: original_filename || (file_path ? file_path.split("/").pop() : null),
+    });
+
+    const modelKeywords = buildModelKeywords(model, keywords);
+    const chunks = chunkText(content);
+
+    if (!chunks.length) continue;
+
+    const vectors = await embedChunks(logger, chunks);
+    if (!vectors || vectors.length !== chunks.length) {
+      const msg = `Embedding generation failed for model: ${model}`;
+      await setProcessingError(logger, articleIdForError, msg);
+      return cors(
+        new Response(JSON.stringify({ error: msg, request_id }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+    }
+
+    const insertPayload: any = {
+      organization_id: orgId,
+      title,
+      description: null,
+      content,
+      keywords: modelKeywords,
+
+      status,
+      published_at,
+
+      source_type: "file",
+      file_bucket,
+      file_path,
+      mime_type: resolvedMime,
+      original_filename,
+
+      raw_content: content,
+      last_processed_at: nowIso,
+      processing_error: null,
+    };
+
+    const created = await safeSupabase<{ id: string }>(
+      logger,
+      "knowledge_articles.insert(model)",
+      () =>
+        supabase
+          .from("knowledge_articles")
+          .insert(insertPayload)
+          .select("id")
+          .single()
+    );
+
+    if (!created) continue;
+
+    const articleId = created.id;
+    created_article_ids.push(articleId);
+
+    const records = chunks.map((chunk, i) => ({
+      article_id: articleId,
+      chunk,
+      embedding: vectors[i],
+    }));
+
+    const { error: chunkError } = await supabase.from("knowledge_chunks").insert(records);
+    if (chunkError) {
+      logger.error("KB_CHUNKS_INSERT_ERROR(model)", {
+        error: chunkError,
+        article_id: articleId,
+        model,
+      });
+    }
+  }
+
+  // Container article (keeps a visible reference to the uploaded Excel)
+  const containerNote =
+    `This Excel file was automatically split into **${groups.length} model-wise** knowledge articles for better AI recall.
+
+` +
+    `Tip: Ask like “Discount on Nexon?” or “Offers for Altroz?” and the bot will pull the correct model article.`;
+
+  if (replaceArticleId) {
+    // Replace mode: update the existing article as a container and clear old chunks
+    await supabase.from("knowledge_chunks").delete().eq("article_id", replaceArticleId);
+
+    await supabase
+      .from("knowledge_articles")
+      .update({
+        title: incomingTitle || existingTitle || "Pricing Excel (Split)",
+        content: containerNote,
+        keywords,
+        status: "archived",
+        published_at: null,
+        source_type: "file",
         file_bucket,
         file_path,
-        mime_type
-      );
-      resolvedMime = mimeType;
+        mime_type: resolvedMime,
+        original_filename,
+        raw_content: containerNote,
+        last_processed_at: nowIso,
+        processing_error: null,
+      })
+      .eq("id", replaceArticleId);
 
-      if (!text) {
+    // Insert minimal chunk so container isn't empty for embeddings
+    const containerChunks = chunkText(containerNote);
+    const containerVectors = await embedChunks(logger, containerChunks);
+    if (containerVectors && containerVectors.length === containerChunks.length) {
+      const containerRecords = containerChunks.map((chunk, i) => ({
+        article_id: replaceArticleId,
+        chunk,
+        embedding: containerVectors[i],
+      }));
+      await supabase.from("knowledge_chunks").insert(containerRecords);
+    }
+  } else {
+    // Create mode: create a container (archived) for traceability
+    const container = await safeSupabase<{ id: string }>(
+      logger,
+      "knowledge_articles.insert(container)",
+      () =>
+        supabase
+          .from("knowledge_articles")
+          .insert({
+            organization_id: orgId,
+            title: incomingTitle,
+            description: null,
+            content: containerNote,
+            keywords,
+            status: "archived",
+            published_at: null,
+            source_type: "file",
+            file_bucket,
+            file_path,
+            mime_type: resolvedMime,
+            original_filename,
+            raw_content: containerNote,
+            last_processed_at: nowIso,
+            processing_error: null,
+          })
+          .select("id")
+          .single()
+    );
+
+    if (container?.id) {
+      const containerChunks = chunkText(containerNote);
+      const containerVectors = await embedChunks(logger, containerChunks);
+      if (containerVectors && containerVectors.length === containerChunks.length) {
+        const containerRecords = containerChunks.map((chunk, i) => ({
+          article_id: container.id,
+          chunk,
+          embedding: containerVectors[i],
+        }));
+        await supabase.from("knowledge_chunks").insert(containerRecords);
+      }
+    }
+  }
+
+  
+// Best-effort delete old file (replace mode) — we short-circuit before the shared auto-delete block
+if (replaceArticleId && oldFileBucket && oldFilePath && file_bucket && file_path) {
+  const isSame = oldFileBucket === file_bucket && oldFilePath === file_path;
+  if (!isSame) {
+    try {
+      const { error: rmErr } = await supabase.storage
+        .from(oldFileBucket)
+        .remove([oldFilePath]);
+      if (rmErr) {
+        logger.warn("OLD_FILE_DELETE_FAILED(excel_split)", {
+          bucket: oldFileBucket,
+          path: oldFilePath,
+          error: rmErr,
+        });
+      } else {
+        logger.info("OLD_FILE_DELETED(excel_split)", {
+          bucket: oldFileBucket,
+          path: oldFilePath,
+        });
+      }
+    } catch (err) {
+      logger.warn("OLD_FILE_DELETE_FATAL(excel_split)", {
+        bucket: oldFileBucket,
+        path: oldFilePath,
+        error: String(err),
+      });
+    }
+  }
+}
+
+logger.info("EXCEL_SPLIT_DONE", {
+    created_models: created_article_ids.length,
+    container: replaceArticleId ? "updated" : "created",
+  });
+
+  // Best-effort: delete old storage file if this was a replace operation
+  // (handled later by the existing auto-delete block, so just short-circuit the handler)
+  return cors(
+    new Response(
+      JSON.stringify({
+        ok: true,
+        request_id,
+        mode: "excel_split",
+        models: groups.length,
+        created_articles: created_article_ids.length,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    )
+  );
+}
+
+if (!text) {
         const msg = "Text extraction failed";
         await setProcessingError(logger, articleIdForError, msg);
         return cors(
@@ -574,6 +1033,9 @@ serve(async (req: Request): Promise<Response> => {
         // Phase 6 — optional keywords for strict keyword matching
         keywords,
 
+        status,
+        published_at,
+
         // file metadata columns (post-migration)
         source_type: sourceType,
         file_bucket: sourceType === "file" ? file_bucket : null,
@@ -621,6 +1083,9 @@ serve(async (req: Request): Promise<Response> => {
 
         // Phase 6 — optional keywords for strict keyword matching
         keywords,
+
+        status,
+        published_at,
 
         // file metadata columns (post-migration)
         source_type: sourceType,

@@ -392,6 +392,59 @@ async function safeChatCompletion(
 }
 
 /* ============================================================================
+   AI ENTITY EXTRACTION (SMART UNDERSTANDING, NO RULES)
+============================================================================ */
+
+type AiExtractedIntent = {
+  vehicle_model: string | null;
+  fuel_type: string | null;
+  intent: "pricing" | "features" | "service" | "offer" | "other";
+};
+
+async function extractUserIntentWithAI(params: {
+  userMessage: string;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<AiExtractedIntent> {
+  const { userMessage, logger } = params;
+
+  const prompt = `
+You are helping a car dealership chatbot.
+
+From the customer message below, extract:
+- vehicle_model (example: Tigor, Nexon, Tiago) or null
+- fuel_type (Petrol, Diesel, CNG, EV) or null
+- intent: pricing | features | service | offer | other
+
+Rules:
+- Fix spelling mistakes silently
+- If unsure, return null for that field
+- Return STRICT JSON only
+
+Customer message:
+"${userMessage}"
+`.trim();
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [{ role: "system", content: prompt }],
+    });
+
+    const text = resp.choices?.[0]?.message?.content ?? "{}";
+    return JSON.parse(text);
+  } catch (err) {
+    logger.warn("[ai-extract] failed, falling back to nulls", { error: err });
+    return {
+      vehicle_model: null,
+      fuel_type: null,
+      intent: "other",
+    };
+  }
+}
+
+
+/* ============================================================================
    PHASE 4 — PRICING (CUSTOMER) + COST (PLATFORM)
 ============================================================================ */
 const MODEL_CHARGED_PRICE: Record<string, number> = {
@@ -680,10 +733,33 @@ function containsPhrase(haystack: string, needle: string): boolean {
   return h.includes(n);
 }
 
+function titleMatchesMessage(
+  message: string,
+  title: string
+): boolean {
+  const msg = normalizeForMatch(message);
+  const titleNorm = normalizeForMatch(title);
+
+  const tokens = titleNorm
+    .split(" ")
+    .filter(
+      (t) =>
+        t.length >= 3 &&
+        !/^\d{4}$/.test(t) && // ignore years like 2026
+        t !== "pricing" // normalize price/pricing difference
+    );
+
+  if (!tokens.length) return false;
+
+  return tokens.every((t) => containsPhrase(msg, t));
+}
+
+
 async function resolveKnowledgeContext(params: {
   userMessage: string;
   organizationId: string;
   logger: ReturnType<typeof createLogger>;
+  vehicleModel?: string | null;
 }): Promise<{
   context: string;
   match_type: "title" | "keyword";
@@ -702,24 +778,60 @@ async function resolveKnowledgeContext(params: {
     .eq("organization_id", organizationId)
     .eq("status", "published");
 
-  if (error || !articles?.length) {
-    logger.debug("[kb] no articles or load error", { error });
-    return null;
-  }
+    if (error) {
+      logger.error("[kb] failed to load articles", { error });
+      return null;
+    }
+    
+    if (!articles?.length) {
+      logger.warn("[kb] ZERO articles found for organization", {
+        organization_id: organizationId,
+      });
+      return null;
+    }    
 
   const scoped = articles as any[];
+
+  // 🔍 AI-assisted model scoping (smart, typo-safe)
+let kbScoped = scoped;
+
+if (params.vehicleModel) {
+  const model = normalizeForMatch(params.vehicleModel);
+
+  const filtered = scoped.filter((a) =>
+    normalizeForMatch(a.title).includes(model)
+  );
+
+  if (filtered.length > 0) {
+    kbScoped = filtered;
+  }
+
+  logger.info("[kb] scoped by AI model", {
+    vehicle_model: params.vehicleModel,
+    before: scoped.length,
+    after: filtered.length,
+    used_filtered: filtered.length > 0,
+  });
+}
+
+const effectiveArticles = kbScoped;
+
 
   // -------------------------
   // PASS 1 — EXACT TITLE MATCH
   // longest title that appears in the message wins (deterministic)
   // -------------------------
-  const titleCandidates = scoped
+  const titleCandidates = effectiveArticles
     .map((a) => ({
       ...a,
       title_norm: normalizeForMatch(a.title),
       title_len: normalizeForMatch(a.title).length,
     }))
-    .filter((a) => a.title_len >= 4 && containsPhrase(msg, a.title_norm))
+    .filter(
+      (a) =>
+        a.title_len >= 4 &&
+        titleMatchesMessage(userMessage, a.title)
+    )    
     .sort(
       (a, b) =>
         b.title_len - a.title_len || String(a.id).localeCompare(String(b.id))
@@ -737,46 +849,106 @@ async function resolveKnowledgeContext(params: {
     };
   }
 
+
   // -------------------------
-  // PASS 2 — KEYWORD MATCH (STRICT)
-  // If multiple articles match → reject (avoid wrong car/offers)
+  // PASS 2 — KEYWORD MATCH (DETERMINISTIC, NO SCORING)
+  // We avoid "strict single-hit" because generic keywords like "discount"
+  // would otherwise match many model articles and get rejected.
+  //
+  // Deterministic rule:
+  // - Count how many keywords from each article appear in the message
+  // - Pick the article with the highest count
+  // - If tie for highest count -> reject (ask user for clarity)
   // -------------------------
-  const keywordHits: any[] = [];
+  const keywordCandidates = effectiveArticles
+    .map((a) => {
+      const kws: string[] = Array.isArray(a.keywords) ? a.keywords : [];
+      const normalizedKws = kws
+        .map((k) => normalizeForMatch(String(k)))
+        .filter((k) => k.length >= 3);
 
-  for (const a of scoped) {
-    const kws: string[] = Array.isArray(a.keywords) ? a.keywords : [];
-    const normalizedKws = kws
-      .map((k) => normalizeForMatch(String(k)))
-      .filter((k) => k.length >= 3);
+      let matchCount = 0;
+      let bestLen = 0;
 
-    if (!normalizedKws.length) continue;
+      for (const k of normalizedKws) {
+        if (containsPhrase(msg, k)) {
+          matchCount += 1;
+          if (k.length > bestLen) bestLen = k.length;
+        }
+      }
 
-    const matched = normalizedKws.some((k) => containsPhrase(msg, k));
-    if (matched) keywordHits.push(a);
-  }
-
-  if (keywordHits.length === 1) {
-    const best = keywordHits[0];
-    logger.info("[kb] keyword match", {
-      article_id: best.id,
-      title: best.title,
+      return { a, matchCount, bestLen };
+    })
+    .filter((x) => x.matchCount > 0)
+    .sort((x, y) => {
+      // higher match count wins
+      if (y.matchCount !== x.matchCount) return y.matchCount - x.matchCount;
+      // then prefer longer matched keyword (more specific)
+      if (y.bestLen !== x.bestLen) return y.bestLen - x.bestLen;
+      // final deterministic tie-breaker
+      return String(x.a.id).localeCompare(String(y.a.id));
     });
 
-    return {
-      context: String(best.content || "").trim(),
-      match_type: "keyword",
-      article_id: best.id,
-      title: best.title,
-    };
-  }
+  if (!keywordCandidates.length) return null;
 
-  if (keywordHits.length > 1) {
-    logger.warn("[kb] multiple keyword matches -> reject", {
-      matches: keywordHits.map((k) => ({ id: k.id, title: k.title })),
-    });
-  }
+  const top = keywordCandidates[0];
+  const tied =
+    keywordCandidates.length > 1 &&
+    keywordCandidates[1].matchCount === top.matchCount &&
+    keywordCandidates[1].bestLen === top.bestLen;
 
-  return null;
+    if (tied) {
+      // 🔒 Deterministic tie-breaker using locked entity (model)
+      if (params.vehicleModel) {
+        const modelNorm = normalizeForMatch(params.vehicleModel);
+    
+        const entityFiltered = keywordCandidates.filter((x) =>
+          normalizeForMatch(x.a.title).includes(modelNorm)
+        );
+    
+        if (entityFiltered.length === 1) {
+          const best = entityFiltered[0].a;
+    
+          logger.info("[kb] keyword tie resolved by locked model", {
+            model: params.vehicleModel,
+            article_id: best.id,
+            title: best.title,
+          });
+    
+          return {
+            context: String(best.content || "").trim(),
+            match_type: "keyword",
+            article_id: best.id,
+            title: best.title,
+          };
+        }
+      }
+    
+      logger.warn("[kb] keyword tie -> reject", {
+        top: keywordCandidates.slice(0, 5).map((x) => ({
+          id: x.a.id,
+          title: x.a.title,
+          matchCount: x.matchCount,
+        })),
+      });
+    
+      return null;
+    }
+    
+
+  const best = top.a;
+  logger.info("[kb] keyword match", {
+    article_id: best.id,
+    title: best.title,
+    matchCount: top.matchCount,
+  });
+
+  return {
+    context: String(best.content || "").trim(),
+    match_type: "keyword",
+    article_id: best.id,
+    title: best.title,
+  };
 }
 
 /* ============================================================================
@@ -1573,11 +1745,36 @@ ${personality.donts || "- None specified."}
       );
     }
 
+        /* ============================================================================
+   AI UNDERSTANDING (EARLY — REQUIRED FOR ENTITY LOCKING)
+============================================================================ */
+
+let aiExtract: AiExtractedIntent = {
+  vehicle_model: null,
+  fuel_type: null,
+  intent: "other",
+};
+
+// Only extract intent if KB may be used
+if (!isGreetingMessage(user_message) && aiMode !== "suggest") {
+  aiExtract = await extractUserIntentWithAI({
+    userMessage: user_message,
+    logger,
+  });
+
+  logger.info("[ai-extract] result", aiExtract);
+}
+
     /* ---------------------------------------------------------------------------
    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
 --------------------------------------------------------------------------- */
 
-const nextEntities = conv.ai_last_entities ?? {};
+// 🧠 Merge AI-extracted entities into locked entities (Issue 4)
+const nextEntities = mergeEntities(conv.ai_last_entities, {
+  model: aiExtract.vehicle_model ?? undefined,
+  fuel_type: aiExtract.fuel_type ?? undefined,
+});
+
 
 
     // 5) Follow-up suggestion mode (NO send, NO DB write)
@@ -1659,6 +1856,12 @@ const nextEntities = conv.ai_last_entities ?? {};
       }
     }
 
+    let kbAttempted = false;
+    let kbFound = false;
+
+
+
+
     // 10) Phase 6 — Deterministic KB (no vectors)
     let contextText = "";
     let kbMatchMeta: {
@@ -1671,16 +1874,39 @@ const nextEntities = conv.ai_last_entities ?? {};
       userMessage: user_message,
       organizationId,
       logger,
+      vehicleModel: aiExtract.vehicle_model,
     });
-
     if (resolvedKB?.context) {
       contextText = resolvedKB.context;
+      kbFound = true;
       kbMatchMeta = {
         match_type: resolvedKB.match_type,
         article_id: resolvedKB.article_id,
         title: resolvedKB.title,
       };
+    } else {
+      logger.warn("[kb] attempted but NO match", {
+        user_message: user_message.slice(0, 120),
+      });
     }
+
+    // 🧠 Intent-aware soft handling (Issue 3 - Option B)
+// If user intent is pricing/features but KB has no match,
+// allow AI to ask ONE clarifying question instead of fallback.
+const intentNeedsKB =
+aiExtract.intent === "pricing" || aiExtract.intent === "features";
+
+if (!kbFound && intentNeedsKB) {
+logger.info("[decision] intent_requires_clarification", {
+  intent: aiExtract.intent,
+  vehicle_model: aiExtract.vehicle_model,
+});
+
+// IMPORTANT:
+// Leave contextText empty
+// System prompt will instruct AI to ask ONE clarifying question
+}
+
 
     // ------------------------------------------------------------------
     // WORKFLOW CONTEXT (GUIDANCE ONLY — NO EXECUTION)
@@ -1802,8 +2028,11 @@ KNOWLEDGE USAGE RULES (CRITICAL)
 - Answer like a dealership executive, not a document.
 
 ------------------------
-CAMPAIGN HISTORY CONTEXT
+CAMPAIGN HISTORY CONTEXT (SECONDARY)
 ------------------------
+ONLY use this if it does NOT conflict with Knowledge Context.
+Do NOT override KB facts with campaign info.
+
 ${campaignContextText || "No prior campaign history available."}
 
 ENTITY SAFETY RULE (CRITICAL)
@@ -1850,6 +2079,15 @@ Respond now to the customer's latest message only.
       organizationId,
       logger,
     });
+
+    logger.info("[ai-decision] context_summary", {
+      kb_attempted: kbAttempted,
+      kb_found: kbFound,
+      kb_match: kbMatchMeta ?? null,
+      has_workflow: Boolean(workflowInstructionText?.trim()),
+      has_campaign: Boolean(campaignContextText?.trim()),
+    });
+    
 
     // 13) Run AI completion
     const aiResult = await runAICompletion({
@@ -2095,6 +2333,15 @@ Respond now to the customer's latest message only.
       text: aiResponseText,
       channel,
     });
+
+    // 🔒 Persist locked entities (Issue 4)
+await supabase
+.from("conversations")
+.update({
+  ai_last_entities: nextEntities,
+})
+.eq("id", conversation_id);
+
 
     await supabase
       .from("conversations")
