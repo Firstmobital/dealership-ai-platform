@@ -93,6 +93,9 @@ type SendBody = {
 
   // Optional override for non-inbox flows
   sender?: "bot" | "agent";
+  metadata?: {
+    reply_sheet_tab?: string | null;
+    } | null;
 };
 
 /* ==========================================================================
@@ -582,6 +585,7 @@ serve(async (req: Request) => {
         outbound_dedupe_key: outboundDedupeKey,
         whatsapp_status: "sent",
         sent_at: nowIso,
+        metadata: body.metadata ?? null,
       });
 
       await supabase

@@ -68,6 +68,24 @@ function normalizeWaPhone(input?: string | null): string | null {
   return d || null;
 }
 
+async function fetchLatestReplySheetTab(params: {
+  conversationId: string;
+}) {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("metadata")
+    .eq("conversation_id", params.conversationId)
+    .eq("sender", "bot") // outbound campaign / bot messages
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data?.metadata) return null;
+
+  return data.metadata?.reply_sheet_tab ?? null;
+}
+
+
 /* =====================================================================================
    MEDIA HELPERS
 ===================================================================================== */
@@ -496,6 +514,11 @@ async function processInboundMessage(
     }
   }
 
+  const replySheetTab = await fetchLatestReplySheetTab({
+    conversationId,
+  });
+
+
   /* ============================================================
      INSERT MESSAGE
   ============================================================ */
@@ -510,6 +533,7 @@ async function processInboundMessage(
     mime_type: mimeType,
     whatsapp_message_id: msg.id,
     wa_received_at: new Date().toISOString(),
+    metadata: replySheetTab ? { reply_sheet_tab: replySheetTab } : null,
   });
 
   if (insertErr) {
@@ -520,6 +544,57 @@ async function processInboundMessage(
     });
     return;
   }
+
+  /* ============================================================
+   GOOGLE SHEETS LOGGING (CAMPAIGN REPLIES)
+============================================================ */
+
+if (text) {
+  // 1️⃣ Find latest outbound message with reply_sheet_tab
+  const { data: lastOutbound } = await supabase
+    .from("messages")
+    .select("metadata")
+    .eq("conversation_id", conversationId)
+    .eq("direction", "out")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const replySheetTab = lastOutbound?.metadata?.reply_sheet_tab ?? null;
+
+  if (replySheetTab) {
+    // 2️⃣ Load org Google Sheet ID
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("google_sheet_id")
+      .eq("id", orgId)
+      .maybeSingle();
+
+    if (org?.google_sheet_id) {
+      // 3️⃣ Fire-and-forget logging (non-blocking)
+      fetch(`${PROJECT_URL}/functions/v1/google-sheet-log-reply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({
+          organization_id: orgId,
+          google_sheet_id: org.google_sheet_id,
+          reply_sheet_tab: replySheetTab,
+          phone: waNumber,
+          message: text,
+          conversation_id: conversationId,
+        }),
+      }).catch((err) => {
+        convLogger.error("GOOGLE_SHEET_LOG_FAILED", {
+          error: String(err),
+          reply_sheet_tab: replySheetTab,
+        });
+      });
+    }
+  }
+}
 
   /* ============================================================
      AI TRIGGER (TEXT ONLY)

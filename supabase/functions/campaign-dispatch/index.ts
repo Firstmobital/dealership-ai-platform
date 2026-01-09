@@ -44,6 +44,7 @@ type Campaign = {
   started_at: string | null;
   launched_at: string | null;
   variable_mapping: Record<string, string> | null; // { "1": "first_name", "2": "model" } etc
+  reply_sheet_tab: string | null;
 };
 
 type CampaignMessageStatus =
@@ -293,6 +294,7 @@ async function sendWhatsappTemplate(params: {
   language: string;
   variables: string[];
   renderedText: string;
+  reply_sheet_tab: string | null;
 
   // Phase 2.4
   templateComponents?: any[];
@@ -311,6 +313,9 @@ async function sendWhatsappTemplate(params: {
       contact_id: params.contactId,
       to: waToFromE164(params.phonePlusE164),
       type: "template",
+      metadata: {
+        reply_sheet_tab: params.reply_sheet_tab,
+        },
       template_name: params.templateName,
       template_language: params.language,
       template_variables: params.variables,
@@ -343,7 +348,7 @@ async function fetchCampaignById(campaignId: string): Promise<Campaign | null> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping"
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping, reply_sheet_tab"
     )
     .eq("id", campaignId)
     .maybeSingle();
@@ -359,7 +364,7 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping"
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping, reply_sheet_tab"
     )
     .in("status", ["scheduled", "sending"])
     .lte("scheduled_at", nowIso)
@@ -662,6 +667,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         language: template.language,
         variables: variablesToArray(msg.variables),
         renderedText,
+        reply_sheet_tab: campaign.reply_sheet_tab,
 
         // Phase 2.4
         templateComponents,
@@ -853,6 +859,7 @@ serve(async (req: Request) => {
             language: template.language,
             variables: variablesToArray(msg.variables),
             renderedText,
+            reply_sheet_tab: campaign.reply_sheet_tab,
 
             // Phase 2.4
             templateComponents,
