@@ -24,6 +24,7 @@ type CampaignState = {
     name: string;
     description?: string;
     whatsapp_template_id: string;
+    reply_sheet_tab: string; // ✅ NEW
     scheduledAt: string | null;
     rows: CsvRow[];
   }) => Promise<string>;
@@ -110,6 +111,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     name,
     description,
     whatsapp_template_id,
+    reply_sheet_tab, // ✅ NEW
     scheduledAt,
     rows,
   }) => {
@@ -164,6 +166,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
           template_variables: null,
           status,
           scheduled_at: scheduledAt,
+
+          reply_sheet_tab: reply_sheet_tab || null, // ✅ STORED HERE
 
           total_recipients: cleanedRows.length,
           sent_count: 0,

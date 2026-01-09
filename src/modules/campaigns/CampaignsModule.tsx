@@ -31,6 +31,7 @@ type BuilderState = {
   name: string;
   description: string;
   whatsapp_template_id: string;
+  reply_sheet_tab: string;
 };
 
 type Mode = "view" | "create";
@@ -163,6 +164,7 @@ export function CampaignsModule() {
     name: "",
     description: "",
     whatsapp_template_id: "",
+    reply_sheet_tab: "",
   });
 
   const [csvText, setCsvText] = useState("");
@@ -339,7 +341,7 @@ export function CampaignsModule() {
   -------------------------------------------------------------------- */
   function openCreate() {
     setMode("create");
-    setBuilder({ name: "", description: "", whatsapp_template_id: "" });
+    setBuilder({ name: "", description: "", whatsapp_template_id: "", reply_sheet_tab: "" });
     setCsvText("");
     setParsedRows([]);
     setCsvErrors([]);
@@ -365,6 +367,11 @@ export function CampaignsModule() {
       return null;
     }
 
+    if (!builder.reply_sheet_tab.trim()) {
+      alert("Reply Sheet Tab is required (e.g. Sales, Service, PSF)");
+      return null;
+      }
+
     if (csvErrors.length > 0 || parsedRows.length === 0) {
       alert("Fix CSV errors before saving");
       return null;
@@ -388,6 +395,7 @@ export function CampaignsModule() {
         name: builder.name.trim(),
         description: builder.description?.trim() ?? "",
         whatsapp_template_id: builder.whatsapp_template_id,
+        reply_sheet_tab: builder.reply_sheet_tab.trim(),
         scheduledAt: scheduledAtIsoOrNull(), // ✅ NEW
         rows: parsedRows,
       });
@@ -682,6 +690,24 @@ export function CampaignsModule() {
                 setBuilder((p) => ({ ...p, description: e.target.value }))
               }
             />
+
+<div className="space-y-1">
+  <label className="text-xs font-medium text-slate-700">
+    Reply Sheet Tab (Google Sheets)
+  </label>
+  <input
+    value={builder.reply_sheet_tab}
+    onChange={(e) =>
+      setBuilder((b) => ({ ...b, reply_sheet_tab: e.target.value }))
+    }
+    placeholder="e.g. Sales / Service / PSF"
+    className="w-full rounded-md border px-3 py-2 text-sm"
+    disabled={busy}
+  />
+  <div className="text-[11px] text-slate-500">
+    Replies for this campaign will be logged into this tab.
+  </div>
+</div>
 
             <select
               className="w-full border rounded-md px-3 py-2 text-sm"

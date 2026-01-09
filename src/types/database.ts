@@ -13,6 +13,7 @@ export type Organization = {
   name: string;
   logo_url: string | null;
   type: string | null;
+  google_sheet_id?: string | null;
   created_at?: string;
 };
 
@@ -277,6 +278,8 @@ export type Campaign = {
 
   template_body: string;
   template_variables: string[] | null;
+
+  reply_sheet_tab?: string | null;
 
   total_recipients: number;
   sent_count: number;
