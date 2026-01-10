@@ -372,6 +372,21 @@ export function CampaignsModule() {
       }
     }
 
+    // ✅ NEW: validate mapped columns actually exist in uploaded data
+if (parsedRows.length > 0) {
+  const csvColumns = Object.keys(parsedRows[0].row);
+
+  for (const [idx, column] of Object.entries(variableMap)) {
+    if (!csvColumns.includes(column)) {
+      alert(
+        `Mapped column "${column}" for variable {{${idx}}} does not exist in uploaded file`
+      );
+      return null;
+    }
+  }
+}
+
+
     if (needsMedia && !mediaUrl) {
       alert("This template requires media. Please upload before continuing.");
       return null;
