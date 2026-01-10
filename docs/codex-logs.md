@@ -716,3 +716,27 @@ Multi-currency wallets
 
 ### DB impact
 - Added `wallet_transactions.organization_id` (backfilled from wallets) so wallet transactions can be filtered by org.
+
+## 2026-01-10 — Variable Template Hardening (WhatsApp)
+
+### Added
+- WhatsApp template variable schema (header + body)
+- CSV parsing with explicit header/body support
+- Campaign-level variable validation
+- Dispatch-time per-recipient variable enforcement
+
+### Database
+- whatsapp_templates:
+  - header_variable_count
+  - header_variable_indices
+  - body_variable_count
+  - body_variable_indices
+
+### Behavior Changes
+- Campaigns cannot send if variables mismatch template
+- Rows with missing variables are marked FAILED
+- Header variables are no longer inferred
+
+### Status
+- Variable-based templates: PRODUCTION READY
+- Backward compatibility preserved

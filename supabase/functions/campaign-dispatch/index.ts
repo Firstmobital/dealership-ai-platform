@@ -1,6 +1,11 @@
 // supabase/functions/campaign-dispatch/index.ts
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  buildWhatsappComponents,
+  validateTemplateVariables,
+} from "../_shared/templateVariables.ts";
+
 
 /* ============================================================
    ENV
@@ -71,11 +76,16 @@ type WhatsappTemplate = {
   status: "approved" | "pending" | "rejected";
   body: string | null;
 
-  // Phase 2.4
   header_type: "NONE" | "TEXT" | "IMAGE" | "DOCUMENT" | string;
   header_media_url: string | null;
   header_media_mime: string | null;
+
+  header_variable_count: number;
+  header_variable_indices: number[] | null;
+  body_variable_count: number;
+  body_variable_indices: number[] | null;
 };
+
 
 type DispatchMode = "scheduled" | "immediate";
 
@@ -115,18 +125,6 @@ function waToFromE164(phonePlus: string) {
   return phonePlus.replace(/^\+/, "");
 }
 
-/* ============================================================
-   VARIABLES → ORDERED ARRAY
-============================================================ */
-function variablesToArray(vars: Record<string, unknown> | null): string[] {
-  if (!vars) return [];
-  const keys = Object.keys(vars);
-  const numeric = keys.every((k) => /^\d+$/.test(k));
-  const ordered = numeric
-    ? keys.sort((a, b) => Number(a) - Number(b))
-    : keys.sort();
-  return ordered.map((k) => String(vars[k] ?? ""));
-}
 
 /* ============================================================
    PHASE 2.4 — TEMPLATE HEADER COMPONENTS
@@ -191,9 +189,19 @@ function resolveTemplateText(
 async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
   const { data, error } = await supabaseAdmin
     .from("whatsapp_templates")
-    .select(
-      "name, language, status, body, header_type, header_media_url, header_media_mime"
-    )
+    .select(`
+      name,
+      language,
+      status,
+      body,
+      header_type,
+      header_media_url,
+      header_media_mime,
+      header_variable_count,
+      header_variable_indices,
+      body_variable_count,
+      body_variable_indices
+    `)    
     .eq("id", templateId)
     .single();
 
@@ -599,6 +607,13 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
     return;
 
   const template = await fetchTemplate(campaign.whatsapp_template_id);
+  const schema = {
+    header_variable_count: template.header_variable_count,
+    header_variable_indices: template.header_variable_indices,
+    body_variable_count: template.body_variable_count,
+    body_variable_indices: template.body_variable_indices,
+  };
+  
   const messages = await fetchMessages(campaign.id);
   // ✅ PSF STEP 2 — create PSF cases before sending
   await createPsfCasesForCampaign({
@@ -620,6 +635,20 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         organizationId: msg.organization_id,
         msg,
       });
+
+      const validation = validateTemplateVariables(
+        msg.variables as any,
+        schema
+      );
+      
+      if (!validation.ok) {
+        await markFailed(
+          msg.id,
+          `VARIABLE_MISMATCH: ${validation.error}`
+        );
+        continue;
+      }
+      
 
       const phonePlus = toE164Plus(phoneDigits);
       if (!phonePlus) {
@@ -650,8 +679,6 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         await markFailed(msg.id, "Missing template media (header_media_url)");
         continue;
       }
-
-      const templateComponents = buildTemplateHeaderComponents(template);
       const messageType =
         headerType === "IMAGE"
           ? "image"
@@ -659,22 +686,35 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
           ? "document"
           : "template";
 
-      const waId = await sendWhatsappTemplate({
-        organizationId: msg.organization_id,
-        contactId,
-        phonePlusE164: phonePlus,
-        templateName: template.name,
-        language: template.language,
-        variables: variablesToArray(msg.variables),
-        renderedText,
-        reply_sheet_tab: campaign.reply_sheet_tab,
-
-        // Phase 2.4
-        templateComponents,
-        mediaUrl: template.header_media_url,
-        mimeType: template.header_media_mime,
-        messageType,
-      });
+          const components = buildWhatsappComponents(
+            msg.variables as any,
+            schema
+          );
+          
+          const waId = await sendWhatsappTemplate({
+            organizationId: msg.organization_id,
+            contactId,
+            phonePlusE164: phonePlus,
+            templateName: template.name,
+            language: template.language,
+          
+            // ✅ BODY VARIABLES (ORDERED BY SCHEMA)
+            variables: [],
+          
+            renderedText,
+            reply_sheet_tab: campaign.reply_sheet_tab,
+          
+            // ✅ HEADER + BODY COMPONENTS
+            templateComponents: [
+              ...buildTemplateHeaderComponents(template),
+              ...components,
+            ],
+          
+            mediaUrl: template.header_media_url,
+            mimeType: template.header_media_mime,
+            messageType,
+          });
+          
 
       // keep your current behavior
       await markSent(msg.id, waId);
@@ -789,6 +829,13 @@ serve(async (req: Request) => {
       }
 
       const template = await fetchTemplate(campaign.whatsapp_template_id);
+      const schema = {
+        header_variable_count: template.header_variable_count,
+        header_variable_indices: template.header_variable_indices,
+        body_variable_count: template.body_variable_count,
+        body_variable_indices: template.body_variable_indices,
+      };
+      
       const messages = await fetchMessages(campaign.id);
       // ✅ PSF STEP 2 — create PSF cases before sending
       await createPsfCasesForCampaign({
@@ -808,6 +855,20 @@ serve(async (req: Request) => {
               organizationId: msg.organization_id,
               msg,
             });
+
+            const validation = validateTemplateVariables(
+              msg.variables as any,
+              schema
+            );
+            
+            if (!validation.ok) {
+              await markFailed(
+                msg.id,
+                `VARIABLE_MISMATCH: ${validation.error}`
+              );
+              continue;
+            }
+            
 
           const phonePlus = toE164Plus(phoneDigits);
           if (!phonePlus) {
@@ -842,8 +903,6 @@ serve(async (req: Request) => {
             );
             continue;
           }
-
-          const templateComponents = buildTemplateHeaderComponents(template);
           const messageType =
             headerType === "IMAGE"
               ? "image"
@@ -851,22 +910,34 @@ serve(async (req: Request) => {
               ? "document"
               : "template";
 
-          const waId = await sendWhatsappTemplate({
-            organizationId: msg.organization_id,
-            contactId,
-            phonePlusE164: phonePlus,
-            templateName: template.name,
-            language: template.language,
-            variables: variablesToArray(msg.variables),
-            renderedText,
-            reply_sheet_tab: campaign.reply_sheet_tab,
-
-            // Phase 2.4
-            templateComponents,
-            mediaUrl: template.header_media_url,
-            mimeType: template.header_media_mime,
-            messageType,
-          });
+              const components = buildWhatsappComponents(
+                msg.variables as any,
+                schema
+              );
+              
+              const waId = await sendWhatsappTemplate({
+                organizationId: msg.organization_id,
+                contactId,
+                phonePlusE164: phonePlus,
+                templateName: template.name,
+                language: template.language,
+              
+                variables: [],
+              
+                renderedText,
+                reply_sheet_tab: campaign.reply_sheet_tab,
+              
+                // ✅ HEADER + BODY COMPONENTS
+                templateComponents: [
+                  ...buildTemplateHeaderComponents(template),
+                  ...components,
+                ],
+              
+                mediaUrl: template.header_media_url,
+                mimeType: template.header_media_mime,
+                messageType,
+              });
+              
 
           await markSent(msg.id, waId);
 

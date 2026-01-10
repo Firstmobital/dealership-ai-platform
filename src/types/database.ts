@@ -411,6 +411,16 @@ export type WhatsappTemplate = {
 
   created_at: string;
   updated_at: string;
+
+    // ---------------------------------------------------------
+  // VARIABLE TEMPLATE SCHEMA (HARDENED)
+  // ---------------------------------------------------------
+  header_variable_count: number;
+  header_variable_indices: number[] | null;
+
+  body_variable_count: number;
+  body_variable_indices: number[] | null;
+
 };
 
 // -------------------------------------------------------------

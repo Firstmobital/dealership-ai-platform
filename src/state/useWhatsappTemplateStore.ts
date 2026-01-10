@@ -103,7 +103,15 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
       .insert({
         ...payload,
         organization_id: activeOrganization.id,
+      
+        // ✅ VARIABLE TEMPLATE HARDENING DEFAULTS
+        header_variable_count: payload.header_variable_count ?? 0,
+        header_variable_indices: payload.header_variable_indices ?? null,
+      
+        body_variable_count: payload.body_variable_count ?? 0,
+        body_variable_indices: payload.body_variable_indices ?? null,
       })
+      
       .select("id")
       .single();
 
@@ -124,8 +132,21 @@ export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
       .from("whatsapp_templates")
       .update({
         ...payload,
+      
+        // ✅ Preserve variable schema unless explicitly changed
+        header_variable_count:
+          payload.header_variable_count ?? undefined,
+        header_variable_indices:
+          payload.header_variable_indices ?? undefined,
+      
+        body_variable_count:
+          payload.body_variable_count ?? undefined,
+        body_variable_indices:
+          payload.body_variable_indices ?? undefined,
+      
         updated_at: new Date().toISOString(),
       })
+      
       .eq("id", id);
 
     if (error) {

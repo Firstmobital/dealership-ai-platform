@@ -7,6 +7,17 @@ import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import type { WhatsappTemplate } from "../../types/database";
 
 /* -------------------------------------------------------
+ * Variable helpers
+ * ----------------------------------------------------- */
+function extractVariableIndices(text: string | null): number[] {
+  if (!text) return [];
+  const matches = [...text.matchAll(/\{\{(\d+)\}\}/g)];
+  const indices = matches.map((m) => Number(m[1]));
+  return Array.from(new Set(indices)).sort((a, b) => a - b);
+}
+
+
+/* -------------------------------------------------------
  * Helpers
  * ----------------------------------------------------- */
 const emptyDraft = (): Partial<WhatsappTemplate> => ({
@@ -18,7 +29,14 @@ const emptyDraft = (): Partial<WhatsappTemplate> => ({
   body: "",
   footer: null,
   status: "draft",
+
+  // ✅ VARIABLE TEMPLATE SCHEMA DEFAULTS
+  header_variable_count: 0,
+  header_variable_indices: null,
+  body_variable_count: 0,
+  body_variable_indices: null,
 });
+
 
 export function WhatsappTemplatesModule() {
   const { activeOrganization } = useOrganizationStore();
@@ -71,19 +89,44 @@ export function WhatsappTemplatesModule() {
       return;
     }
 
+        /* ---------------------------------------------
+     * VARIABLE TEMPLATE SCHEMA COMPUTATION
+     * ------------------------------------------- */
+        const headerVars =
+        draft.header_type === "TEXT"
+          ? extractVariableIndices(draft.header_text ?? null)
+          : [];
+  
+      const bodyVars = extractVariableIndices(draft.body ?? null);
+  
+      const schemaPatch = {
+        header_variable_count: headerVars.length,
+        header_variable_indices:
+          headerVars.length > 0 ? headerVars : null,
+  
+        body_variable_count: bodyVars.length,
+        body_variable_indices:
+          bodyVars.length > 0 ? bodyVars : null,
+      };
+  
+
     setSaving(true);
     try {
       if (!selectedId) {
         const id = await createTemplate({
           ...draft,
+          ...schemaPatch,
           organization_id: activeOrganization.id,
           status: "draft",
-        } as any);
+        } as any);        
 
         await fetchTemplates(); // ✅ FIXED
         if (id) setSelectedId(id);
       } else {
-        await updateTemplate(selectedId, draft as any);
+        await updateTemplate(selectedId, {
+          ...draft,
+          ...schemaPatch,
+        } as any);        
         await fetchTemplates(); // ✅ FIXED
       }
     } finally {

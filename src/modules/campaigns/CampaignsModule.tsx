@@ -13,7 +13,10 @@ import {
   FileText,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-
+import {
+  parseCsvVariables,
+  validateTemplateVariables,
+} from "../../lib/templateVariables";
 import { useCampaignStore } from "../../state/useCampaignStore";
 import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
@@ -64,24 +67,30 @@ function mapCsvRowsToObjects(
   headers: string[],
   rows: string[][]
 ): ParsedCsvRow[] {
-  const varHeaders = headers.filter((h) => h !== "phone");
-
   return rows
     .map((cols) => {
       const phoneIndex = headers.indexOf("phone");
       const phone = String(cols[phoneIndex] ?? "").trim();
       if (!phone) return null;
 
-      const variables: Record<string, string> = {};
-      varHeaders.forEach((h, idx) => {
-        const colIndex = headers.indexOf(h);
-        variables[String(idx + 1)] = String(cols[colIndex] ?? "").trim();
+      const row: Record<string, string> = {};
+      headers.forEach((h, idx) => {
+        row[h] = String(cols[idx] ?? "").trim();
       });
 
-      return { phone, variables };
+      const parsed = parseCsvVariables(row);
+
+      return {
+        phone,
+        variables: {
+          header: parsed.header,
+          body: parsed.body,
+        } as any,
+      };
     })
     .filter(Boolean) as ParsedCsvRow[];
 }
+
 
 /* ========================================================================
    TEMPLATE PREVIEW
@@ -123,15 +132,6 @@ function WhatsAppPreviewCard({
   );
 }
 
-function extractMaxTemplateVarIndex(body: string): number {
-  const matches = body.match(/{{\s*(\d+)\s*}}/g) ?? [];
-  let max = 0;
-  for (const m of matches) {
-    const n = Number(m.replace(/\D/g, ""));
-    if (n > max) max = n;
-  }
-  return max;
-}
 /* ========================================================================
    COMPONENT
 ========================================================================= */
@@ -267,17 +267,27 @@ export function CampaignsModule() {
     }
 
     // ✅ TEMPLATE VARIABLE VALIDATION (PHASE C – CORRECT SCOPE)
-    const neededVars = extractMaxTemplateVarIndex(
-      selectedTemplate?.body ?? ""
-    );
-
-    const providedVars = headers.filter((h) => h !== "phone").length;
-
-    if (neededVars > providedVars) {
-      errors.push(
-        `Template requires ${neededVars} variables ({{1}}..{{${neededVars}}}) but CSV provides only ${providedVars}.`
-      );
+    if (selectedTemplate) {
+      const schema = {
+        header_variable_count: selectedTemplate.header_variable_count,
+        header_variable_indices: selectedTemplate.header_variable_indices,
+        body_variable_count: selectedTemplate.body_variable_count,
+        body_variable_indices: selectedTemplate.body_variable_indices,
+      };
+    
+      for (const row of mapped) {
+        const result = validateTemplateVariables(
+          row.variables as any,
+          schema
+        );
+    
+        if (!result.ok) {
+          errors.push(result.error ?? "Variable mismatch");
+          break;
+        }
+      }
     }
+    
 
     setParsedRows(mapped);
     setCsvErrors(errors);
@@ -297,9 +307,10 @@ export function CampaignsModule() {
   const previewBody =
     mode === "create"
       ? renderTemplatePreview(
-          selectedTemplate?.body ?? "",
-          parsedRows[0]?.variables ?? {}
-        )
+        selectedTemplate?.body ?? "",
+        (parsedRows[0]?.variables as any)?.body ?? {}
+      )
+      
       : selectedCampaign?.template_body ?? "";
 
   const selectedMsgs = selectedCampaign

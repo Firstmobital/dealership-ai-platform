@@ -2,6 +2,10 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
 import type { Campaign, CampaignMessage } from "../types/database";
+import {
+  validateTemplateVariables,
+} from "../lib/templateVariables";
+
 
 /* =========================================================
    TYPES
@@ -131,10 +135,22 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       throw new Error("CSV has no valid phone rows.");
     }
 
+
     /* 1️⃣ Fetch template snapshot */
     const { data: template, error: tplError } = await supabase
       .from("whatsapp_templates")
-      .select("id, name, body, language, status")
+      .select(`
+        id,
+        name,
+        body,
+        language,
+        status,
+        header_variable_count,
+        header_variable_indices,
+        body_variable_count,
+        body_variable_indices
+      `)
+      
       .eq("id", whatsapp_template_id)
       .single();
 
@@ -146,6 +162,29 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     if (template.status !== "approved") {
       throw new Error("Template is not approved yet");
     }
+    /* --------------------------------------------------
+   VARIABLE SCHEMA VALIDATION (DEFENSIVE)
+-------------------------------------------------- */
+const schema = {
+  header_variable_count: template.header_variable_count,
+  header_variable_indices: template.header_variable_indices,
+  body_variable_count: template.body_variable_count,
+  body_variable_indices: template.body_variable_indices,
+};
+
+for (const row of cleanedRows) {
+  const result = validateTemplateVariables(
+    row.variables as any,
+    schema
+  );
+
+  if (!result.ok) {
+    throw new Error(
+      `Variable mismatch for phone ${row.phone}: ${result.error}`
+    );
+  }
+}
+
 
     const bodySnapshot = safeTemplateBody(template.body);
 
