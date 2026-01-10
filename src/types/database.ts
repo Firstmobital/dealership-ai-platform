@@ -127,6 +127,7 @@ export type Message = {
   sent_at?: string | null;
   delivered_at?: string | null;
   read_at?: string | null;
+  metadata: Record<string, any> | null;
 
   created_at: string;
 };

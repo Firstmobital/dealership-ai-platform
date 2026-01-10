@@ -549,52 +549,35 @@ async function processInboundMessage(
    GOOGLE SHEETS LOGGING (CAMPAIGN REPLIES)
 ============================================================ */
 
-if (text) {
-  // 1️⃣ Find latest outbound message with reply_sheet_tab
-  const { data: lastOutbound } = await supabase
-    .from("messages")
-    .select("metadata")
-    .eq("conversation_id", conversationId)
-    .eq("direction", "out")
-    .order("created_at", { ascending: false })
-    .limit(1)
+if (text && replySheetTab) {
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("google_sheet_id")
+    .eq("id", orgId)
     .maybeSingle();
 
-  const replySheetTab = lastOutbound?.metadata?.reply_sheet_tab ?? null;
-
-  if (replySheetTab) {
-    // 2️⃣ Load org Google Sheet ID
-    const { data: org } = await supabase
-      .from("organizations")
-      .select("google_sheet_id")
-      .eq("id", orgId)
-      .maybeSingle();
-
-    if (org?.google_sheet_id) {
-      // 3️⃣ Fire-and-forget logging (non-blocking)
-      fetch(`${PROJECT_URL}/functions/v1/google-sheet-log-reply`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-        },
-        body: JSON.stringify({
-          organization_id: orgId,
-          google_sheet_id: org.google_sheet_id,
-          reply_sheet_tab: replySheetTab,
-          phone: waNumber,
-          message: text,
-          conversation_id: conversationId,
-        }),
-      }).catch((err) => {
-        convLogger.error("GOOGLE_SHEET_LOG_FAILED", {
-          error: String(err),
-          reply_sheet_tab: replySheetTab,
-        });
+  if (org?.google_sheet_id) {
+    fetch(`${PROJECT_URL}/functions/v1/google-sheet-log-reply`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({
+        spreadsheet_id: org.google_sheet_id,
+        sheet_tab: replySheetTab,
+        phone: waNumber,
+        message: text,
+      }),
+    }).catch((err) => {
+      convLogger.error("GOOGLE_SHEET_LOG_FAILED", {
+        error: String(err),
+        sheet_tab: replySheetTab,
       });
-    }
+    });
   }
 }
+
 
   /* ============================================================
      AI TRIGGER (TEXT ONLY)
