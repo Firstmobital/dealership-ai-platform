@@ -740,3 +740,21 @@ Multi-currency wallets
 ### Status
 - Variable-based templates: PRODUCTION READY
 - Backward compatibility preserved
+
+2026-01-10 — Phase A completed
+
+Added clean category badge UI for templates list + stabilized category selector for Meta-synced categories.
+
+Upgraded whatsapp-template-sync to insert Meta-only templates and hydrate local rows with category/header/body/footer + variable schema fields.
+
+Mapped Meta PAUSED → local approved (no paused state locally).
+
+2026-01-10 — Phase B completed
+- Unified CSV/Excel ingestion across Campaigns and Database uploads
+- Centralized phone normalization and header handling
+- Preserved full row metadata without hardcoded field extraction
+
+2026-01-10 — Step 3 completed (Schema)
+- Added jsonb metadata column to contacts for full-row preservation
+- Added jsonb raw_row column to campaign_messages for per-message row snapshot
+- No RLS changes required

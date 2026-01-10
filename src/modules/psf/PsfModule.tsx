@@ -95,9 +95,10 @@ export function PsfModule() {
                 }`}
               >
                 <div className="flex justify-between items-center">
-                  <div className="font-medium text-sm">
-                    {c.phone}
-                  </div>
+                <div className="font-medium text-sm">
+  {c.customer_name ?? c.phone}
+</div>
+
                   {replyBadge(c)}
                 </div>
 
@@ -105,9 +106,16 @@ export function PsfModule() {
                   Campaign: {c.campaign_name ?? "—"}
                 </div>
 
-                <div className="mt-1 text-xs text-gray-400">
-                  Reminders sent: {c.reminders_sent_count ?? 0}
-                </div>
+                {c.model && (
+  <div className="mt-1 text-xs text-gray-500">
+    Vehicle: {c.model}
+  </div>
+)}
+
+<div className="mt-1 text-xs text-gray-400">
+  Reminders sent: {c.reminders_sent_count ?? 0}
+</div>
+
               </button>
             ))}
         </div>
@@ -160,9 +168,9 @@ function PsfDetail({
   onSendReminder: () => void;
 }) {
   const maxReached =
-    typeof psfCase.reminders_sent_count === "number" &&
-    (psfCase.reminders_sent_count ?? 0) >= 3
-;
+  (psfCase.reminders_sent_count ?? 0) >= 3 ||
+  Boolean(psfCase.last_customer_reply_at);
+
 
   const reminderDisabled =
     psfCase.resolution_status === "resolved" || maxReached;
@@ -188,9 +196,18 @@ function PsfDetail({
 
           <div className="flex items-center gap-2 text-sm">
             {replyBadge(psfCase)}
-            <span className="text-gray-500">
-              Resolution: {psfCase.resolution_status}
-            </span>
+            <span
+  className={`font-medium ${
+    psfCase.resolution_status === "resolved"
+      ? "text-green-700"
+      : psfCase.resolution_status === "escalated"
+      ? "text-red-700"
+      : "text-gray-600"
+  }`}
+>
+  Resolution: {psfCase.resolution_status}
+</span>
+
           </div>
 
           <div className="mt-2 text-xs text-gray-500">

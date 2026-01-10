@@ -6,6 +6,25 @@ import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import type { WhatsappTemplate } from "../../types/database";
 
+function CategoryBadge({ category }: { category: string | null | undefined }) {
+    const c = String(category ?? "").toUpperCase();
+    const label = c || "—";
+  
+    const cls =
+      c === "UTILITY"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : c === "MARKETING"
+          ? "border-purple-200 bg-purple-50 text-purple-700"
+          : c === "AUTHENTICATION"
+            ? "border-blue-200 bg-blue-50 text-blue-700"
+            : "border-slate-200 bg-slate-50 text-slate-700";
+  
+    return (
+      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${cls}`}>
+        {label}
+      </span>
+    );
+  }
 /* -------------------------------------------------------
  * Variable helpers
  * ----------------------------------------------------- */
@@ -258,12 +277,18 @@ export function WhatsappTemplatesModule() {
                     : "border-slate-200 hover:bg-slate-50"
                 }`}
               >
-                <div className="flex justify-between">
-                  <div className="font-medium">{t.name}</div>
-                  <div className="text-xs">{t.status}</div>
-                </div>
-                <div className="text-xs text-slate-500">
-                  {t.language} • {t.category}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{t.name}</div>
+                    <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                      <span>{t.language ?? "—"}</span>
+                      <span className="text-slate-300">•</span>
+                      <CategoryBadge category={t.category} />
+                    </div>
+                  </div>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700">
+                    {t.status}
+                  </span>
                 </div>
               </button>
             ))}
@@ -328,22 +353,61 @@ export function WhatsappTemplatesModule() {
           <select
             className="w-full rounded-md border px-3 py-2 text-sm"
             disabled={!isEditable}
-            value={draft.category ?? "MARKETING"}
+                        // IMPORTANT: Meta-synced templates can have categories like AUTHENTICATION.
+            // Drafts are still limited by your choices, but we keep the value stable.
+            value={(draft.category ?? "MARKETING") as any}
             onChange={(e) =>
               setDraft((p) => ({
                 ...p,
-                category: e.target.value as "MARKETING" | "UTILITY",
+                category: e.target.value as any,
               }))
             }
           >
             <option value="MARKETING">Marketing</option>
             <option value="UTILITY">Utility</option>
+            <option value="AUTHENTICATION">Authentication</option>
           </select>
           <p className="mt-1 text-xs text-slate-500">
             Utility templates are for service updates, PSF, and transactional
             messages.
           </p>
         </div>
+
+        {/* HEADER */}
+<div>
+  <label className="mb-1 block text-xs font-medium text-slate-600">
+    Header
+  </label>
+
+  <select
+    className="mb-2 w-full rounded-md border px-3 py-2 text-sm"
+    disabled={!isEditable}
+    value={draft.header_type ?? "NONE"}
+    onChange={(e) =>
+      setDraft((p) => ({
+        ...p,
+        header_type: e.target.value === "NONE" ? null : "TEXT",
+        header_text: e.target.value === "NONE" ? null : p.header_text,
+      }))
+    }
+  >
+    <option value="NONE">No Header</option>
+    <option value="TEXT">Text Header</option>
+  </select>
+
+  {draft.header_type === "TEXT" && (
+    <input
+      className="w-full rounded-md border px-3 py-2 text-sm"
+      placeholder="Header text ({{1}} allowed)"
+      disabled={!isEditable}
+      value={draft.header_text ?? ""}
+      onChange={(e) =>
+        setDraft((p) => ({ ...p, header_text: e.target.value }))
+      }
+    />
+  )}
+</div>
+
 
         {/* BODY */}
         <textarea

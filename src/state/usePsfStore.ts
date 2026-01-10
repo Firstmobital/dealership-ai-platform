@@ -53,8 +53,23 @@ export const usePsfStore = create<PsfState>((set, get) => ({
 
     try {
       let query = supabase
-        .from("psf_cases_view")
-        .select("*")
+      .from("psf_cases_view")
+      .select(`
+        id,
+        organization_id,
+        campaign_id,
+        phone,
+        customer_name,
+        model,
+        resolution_status,
+        action_required,
+        initial_sent_at,
+        last_customer_reply_at,
+        resolved_at,
+        reminders_sent_count,
+        conversation_id,
+        campaign_name
+      `)      
         .eq("organization_id", activeOrganization.id)
         .order("created_at", { ascending: false });
 

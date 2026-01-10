@@ -2,8 +2,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-
-
 /* ============================================================
    ENV
 ============================================================ */
@@ -45,7 +43,10 @@ type Campaign = {
   scheduled_at: string | null;
   started_at: string | null;
   launched_at: string | null;
-  variable_mapping: Record<string, string> | null; // { "1": "first_name", "2": "model" } etc
+  meta: {
+    variable_map?: Record<string, string>;
+    is_psf?: boolean;
+  } | null;
   reply_sheet_tab: string | null;
 };
 
@@ -63,7 +64,8 @@ type CampaignMessage = {
   campaign_id: string;
   contact_id: string | null;
   phone: string;
-  variables: Record<string, unknown> | null;
+  raw_row: Record<string, any> | null;
+  variables: Record<string, unknown> | null; // legacy
   status: CampaignMessageStatus;
 };
 
@@ -121,24 +123,26 @@ function waToFromE164(phonePlus: string) {
   // "+91XXXXXXXXXX" -> "91XXXXXXXXXX"
   return phonePlus.replace(/^\+/, "");
 }
+function buildWhatsappParamsFromRow(params: {
+  template: WhatsappTemplate;
+  rawRow: Record<string, any> | null;
+  variableMap: Record<string, string> | undefined;
+}) {
+  if (!params.variableMap || !params.rawRow) return [];
 
-/* ============================================================
-   Phase C — Build WhatsApp Variables from Mapping
-============================================================ */
-function buildVariablesFromMapping(params: {
-  row: Record<string, any>;
-  mapping: Record<string, string> | null;
-}): string[] {
-  if (!params.mapping) return [];
+  const out: any[] = [];
 
-  return Object.keys(params.mapping)
-    .sort((a, b) => Number(a) - Number(b))
-    .map((k) => {
-      const field = params.mapping![k];
-      return String(params.row?.[field] ?? "");
-    });
+  const headerVars = params.template.header_variable_indices ?? [];
+  const bodyVars = params.template.body_variable_indices ?? [];
+
+  for (const idx of [...headerVars, ...bodyVars]) {
+    const column = params.variableMap[String(idx)];
+    const value = column ? String(params.rawRow[column] ?? "") : "";
+    out.push({ type: "text", text: value });
+  }
+
+  return out;
 }
-
 
 
 /* ============================================================
@@ -371,8 +375,8 @@ async function fetchCampaignById(campaignId: string): Promise<Campaign | null> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping, reply_sheet_tab"
-    )
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
+    )    
     .eq("id", campaignId)
     .maybeSingle();
 
@@ -387,8 +391,8 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, variable_mapping, reply_sheet_tab"
-    )
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
+    )    
     .in("status", ["scheduled", "sending"])
     .lte("scheduled_at", nowIso)
     .limit(MAX_CAMPAIGNS_PER_RUN);
@@ -404,8 +408,8 @@ async function fetchMessages(campaignId: string): Promise<CampaignMessage[]> {
   const { data, error } = await supabaseAdmin
     .from("campaign_messages")
     .select(
-      "id, organization_id, campaign_id, contact_id, phone, variables, status"
-    )
+      "id, organization_id, campaign_id, contact_id, phone, raw_row, variables, status"
+    )    
     .eq("campaign_id", campaignId)
     .in("status", ["pending", "queued"])
     .limit(MAX_MESSAGES_PER_CAMPAIGN_PER_RUN);
@@ -423,25 +427,36 @@ async function createPsfCasesForCampaign(params: {
 }) {
   const { campaign, messages } = params;
 
-  // 🔒 Only PSF campaigns
-  // Expectation: campaigns.meta.is_psf = true
-  const { data: campaignRow } = await supabaseAdmin
-    .from("campaigns")
-    .select("meta")
-    .eq("id", campaign.id)
-    .single();
+  if (!campaign.meta?.is_psf) return;
 
-  if (!campaignRow?.meta?.is_psf) return;
+  const rows = messages.map((m) => {
+    const raw = m.raw_row ?? {};
+  
+    return {
+      organization_id: m.organization_id,
+      campaign_id: m.campaign_id,
+      phone: normalizeToIndiaDigits(m.phone),
+  
+      // ✅ PSF summary fields (for inbox + UX)
+      customer_name:
+        raw.name ??
+        raw.customer_name ??
+        raw.first_name ??
+        null,
+  
+      model:
+        raw.model ??
+        raw.vehicle_model ??
+        null,
+  
+      // ✅ full original uploaded row (authoritative)
+      uploaded_data: raw,
+  
+      initial_sent_at: new Date().toISOString(),
+    };
+  });  
 
-  const rows = messages.map((m) => ({
-    organization_id: m.organization_id,
-    campaign_id: m.campaign_id,
-    phone: normalizeToIndiaDigits(m.phone),
-    uploaded_data: m.variables ?? {},
-    initial_sent_at: new Date().toISOString(),
-  }));
-
-  if (rows.length === 0) return;
+  if (!rows.length) return;
 
   // Idempotent insert: avoid duplicates
   const { error } = await supabaseAdmin
@@ -664,9 +679,9 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
           const contactRow = await fetchContact(contactId);
           renderedText = resolveTemplateText(
             template.body,
-            contactRow,
-            campaign.variable_mapping
-          );
+            msg.raw_row ?? {},
+            campaign.meta?.variable_map ?? null
+          );          
         }
         await setRenderedText(msg.id, renderedText);
       } catch {
@@ -687,10 +702,12 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
           ? "document"
           : "template";
                 
-          const variables = buildVariablesFromMapping({
-            row: msg.variables as any,
-            mapping: campaign.variable_mapping,
+          const variables = buildWhatsappParamsFromRow({
+            template,
+            rawRow: msg.raw_row ?? null,
+            variableMap: campaign.meta?.variable_map,
           });
+          
           
           const waId = await sendWhatsappTemplate({
             organizationId: msg.organization_id,
@@ -867,9 +884,9 @@ serve(async (req: Request) => {
               const contactRow = await fetchContact(contactId);
               renderedText = resolveTemplateText(
                 template.body,
-                contactRow,
-                campaign.variable_mapping
-              );
+                msg.raw_row ?? {},
+                campaign.meta?.variable_map ?? null
+              );              
             }
             await setRenderedText(msg.id, renderedText);
           } catch {
@@ -894,10 +911,12 @@ serve(async (req: Request) => {
               ? "document"
               : "template";
               
-              const variables = buildVariablesFromMapping({
-                row: msg.variables as any,
-                mapping: campaign.variable_mapping,
+              const variables = buildWhatsappParamsFromRow({
+                template,
+                rawRow: msg.raw_row ?? null,
+                variableMap: campaign.meta?.variable_map,
               });
+              
               
               const waId = await sendWhatsappTemplate({
                 organizationId: msg.organization_id,

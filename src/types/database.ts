@@ -329,40 +329,35 @@ export type CampaignMessage = {
 
 export type PsfSentiment = "positive" | "negative" | "neutral" | "no_reply";
 
-export type PsfResolutionStatus = "open" | "resolved";
+export type PsfResolutionStatus = "open" | "resolved" | "escalated";
 
 export type PsfCase = {
-  id: UUID;
-  organization_id: UUID;
-
-  campaign_id: UUID | null;
-  campaign_name: string | null;
-
-  conversation_id: UUID | null;
-
+  id: string;
+  organization_id: string;
+  campaign_id: string;
   phone: string;
 
-  // Feedback state
-  sentiment: PsfSentiment | null;
-  ai_summary: string | null;
+  // ✅ Identity
+  customer_name: string | null;
+  model: string | null;
 
+  // ✅ Status
   resolution_status: PsfResolutionStatus;
   action_required: boolean;
 
-  // Reminder tracking
-  reminders_sent_count: number | null;
-  last_reminder_sent_at: string | null;
-
-  // Customer replies
-  first_customer_reply_at: string | null;
-  last_customer_reply_at: string | null;
-
-  // Delivery
+  // ✅ Timing
   initial_sent_at: string | null;
+  last_customer_reply_at: string | null;
+  resolved_at: string | null;
 
-  created_at: string;
-  updated_at: string;
+  // ✅ Counters
+  reminders_sent_count: number | null;
+
+  // ✅ Relations
+  conversation_id: string | null;
+  campaign_name: string | null;
 };
+
 
 // -------------------------------------------------------------
 // WHATSAPP SETTINGS + TEMPLATES

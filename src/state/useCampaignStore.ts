@@ -2,17 +2,14 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
 import type { Campaign, CampaignMessage } from "../types/database";
-import {
-  validateTemplateVariables,
-} from "../lib/templateVariables";
-
+import { validateTemplateVariables } from "../lib/templateVariables";
 
 /* =========================================================
    TYPES
 ========================================================= */
 type CsvRow = {
   phone: string;
-  row: Record<string, string>; // raw uploaded row
+  row: Record<string, string>; // raw uploaded row (normalized headers)
 };
 
 type CampaignState = {
@@ -28,17 +25,14 @@ type CampaignState = {
     name: string;
     description?: string;
     whatsapp_template_id: string;
-    reply_sheet_tab: string; // ✅ NEW
+    reply_sheet_tab: string;
     scheduledAt: string | null;
     rows: CsvRow[];
-    variable_map: Record<string, string>;
+    variable_map: Record<string, string>; // {{1}} -> columnName
+    campaign_type: "marketing" | "utility" | "psf";
   }) => Promise<string>;
 
-  launchCampaign: (
-    campaignId: string,
-    scheduledAt?: string | null
-  ) => Promise<void>;
-
+  launchCampaign: (campaignId: string, scheduledAt?: string | null) => Promise<void>;
   retryFailedMessages: (campaignId: string) => Promise<void>;
 };
 
@@ -93,10 +87,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       .order("created_at", { ascending: true });
 
     if (error) {
-      console.error(
-        "[useCampaignStore] fetchCampaignMessages error",
-        error
-      );
+      console.error("[useCampaignStore] fetchCampaignMessages error", error);
       throw error;
     }
 
@@ -116,14 +107,13 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     name,
     description,
     whatsapp_template_id,
-    reply_sheet_tab, // ✅ NEW
+    reply_sheet_tab,
     scheduledAt,
     rows,
     variable_map,
+    campaign_type,
   }) => {
-    const status: Campaign["status"] = scheduledAt
-      ? "scheduled"
-      : "draft";
+    const status: Campaign["status"] = scheduledAt ? "scheduled" : "draft";
 
     // Sanitize phones early
     const cleanedRows = rows
@@ -133,30 +123,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       }))
       .filter((r) => r.phone.length >= 8);
 
-      const mappedRows = cleanedRows.map((r) => {
-        const variables: Record<string, unknown> = {};
-      
-        Object.keys(variable_map).forEach((idx) => {
-          const columnName = variable_map[idx];
-          variables[idx] = r.row?.[columnName] ?? "";
-        });
-      
-        return {
-          phone: r.phone,
-          variables,
-        };
-      });
-      
-
     if (!cleanedRows.length) {
-      throw new Error("CSV has no valid phone rows.");
+      throw new Error("Upload has no valid phone rows.");
     }
-
 
     /* 1️⃣ Fetch template snapshot */
     const { data: template, error: tplError } = await supabase
       .from("whatsapp_templates")
-      .select(`
+      .select(
+        `
         id,
         name,
         body,
@@ -166,8 +141,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         header_variable_indices,
         body_variable_count,
         body_variable_indices
-      `)
-      
+      `,
+      )
       .eq("id", whatsapp_template_id)
       .single();
 
@@ -179,93 +154,112 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     if (template.status !== "approved") {
       throw new Error("Template is not approved yet");
     }
-    /* --------------------------------------------------
-   VARIABLE SCHEMA VALIDATION (DEFENSIVE)
--------------------------------------------------- */
-const schema = {
-  header_variable_count: template.header_variable_count,
-  header_variable_indices: template.header_variable_indices,
-  body_variable_count: template.body_variable_count,
-  body_variable_indices: template.body_variable_indices,
-};
-
-for (const row of mappedRows) {
-  const result = validateTemplateVariables(
-    row.variables as any,
-    schema
-  );
-
-  if (!result.ok) {
-    throw new Error(
-      `Variable mismatch for phone ${row.phone}: ${result.error}`
-    );
-  }
-}
-
 
     const bodySnapshot = safeTemplateBody(template.body);
 
-    /* 2️⃣ Create campaign row */
-    const { data: campaignData, error: campaignError } =
-      await supabase
-        .from("campaigns")
-        .insert({
-          organization_id: organizationId,
-          name,
-          description: description ?? null,
-          channel: "whatsapp",
+    /* --------------------------------------------------
+       2️⃣ Build per-row variables using variable_map
+       We keep this for now because your system already stores `variables`
+       and templateVariables validation relies on it.
+    -------------------------------------------------- */
+    const mappedRows = cleanedRows.map((r) => {
+      const variables: Record<string, unknown> = {};
 
-          whatsapp_template_id: template.id,
-          template_name: template.name ?? null,
-          template_body: bodySnapshot,
+      Object.keys(variable_map ?? {}).forEach((idx) => {
+        const columnName = variable_map[idx];
+        variables[idx] = r.row?.[columnName] ?? "";
+      });
 
-          template_variables: null,
-          status,
-          scheduled_at: scheduledAt,
+      return {
+        phone: r.phone,
+        raw_row: r.row,
+        variables,
+      };
+    });
 
-          reply_sheet_tab: reply_sheet_tab || null, // ✅ STORED HERE
-          variable_mapping: variable_map,
+    /* --------------------------------------------------
+       3️⃣ VARIABLE SCHEMA VALIDATION (DEFENSIVE)
+    -------------------------------------------------- */
+    const schema = {
+      header_variable_count: template.header_variable_count,
+      header_variable_indices: template.header_variable_indices,
+      body_variable_count: template.body_variable_count,
+      body_variable_indices: template.body_variable_indices,
+    };
 
+    for (const row of mappedRows) {
+      const result = validateTemplateVariables(row.variables as any, schema);
+      if (!result.ok) {
+        throw new Error(
+          `Variable mismatch for phone ${row.phone}: ${result.error}`,
+        );
+      }
+    }
 
-          total_recipients: cleanedRows.length,
-          sent_count: 0,
-          failed_count: 0,
-        })
-        .select("id")
-        .single();
+    /* 4️⃣ Create campaign row */
+    const { data: campaignData, error: campaignError } = await supabase
+      .from("campaigns")
+      .insert({
+        organization_id: organizationId,
+        name,
+        description: description ?? null,
+        channel: "whatsapp",
+
+        whatsapp_template_id: template.id,
+        template_name: template.name ?? null,
+        template_body: bodySnapshot,
+
+        template_variables: null,
+        status,
+        scheduled_at: scheduledAt,
+
+        reply_sheet_tab: reply_sheet_tab || null,
+
+        // ✅ Step 4: persist variable_map on campaigns.meta
+        meta: {
+          variable_map,
+          is_psf: campaign_type === "psf",
+        },        
+
+        total_recipients: cleanedRows.length,
+        sent_count: 0,
+        failed_count: 0,
+      })
+      .select("id")
+      .single();
 
     if (campaignError || !campaignData) {
-      console.error(
-        "[useCampaignStore] createCampaign error",
-        campaignError
-      );
+      console.error("[useCampaignStore] createCampaign error", campaignError);
       throw campaignError ?? new Error("Failed to create campaign");
     }
 
     const campaignId = campaignData.id as string;
 
-    /* 3️⃣ Insert campaign messages */
+    /* 5️⃣ Insert campaign messages */
     const messagesPayload = mappedRows.map((row) => ({
       organization_id: organizationId,
       campaign_id: campaignId,
       phone: row.phone,
+
+      // Keep existing structure
       variables: row.variables,
+
+      // ✅ Step 3 schema: snapshot of full row
+      raw_row: row.raw_row,
+
       status: "pending",
-    }));    
+    }));
 
     const { error: msgErr } = await supabase
       .from("campaign_messages")
       .insert(messagesPayload);
 
     if (msgErr) {
-      console.error(
-        "[useCampaignStore] insert messages error",
-        msgErr
-      );
+      console.error("[useCampaignStore] insert messages error", msgErr);
       throw msgErr;
     }
 
-    /* 4️⃣ Refresh store */
+    /* 6️⃣ Refresh store */
     await get().fetchCampaigns(organizationId);
     await get().fetchCampaignMessages(campaignId);
 
@@ -276,8 +270,7 @@ for (const row of mappedRows) {
      LAUNCH CAMPAIGN (SEND NOW OR SCHEDULE)
   ------------------------------------------------------ */
   launchCampaign: async (campaignId, scheduledAt) => {
-    const effectiveTime =
-      scheduledAt ?? new Date().toISOString();
+    const effectiveTime = scheduledAt ?? new Date().toISOString();
 
     const { error } = await supabase
       .from("campaigns")
@@ -288,22 +281,15 @@ for (const row of mappedRows) {
       .eq("id", campaignId);
 
     if (error) {
-      console.error(
-        "[useCampaignStore] launchCampaign error",
-        error
-      );
+      console.error("[useCampaignStore] launchCampaign error", error);
       throw error;
     }
 
     set((state) => ({
       campaigns: state.campaigns.map((c) =>
         c.id === campaignId
-          ? {
-              ...c,
-              status: "scheduled",
-              scheduled_at: effectiveTime,
-            }
-          : c
+          ? { ...c, status: "scheduled", scheduled_at: effectiveTime }
+          : c,
       ),
     }));
   },
@@ -325,16 +311,11 @@ for (const row of mappedRows) {
       .eq("status", "failed");
 
     if (error) {
-      console.error(
-        "[useCampaignStore] retryFailedMessages error",
-        error
-      );
+      console.error("[useCampaignStore] retryFailedMessages error", error);
       throw error;
     }
 
-    const orgId =
-      get().campaigns.find((c) => c.id === campaignId)
-        ?.organization_id;
+    const orgId = get().campaigns.find((c) => c.id === campaignId)?.organization_id;
 
     if (orgId) {
       await get().fetchCampaigns(orgId);

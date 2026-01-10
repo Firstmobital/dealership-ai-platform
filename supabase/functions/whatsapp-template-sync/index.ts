@@ -20,7 +20,38 @@ function jsonResponse(status: number, payload: any) {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
-
+/* ------------------------------------------------------------------
+   VARIABLE SCHEMA HELPERS (match frontend behavior)
+------------------------------------------------------------------ */
+function extractVariableIndices(text: string | null): number[] {
+    if (!text) return [];
+    const matches = [...text.matchAll(/\{\{(\d+)\}\}/g)];
+    const indices = matches.map((m) => Number(m[1]));
+    return Array.from(new Set(indices)).sort((a, b) => a - b);
+  }
+  
+  function pickComponentText(mt: any, type: string): string | null {
+    const comps = Array.isArray(mt?.components) ? mt.components : [];
+    const c = comps.find((x: any) => String(x?.type ?? "").toUpperCase() === type);
+    return (c?.text ?? null) as string | null;
+  }
+  
+  function pickHeader(mt: any): { header_type: any; header_text: string | null } {
+    const comps = Array.isArray(mt?.components) ? mt.components : [];
+    const header = comps.find(
+      (x: any) => String(x?.type ?? "").toUpperCase() === "HEADER",
+    );
+  
+    const format = String(header?.format ?? header?.header_type ?? "").toUpperCase();
+    const header_type =
+      format === "TEXT" || format === "IMAGE" || format === "VIDEO" || format === "DOCUMENT"
+        ? format
+        : null;
+  
+    const header_text = header_type === "TEXT" ? (header?.text ?? null) : null;
+    return { header_type, header_text };
+  }
+  
 /* ------------------------------------------------------------------
    STATUS MAP (Meta → Local)
 ------------------------------------------------------------------ */
@@ -28,7 +59,8 @@ function mapStatus(metaStatus: string | null | undefined) {
   const s = String(metaStatus ?? "").toUpperCase();
   if (s === "APPROVED") return "approved";
   if (s === "REJECTED") return "rejected";
-  if (s === "PAUSED") return "paused";
+  // If Meta says PAUSED, it's still an approved template — we don't have a paused state locally.
+  if (s === "PAUSED") return "approved";
   if (s === "PENDING") return "pending";
   return "pending";
 }
@@ -138,7 +170,9 @@ serve(async (req) => {
     ========================================================= */
     const { data: locals, error: localErr } = await supabase
       .from("whatsapp_templates")
-      .select("id, name, language, meta_template_id, status")
+      .select(
+        "id, organization_id, name, language, category, meta_template_id, status, header_type, header_text, body, footer, header_variable_count, header_variable_indices, body_variable_count, body_variable_indices",
+      )
       .eq("organization_id", organization_id);
 
     if (localErr) {
@@ -164,67 +198,99 @@ serve(async (req) => {
       if (name && lang) metaByNameLang.set(`${name}::${lang}`, mt);
     }
 
-    const updates: any[] = [];
-    let matched = 0;
-
+    const localsByMetaId = new Map<string, any>();
+    const localsByNameLang = new Map<string, any>();
     for (const lt of locals ?? []) {
-      const currentMetaId = lt.meta_template_id
-        ? String(lt.meta_template_id)
-        : null;
-
-      let match: any | null = null;
-
-      if (currentMetaId && metaById.has(currentMetaId)) {
-        match = metaById.get(currentMetaId);
-      } else {
-        const key = `${String(lt.name)}::${String(lt.language)}`;
-        match = metaByNameLang.get(key) ?? null;
-      }
-
-      if (!match) continue;
-      matched++;
-
-      const newStatus = mapStatus(match.status);
-      const metaId = match?.id ? String(match.id) : null;
-      const nextMetaId = currentMetaId ?? metaId;
-
-      if (lt.status !== newStatus || (!currentMetaId && nextMetaId)) {
-        updates.push({
-          id: lt.id,
-          status: newStatus,
-          meta_template_id: nextMetaId,
-          updated_at: new Date().toISOString(),
-        });
-      }
+      if (lt.meta_template_id) localsByMetaId.set(String(lt.meta_template_id), lt);
+      if (lt.name && lt.language) localsByNameLang.set(`${String(lt.name)}::${String(lt.language)}`, lt);
     }
+
+    const upserts: any[] = [];
+    let matched = 0;
+    let inserted = 0;
+    let updated = 0;
+    // Build upserts from Meta list (so Meta-only templates get inserted)
+    for (const mt of metaTemplates) {
+      const metaId = mt?.id ? String(mt.id) : null;
+      const name = String(mt?.name ?? "");
+      const language = String(mt?.language ?? mt?.languages?.[0]?.code ?? "");
+      if (!name || !language) continue;
+
+      const category = mt?.category ? String(mt.category) : null;
+      const status = mapStatus(mt?.status);
+
+      const { header_type, header_text } = pickHeader(mt);
+      const body = pickComponentText(mt, "BODY");
+      const footer = pickComponentText(mt, "FOOTER");
+
+      const headerVars = header_type === "TEXT" ? extractVariableIndices(header_text) : [];
+      const bodyVars = extractVariableIndices(body);
+      // Find local row to update (if exists)
+      let local = null as any;
+      if (metaId && localsByMetaId.has(metaId)) local = localsByMetaId.get(metaId);
+      if (!local) {
+        const key = `${name}::${language}`;
+        if (localsByNameLang.has(key)) local = localsByNameLang.get(key);
+      }
+
+      if (local) matched++;
+
+      const patch: any = {
+        organization_id,
+        name,
+        language,
+        category,
+        status,
+        meta_template_id: metaId,
+        header_type,
+        header_text,
+        body,
+        footer,
+
+        header_variable_count: headerVars.length,
+        header_variable_indices: headerVars.length > 0 ? headerVars : null,
+        body_variable_count: bodyVars.length,
+        body_variable_indices: bodyVars.length > 0 ? bodyVars : null,
+        updated_at: new Date().toISOString(),
+      };
+
+      // If we have an existing local row, include its id so the upsert updates it.
+      if (local?.id) patch.id = local.id;
+      upserts.push(patch);
+    }
+ 
 
     /* =========================================================
-       5️⃣ APPLY UPDATES
+       5️⃣ APPLY UPSERTS
     ========================================================= */
-    for (const row of updates) {
+
+     // Upsert in small batches to avoid payload limits
+   const BATCH = 50;
+    for (let i = 0; i < upserts.length; i += BATCH) {
+      const batch = upserts.slice(i, i + BATCH);
       const { error } = await supabase
         .from("whatsapp_templates")
-        .update({
-          status: row.status,
-          meta_template_id: row.meta_template_id,
-          updated_at: row.updated_at,
-        })
-        .eq("id", row.id);
+        // requires a unique constraint for conflict target if you want true "id-less" upserts.
+        // We include `id` when known, otherwise insert happens normally.
+        .upsert(batch, { onConflict: "id" });
 
       if (error) {
-        return jsonResponse(500, {
-          error: "DB update failed",
-          db: error,
-        });
+        return jsonResponse(500, { error: "DB upsert failed", db: error });
       }
     }
+
+    // derive inserted/updated roughly
+    // (exact counts would require comparing prior state; keep it simple)
+    inserted = Math.max(0, upserts.length - matched);
+    updated = Math.min(upserts.length, matched);
 
     return jsonResponse(200, {
       success: true,
       meta_count: metaTemplates.length,
       local_count: locals?.length ?? 0,
       matched,
-      updated: updates.length,
+      inserted,
+      updated,
     });
   } catch (e) {
     return jsonResponse(500, {

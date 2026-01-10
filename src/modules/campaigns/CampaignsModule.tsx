@@ -17,11 +17,7 @@ import { useCampaignStore } from "../../state/useCampaignStore";
 import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { supabase } from "../../lib/supabaseClient";
-import {
-  importTableFile,
-  detectPhoneKey,
-  normalizePhoneToE164India,
-} from "../../lib/importTableFile";
+import { parseUploadFile } from "../../lib/uploadParse";
 
 /* ========================================================================
    TYPES
@@ -31,7 +27,6 @@ type ParsedCsvRow = {
   row: Record<string, string>; // full uploaded row
 };
 
-
 type BuilderState = {
   name: string;
   description: string;
@@ -40,6 +35,9 @@ type BuilderState = {
 };
 
 type Mode = "view" | "create";
+
+type CampaignType = "marketing" | "utility" | "psf";
+
 
 function safeFileNameFromUrl(url: string | null) {
   if (!url) return null;
@@ -52,19 +50,6 @@ function safeFileNameFromUrl(url: string | null) {
     return null;
   }
 }
-
-/* ========================================================================
-   CSV HELPERS
-========================================================================= */
-function parseSimpleCsv(raw: string) {
-  const rows = raw
-    .trim()
-    .split("\n")
-    .map((r) => r.split(","));
-  const headers = (rows[0] || []).map((h) => String(h ?? "").trim());
-  return { headers, rows: rows.slice(1) };
-}
-
 
 /* ========================================================================
    TEMPLATE PREVIEW
@@ -143,18 +128,21 @@ export function CampaignsModule() {
 
   const [csvText, setCsvText] = useState("");
   const [parsedRows, setParsedRows] = useState<ParsedCsvRow[]>([]);
-  const [csvErrors, setCsvErrors] = useState<string[]>([]);
 
   // ✅ Phase B: File-based import (CSV / Excel)
-const [importedRows, setImportedRows] =
-useState<Record<string, string>[] | null>(null);
-const [importError, setImportError] = useState<string | null>(null);
+  const [importedRows, setImportedRows] = useState<
+    Record<string, string>[] | null
+  >(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
-// ================================
-// Phase C: Variable Mapping
-// ================================
-const [variableMap, setVariableMap] = useState<Record<string, string>>({});
+  const [campaignType, setCampaignType] =
+  useState<CampaignType>("marketing");
 
+
+  // ================================
+  // Phase C: Variable Mapping
+  // ================================
+  const [variableMap, setVariableMap] = useState<Record<string, string>>({});
 
   const [testPhone, setTestPhone] = useState("");
   const [busy, setBusy] = useState(false);
@@ -162,48 +150,23 @@ const [variableMap, setVariableMap] = useState<Record<string, string>>({});
 
   async function onImportContactsFile(file: File) {
     setImportError(null);
-    setCsvErrors([]);
     setParsedRows([]);
     setCsvText("");
-  
+
     try {
-      const { rows, headers } = await importTableFile(file);
-  
-      if (!rows.length) {
-        throw new Error("No rows found in file");
-      }
-  
-      const phoneKey = detectPhoneKey(headers);
-      if (!phoneKey) {
-        throw new Error(
-          "No phone/mobile column found. Please include phone/mobile/mobile no."
-        );
-      }
-  
-      const mapped: ParsedCsvRow[] = [];
-  
-      for (const r of rows) {
-        const rawPhone = String(r[phoneKey] ?? "").trim();
-        const phone = normalizePhoneToE164India(rawPhone);
-        if (!phone) continue;
-  
-        mapped.push({
-          phone,
-          row: r,
-        });        
-      }
-  
-      if (!mapped.length) {
-        throw new Error("No valid phone numbers found");
-      }
-  
-      setImportedRows(rows);
+      const { rows } = await parseUploadFile(file);
+
+      const mapped: ParsedCsvRow[] = rows.map((r) => ({
+        phone: r.phone,
+        row: r.raw_row,
+      }));
+
+      setImportedRows(rows.map((r) => r.raw_row));
       setParsedRows(mapped);
     } catch (e: any) {
       setImportError(e.message ?? "Failed to import file");
     }
-  }  
-
+  }
 
   /* ==========================================================
      ✅ NEW: SEND NOW / SEND LATER
@@ -247,7 +210,6 @@ const [variableMap, setVariableMap] = useState<Record<string, string>>({});
     fetchApprovedTemplates();
   }, [activeOrganization?.id]);
 
-
   useEffect(() => {
     if (selectedCampaignId && !messages[selectedCampaignId]) {
       fetchCampaignMessages(selectedCampaignId);
@@ -260,15 +222,14 @@ const [variableMap, setVariableMap] = useState<Record<string, string>>({});
   );
 
   // ================================
-// Phase C: Available columns from uploaded data
-// ================================
-const availableColumns = useMemo(() => {
-  if (!parsedRows.length) return [];
-  return Object.keys(parsedRows[0].row).filter(
-    (k) => k && k.toLowerCase() !== "phone"
-  );  
-}, [parsedRows]);
-
+  // Phase C: Available columns from uploaded data
+  // ================================
+  const availableColumns = useMemo(() => {
+    if (!parsedRows.length) return [];
+    return Object.keys(parsedRows[0].row).filter(
+      (k) => k && k.toLowerCase() !== "phone"
+    );
+  }, [parsedRows]);
 
   // Reset media UI cleanly when template changes
   useEffect(() => {
@@ -286,54 +247,6 @@ const availableColumns = useMemo(() => {
   );
 
   /* --------------------------------------------------------------------
-     CSV PARSE
-  -------------------------------------------------------------------- */
-  useEffect(() => {
-    // If file import is active, skip CSV textarea parsing
-    if (importedRows) {
-      setCsvErrors([]);
-      return;
-    }
-  
-    if (!csvText.trim()) {
-      setParsedRows([]);
-      setCsvErrors([]);
-      return;
-    }
-  
-    const { headers, rows } = parseSimpleCsv(csvText);
-    const errors: string[] = [];
-  
-    if (!headers.includes("phone")) {
-      errors.push("CSV must include phone column");
-    }
-  
-    const mapped: ParsedCsvRow[] = [];
-
-for (const cols of rows) {
-  const phoneIndex = headers.indexOf("phone");
-  const rawPhone = String(cols[phoneIndex] ?? "").trim();
-  const phone = normalizePhoneToE164India(rawPhone);
-  if (!phone) continue;
-
-  const row: Record<string, string> = {};
-  headers.forEach((h, i) => {
-    row[h] = String(cols[i] ?? "").trim();
-  });
-
-  mapped.push({ phone, row });
-}
-
-
-    if (!mapped.length) {
-      errors.push("No valid rows");
-    }
-  
-    setParsedRows(mapped);
-    setCsvErrors(errors);
-  }, [csvText, importedRows, selectedTemplate?.body]);
-  
-  /* --------------------------------------------------------------------
      DERIVED
   -------------------------------------------------------------------- */
   const selectedCampaign = useMemo(
@@ -345,35 +258,29 @@ for (const cols of rows) {
     selectedTemplate?.header_type === "IMAGE" ||
     selectedTemplate?.header_type === "DOCUMENT";
 
-    // ================================
-// Phase C: Required template variables
-// ================================
-const requiredBodyVars =
-selectedTemplate?.body_variable_indices ?? [];
+  // ================================
+  // Phase C: Required template variables
+  // ================================
+  const requiredBodyVars = selectedTemplate?.body_variable_indices ?? [];
 
-const requiredHeaderVars =
-selectedTemplate?.header_variable_indices ?? [];
-
+  const requiredHeaderVars = selectedTemplate?.header_variable_indices ?? [];
 
   const previewBody =
     mode === "create"
       ? renderTemplatePreview(
-        selectedTemplate?.body ?? "",
-        (() => {
-          const row = parsedRows[0]?.row;
-          if (!row) return {};
-          const out: Record<string, string> = {};
-Object.keys(variableMap)
-  .sort((a, b) => Number(a) - Number(b))
-  .forEach((k) => {
-    out[k] = row[variableMap[k]] ?? "";
-  });
-return out;
-
-        })()
-        
-      )
-      
+          selectedTemplate?.body ?? "",
+          (() => {
+            const row = parsedRows[0]?.row;
+            if (!row) return {};
+            const out: Record<string, string> = {};
+            Object.keys(variableMap)
+              .sort((a, b) => Number(a) - Number(b))
+              .forEach((k) => {
+                out[k] = row[variableMap[k]] ?? "";
+              });
+            return out;
+          })()
+        )
       : selectedCampaign?.template_body ?? "";
 
   const selectedMsgs = selectedCampaign
@@ -415,16 +322,21 @@ return out;
   -------------------------------------------------------------------- */
   function openCreate() {
     setMode("create");
-    setBuilder({ name: "", description: "", whatsapp_template_id: "", reply_sheet_tab: "" });
+    setBuilder({
+      name: "",
+      description: "",
+      whatsapp_template_id: "",
+      reply_sheet_tab: "",
+    });
     setCsvText("");
     setParsedRows([]);
-    setCsvErrors([]);
     setTestPhone("");
     setVariableMap({});
 
     // ✅ NEW: reset scheduling UI
     setSendMode("now");
     setScheduledAtLocal("");
+    setCampaignType("marketing");
   }
 
   function closeCreate() {
@@ -445,28 +357,20 @@ return out;
     if (!builder.reply_sheet_tab.trim()) {
       alert("Reply Sheet Tab is required (e.g. Sales, Service, PSF)");
       return null;
-      }
+    }
 
-      if (parsedRows.length === 0) {
-        alert("Please upload contacts or enter CSV data");
+    if (parsedRows.length === 0) {
+      alert("Please upload contacts or enter CSV data");
+      return null;
+    }
+
+    // Phase C: Variable mapping validation
+    for (const idx of [...requiredHeaderVars, ...requiredBodyVars]) {
+      if (!variableMap[idx]) {
+        alert(`Please map variable {{${idx}}}`);
         return null;
       }
-      
-      if (csvErrors.length > 0) {
-        alert("Fix CSV errors before saving");
-        return null;
-      }
-
-      // Phase C: Variable mapping validation
-      for (const idx of [...requiredHeaderVars, ...requiredBodyVars]) {
-        if (!variableMap[idx]) {
-          alert(`Please map variable {{${idx}}}`);
-          return null;
-        }
-      }
-      
-
-      
+    }
 
     if (needsMedia && !mediaUrl) {
       alert("This template requires media. Please upload before continuing.");
@@ -479,6 +383,11 @@ return out;
       return null;
     }
 
+    if (campaignType === "psf" && !builder.reply_sheet_tab) {
+      alert("PSF campaigns must have a reply sheet tab");
+      return null;
+    }
+    
     setBusy(true);
     try {
       const id = await createCampaignWithMessages({
@@ -489,10 +398,10 @@ return out;
         reply_sheet_tab: builder.reply_sheet_tab.trim(),
         scheduledAt: scheduledAtIsoOrNull(),
         rows: parsedRows,
-        variable_map: variableMap, // ✅ Phase C
+        variable_map: variableMap,
+        campaign_type: campaignType, 
       });
       
-
       setSelectedCampaignId(id);
       setMode("view");
 
@@ -531,7 +440,9 @@ return out;
 
         await fetchCampaigns(activeOrganization!.id);
         await fetchCampaignMessages(id);
-        alert("✅ Campaign scheduled for later (dispatch will pick it at time)");
+        alert(
+          "✅ Campaign scheduled for later (dispatch will pick it at time)"
+        );
         return;
       }
 
@@ -784,23 +695,47 @@ return out;
               }
             />
 
-<div className="space-y-1">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-700">
+                Reply Sheet Tab (Google Sheets)
+              </label>
+              <input
+                value={builder.reply_sheet_tab}
+                onChange={(e) =>
+                  setBuilder((b) => ({ ...b, reply_sheet_tab: e.target.value }))
+                }
+                placeholder="e.g. Sales / Service / PSF"
+                className="w-full rounded-md border px-3 py-2 text-sm"
+                disabled={busy}
+              />
+              <div className="text-[11px] text-slate-500">
+                Replies for this campaign will be logged into this tab.
+              </div>
+            </div>
+
+            <div className="space-y-1">
   <label className="text-xs font-medium text-slate-700">
-    Reply Sheet Tab (Google Sheets)
+    Campaign Type
   </label>
-  <input
-    value={builder.reply_sheet_tab}
+
+  <select
+    value={campaignType}
     onChange={(e) =>
-      setBuilder((b) => ({ ...b, reply_sheet_tab: e.target.value }))
+      setCampaignType(e.target.value as CampaignType)
     }
-    placeholder="e.g. Sales / Service / PSF"
     className="w-full rounded-md border px-3 py-2 text-sm"
     disabled={busy}
-  />
+  >
+    <option value="marketing">Marketing</option>
+    <option value="utility">Utility (Service)</option>
+    <option value="psf">PSF (Post-Service Feedback)</option>
+  </select>
+
   <div className="text-[11px] text-slate-500">
-    Replies for this campaign will be logged into this tab.
+    PSF campaigns automatically create feedback cases and inbox entries.
   </div>
 </div>
+
 
             <select
               className="w-full border rounded-md px-3 py-2 text-sm"
@@ -826,45 +761,45 @@ return out;
             {/* =========================
     Phase C: Variable Mapping
 ========================== */}
-{(requiredBodyVars.length > 0 || requiredHeaderVars.length > 0) &&
- parsedRows.length > 0 && (
-  <div className="rounded-md border bg-white p-3 space-y-2">
-    <div className="text-sm font-semibold text-slate-900">
-      Template Variables
-    </div>
+            {(requiredBodyVars.length > 0 || requiredHeaderVars.length > 0) &&
+              parsedRows.length > 0 && (
+                <div className="rounded-md border bg-white p-3 space-y-2">
+                  <div className="text-sm font-semibold text-slate-900">
+                    Template Variables
+                  </div>
 
-    {requiredBodyVars.map((idx) => (
-      <div key={idx} className="flex items-center gap-2">
-        <div className="w-16 text-xs font-mono">
-          {"{{" + idx + "}}"}
-        </div>
+                  {requiredBodyVars.map((idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <div className="w-16 text-xs font-mono">
+                        {"{{" + idx + "}}"}
+                      </div>
 
-        <select
-          className="flex-1 rounded-md border px-2 py-1 text-sm"
-          value={variableMap[idx] ?? ""}
-          onChange={(e) =>
-            setVariableMap((m) => ({
-              ...m,
-              [idx]: e.target.value,
-            }))
-          }
-        >
-          <option value="">Select column</option>
-          {availableColumns.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      </div>
-    ))}
+                      <select
+                        className="flex-1 rounded-md border px-2 py-1 text-sm"
+                        value={variableMap[idx] ?? ""}
+                        onChange={(e) =>
+                          setVariableMap((m) => ({
+                            ...m,
+                            [idx]: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Select column</option>
+                        {availableColumns.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
 
-    <div className="text-[11px] text-slate-500">
-      Map each WhatsApp variable to a column from your uploaded file.
-    </div>
-  </div>
-)}
-
+                  <div className="text-[11px] text-slate-500">
+                    Map each WhatsApp variable to a column from your uploaded
+                    file.
+                  </div>
+                </div>
+              )}
 
             {/* ==========================================================
                 ✅ NEW: SCHEDULING (Send now / later)
@@ -908,7 +843,8 @@ return out;
               {sendMode === "later" && (
                 <div className="space-y-1">
                   <div className="text-xs text-slate-600">
-                    Select date & time (local). Dispatch will pick it when scheduled time arrives.
+                    Select date & time (local). Dispatch will pick it when
+                    scheduled time arrives.
                   </div>
                   <input
                     type="datetime-local"
@@ -1014,7 +950,9 @@ return out;
                         <FileText size={14} />
                       )}
                       Attach Media (
-                      {selectedTemplate.header_type === "IMAGE" ? "Image" : "PDF"}
+                      {selectedTemplate.header_type === "IMAGE"
+                        ? "Image"
+                        : "PDF"}
                       )
                     </button>
                   </div>
@@ -1053,62 +991,84 @@ return out;
             {/* =========================
     Phase B: Upload CSV / Excel
 ========================== */}
-<div className="space-y-2">
-  <label className="text-xs font-medium text-slate-700">
-    Upload Contacts (CSV / Excel)
-  </label>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-700">
+                Upload Contacts (CSV / Excel)
+              </label>
 
-  <input
-    type="file"
-    accept=".csv,.xlsx,.xls"
-    disabled={busy}
-    onChange={(e) => {
-      const file = e.target.files?.[0];
-      if (file) void onImportContactsFile(file);
-      e.currentTarget.value = "";
-    }}
-  />
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void onImportContactsFile(file);
+                  e.currentTarget.value = "";
+                }}
+              />
 
-  {importError && (
-    <div className="text-xs text-red-600">{importError}</div>
-  )}
+              {importError && (
+                <div className="text-xs text-red-600">{importError}</div>
+              )}
 
-  {importedRows && (
-    <div className="text-xs text-green-700">
-      ✅ Imported {parsedRows.length} contacts from file
-    </div>
-  )}
+              {importedRows && (
+                <div className="text-xs text-green-700">
+                  ✅ Imported {parsedRows.length} contacts from file
+                </div>
+              )}
 
-  <div className="text-[11px] text-slate-500">
-    Phone column can be named phone / mobile / mobile no / whatsapp.  
-    Numbers without country code will default to +91.
-  </div>
-</div>
+              {parsedRows.length > 0 && (
+                <div className="overflow-auto border rounded-md mt-2">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-2 py-1 text-left">Phone</th>
+                        {Object.keys(parsedRows[0].row)
+                          .slice(0, 4)
+                          .map((k) => (
+                            <th key={k} className="px-2 py-1 text-left">
+                              {k}
+                            </th>
+                          ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parsedRows.slice(0, 10).map((r, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="px-2 py-1 font-mono">{r.phone}</td>
+                          {Object.keys(r.row)
+                            .slice(0, 4)
+                            .map((k) => (
+                              <td key={k} className="px-2 py-1">
+                                {r.row[k]}
+                              </td>
+                            ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="text-[11px] text-slate-500 p-2">
+                    Showing first 10 rows
+                  </div>
+                </div>
+              )}
 
-{/* =========================
+              <div className="text-[11px] text-slate-500">
+                Phone column can be named phone / mobile / mobile no / whatsapp.
+                Numbers without country code will default to +91.
+              </div>
+            </div>
+
+            {/* =========================
     Manual CSV (fallback)
 ========================== */}
-<textarea
-  className="w-full border rounded-md px-3 py-2 text-xs font-mono"
-  rows={6}
-  placeholder={`phone,name,model\n919999888877,Ritesh,Nexon`}
-  value={csvText}
-  onChange={(e) => {
-    setImportedRows(null);
-    setCsvText(e.target.value);
-  }}
-  disabled={busy || !!importedRows}
-/>
-
-
-            {csvErrors.length > 0 && (
-              <div className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-                {csvErrors.map((e) => (
-                  <div key={e}>❌ {e}</div>
-                ))}
-              </div>
-            )}
-
+            <textarea
+              className="w-full border rounded-md px-3 py-2 text-xs font-mono"
+              rows={6}
+              placeholder={`phone,name,model\n919999888877,Ritesh,Nexon`}
+              value={csvText}
+              disabled
+            />
             <input
               className="w-full border rounded-md px-3 py-2 text-sm"
               placeholder="Test phone (91XXXXXXXXXX)"
