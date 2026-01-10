@@ -22,14 +22,14 @@ function jsonResponse(status: number, payload: any) {
 }
 
 /* ------------------------------------------------------------------
-   VARIABLE HELPERS
+   HELPERS
 ------------------------------------------------------------------ */
 function extractVariableIndices(text: string | null): number[] {
   if (!text) return [];
   const matches = [...text.matchAll(/\{\{(\d+)\}\}/g)];
-  return Array.from(
-    new Set(matches.map((m) => Number(m[1]))),
-  ).sort((a, b) => a - b);
+  return Array.from(new Set(matches.map((m) => Number(m[1])))).sort(
+    (a, b) => a - b,
+  );
 }
 
 function pickComponentText(mt: any, type: string): string | null {
@@ -60,20 +60,16 @@ function pickHeader(mt: any): {
   return { header_type, header_text };
 }
 
-/* ------------------------------------------------------------------
-   STATUS MAP
------------------------------------------------------------------- */
 function mapStatus(metaStatus: string | null | undefined) {
   const s = String(metaStatus ?? "").toUpperCase();
   if (s === "APPROVED") return "approved";
   if (s === "REJECTED") return "rejected";
   if (s === "PAUSED") return "approved";
-  if (s === "PENDING") return "pending";
   return "pending";
 }
 
 /* ------------------------------------------------------------------
-   META FETCH (PAGINATED)
+   META FETCH
 ------------------------------------------------------------------ */
 async function fetchAllMetaTemplates({
   wabaId,
@@ -91,9 +87,7 @@ async function fetchAllMetaTemplates({
     const json = await res.json().catch(() => null);
 
     if (!res.ok) {
-      const err: any = new Error("Meta fetch failed");
-      err.meta = json;
-      throw err;
+      throw new Error(`Meta fetch failed: ${JSON.stringify(json)}`);
     }
 
     if (Array.isArray(json?.data)) {
@@ -134,7 +128,7 @@ serve(async (req) => {
     });
 
     const body = await req.json().catch(() => ({}));
-    const organization_id = body?.organization_id as string | undefined;
+    const organization_id = body?.organization_id as string;
 
     if (!organization_id) {
       return jsonResponse(400, { error: "organization_id required" });
@@ -179,16 +173,14 @@ serve(async (req) => {
       if (lt.meta_template_id) {
         localsByMetaId.set(String(lt.meta_template_id), lt);
       }
-      if (lt.name && lt.language) {
-        localsByNameLang.set(`${lt.name}::${lt.language}`, lt);
-      }
+      localsByNameLang.set(`${lt.name}::${lt.language}`, lt);
     }
 
     /* ---------------------------------------------------------
-       Build UPSERT payloads
+       BUILD INSERTS / UPDATES SEPARATELY (CRITICAL)
     --------------------------------------------------------- */
-    const upserts: any[] = [];
-    let matched = 0;
+    const inserts: any[] = [];
+    const updates: any[] = [];
 
     for (const mt of metaTemplates) {
       const metaId = mt?.id ? String(mt.id) : null;
@@ -198,10 +190,10 @@ serve(async (req) => {
       if (!name || !language) continue;
 
       const category = mt?.category
-  ? String(mt.category).toLowerCase()
-  : null;
-      const status = mapStatus(mt?.status);
+        ? String(mt.category).toLowerCase()
+        : null;
 
+      const status = mapStatus(mt?.status);
       const { header_type, header_text } = pickHeader(mt);
       const bodyText = pickComponentText(mt, "BODY") ?? "";
       const footer = pickComponentText(mt, "FOOTER");
@@ -212,16 +204,7 @@ serve(async (req) => {
           : [];
       const bodyVars = extractVariableIndices(bodyText);
 
-      let local = null;
-      if (metaId && localsByMetaId.has(metaId)) {
-        local = localsByMetaId.get(metaId);
-      } else if (localsByNameLang.has(`${name}::${language}`)) {
-        local = localsByNameLang.get(`${name}::${language}`);
-      }
-
-      if (local) matched++;
-
-      const patch: any = {
+      const basePatch = {
         organization_id,
         name,
         language,
@@ -238,37 +221,48 @@ serve(async (req) => {
         body_variable_indices: bodyVars.length ? bodyVars : null,
         updated_at: new Date().toISOString(),
       };
-      
+
+      const local =
+        (metaId && localsByMetaId.get(metaId)) ||
+        localsByNameLang.get(`${name}::${language}`);
+
       if (local?.id) {
-        patch.id = local.id; // 👈 ONLY add when updating
+        updates.push({ ...basePatch, id: local.id });
+      } else {
+        inserts.push(basePatch);
       }
-      
-      upserts.push(patch);      
     }
 
     /* ---------------------------------------------------------
-       UPSERT (SAFE)
+       DB WRITES
     --------------------------------------------------------- */
-    const BATCH = 50;
-    for (let i = 0; i < upserts.length; i += BATCH) {
-      const batch = upserts.slice(i, i + BATCH);
+    if (inserts.length > 0) {
       const { error } = await supabase
         .from("whatsapp_templates")
-        .upsert(batch, {
+        .insert(inserts);
+
+      if (error) {
+        return jsonResponse(500, { error: "DB insert failed", db: error });
+      }
+    }
+
+    if (updates.length > 0) {
+      const { error } = await supabase
+        .from("whatsapp_templates")
+        .upsert(updates, {
           onConflict: "organization_id,name,language",
         });
 
       if (error) {
-        return jsonResponse(500, { error: "DB upsert failed", db: error });
+        return jsonResponse(500, { error: "DB update failed", db: error });
       }
     }
 
     return jsonResponse(200, {
       success: true,
       meta_count: metaTemplates.length,
-      matched,
-      inserted: Math.max(0, upserts.length - matched),
-      updated: matched,
+      inserted: inserts.length,
+      updated: updates.length,
     });
   } catch (e) {
     return jsonResponse(500, {
