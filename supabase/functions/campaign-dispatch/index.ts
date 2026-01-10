@@ -190,17 +190,23 @@ function buildTemplateHeaderComponents(template: WhatsappTemplate) {
 ============================================================ */
 function resolveTemplateText(
   templateBody: string,
-  contact: Record<string, any> | null,
+  rawRow: Record<string, any> | null,
   mapping: Record<string, string> | null
 ) {
   let text = templateBody ?? "";
-  for (const [key, field] of Object.entries(mapping ?? {})) {
-    const v =
-      contact?.[field] ?? contact?.[String(field ?? "").toLowerCase()] ?? "";
-    text = text.replaceAll(`{{${key}}}`, String(v ?? ""));
+
+  for (const [idx, column] of Object.entries(mapping ?? {})) {
+    const value =
+      rawRow && column in rawRow
+        ? String(rawRow[column] ?? "")
+        : "";
+
+    text = text.replaceAll(`{{${idx}}}`, value);
   }
+
   return text;
 }
+
 
 /* ============================================================
    FETCH TEMPLATE

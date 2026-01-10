@@ -497,11 +497,37 @@ export function CampaignsModule() {
         return;
       }
 
-      // send now (existing behavior)
-      await launchCampaign(id);
-      await fetchCampaigns(activeOrganization!.id);
-      await fetchCampaignMessages(id);
-      alert("✅ Campaign scheduled (dispatch will pick it)");
+      // ✅ INSTANT SEND — call dispatcher directly
+const session = await supabase.auth.getSession();
+const token = session.data.session?.access_token;
+if (!token) throw new Error("Not authenticated");
+
+const res = await fetch(
+  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/campaign-dispatch`,
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      mode: "immediate",
+      campaign_id: id,
+    }),
+  }
+);
+
+const json = await res.json().catch(() => ({}));
+if (!res.ok) {
+  console.error("Immediate dispatch failed", json);
+  throw new Error(json?.error ?? "Dispatch failed");
+}
+
+await fetchCampaigns(activeOrganization!.id);
+await fetchCampaignMessages(id);
+
+alert("🚀 Campaign sent immediately");
+
     } catch (e: any) {
       console.error("[CampaignsModule] launchNow error", e);
       alert(e?.message ?? "Failed to launch campaign");
