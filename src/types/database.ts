@@ -37,6 +37,7 @@ export type Contact = {
   first_name: string | null;
   last_name: string | null;
   model: string | null;
+  metadata?: Record<string, unknown>;
 
   name: string | null;
   labels: Record<string, unknown> | null;

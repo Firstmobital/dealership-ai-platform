@@ -12,7 +12,7 @@ import {
 ========================================================= */
 type CsvRow = {
   phone: string;
-  variables: Record<string, unknown>;
+  row: Record<string, string>; // raw uploaded row
 };
 
 type CampaignState = {
@@ -31,6 +31,7 @@ type CampaignState = {
     reply_sheet_tab: string; // ✅ NEW
     scheduledAt: string | null;
     rows: CsvRow[];
+    variable_map: Record<string, string>;
   }) => Promise<string>;
 
   launchCampaign: (
@@ -118,6 +119,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     reply_sheet_tab, // ✅ NEW
     scheduledAt,
     rows,
+    variable_map,
   }) => {
     const status: Campaign["status"] = scheduledAt
       ? "scheduled"
@@ -130,6 +132,21 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         phone: String(r.phone ?? "").trim(),
       }))
       .filter((r) => r.phone.length >= 8);
+
+      const mappedRows = cleanedRows.map((r) => {
+        const variables: Record<string, unknown> = {};
+      
+        Object.keys(variable_map).forEach((idx) => {
+          const columnName = variable_map[idx];
+          variables[idx] = r.row?.[columnName] ?? "";
+        });
+      
+        return {
+          phone: r.phone,
+          variables,
+        };
+      });
+      
 
     if (!cleanedRows.length) {
       throw new Error("CSV has no valid phone rows.");
@@ -172,7 +189,7 @@ const schema = {
   body_variable_indices: template.body_variable_indices,
 };
 
-for (const row of cleanedRows) {
+for (const row of mappedRows) {
   const result = validateTemplateVariables(
     row.variables as any,
     schema
@@ -207,6 +224,8 @@ for (const row of cleanedRows) {
           scheduled_at: scheduledAt,
 
           reply_sheet_tab: reply_sheet_tab || null, // ✅ STORED HERE
+          variable_mapping: variable_map,
+
 
           total_recipients: cleanedRows.length,
           sent_count: 0,
@@ -226,13 +245,13 @@ for (const row of cleanedRows) {
     const campaignId = campaignData.id as string;
 
     /* 3️⃣ Insert campaign messages */
-    const messagesPayload = cleanedRows.map((row) => ({
+    const messagesPayload = mappedRows.map((row) => ({
       organization_id: organizationId,
       campaign_id: campaignId,
       phone: row.phone,
-      variables: row.variables ?? {},
+      variables: row.variables,
       status: "pending",
-    }));
+    }));    
 
     const { error: msgErr } = await supabase
       .from("campaign_messages")

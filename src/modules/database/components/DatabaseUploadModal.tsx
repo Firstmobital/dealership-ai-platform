@@ -1,29 +1,19 @@
 import { useState } from "react";
-import Papa, { ParseResult } from "papaparse";
 import { supabase } from "../../../lib/supabaseClient";
 import { useOrganizationStore } from "../../../state/useOrganizationStore";
+import {
+  detectPhoneKey,
+  importTableFile,
+  normalizePhoneToE164India,
+} from "../../../lib/importTableFile";
 
-/* -------------------------------------------------------------------------- */
-/* PROPS                                                                      */
-/* -------------------------------------------------------------------------- */
 type Props = {
   onClose: () => void;
   onSuccess: () => void;
 };
 
-/* -------------------------------------------------------------------------- */
-/* CSV ROW TYPE                                                               */
-/* -------------------------------------------------------------------------- */
-type UploadRow = {
-  phone: string;
-  first_name?: string;
-  last_name?: string;
-  model?: string;
-};
+type UploadRow = Record<string, string>;
 
-/* -------------------------------------------------------------------------- */
-/* COMPONENT                                                                  */
-/* -------------------------------------------------------------------------- */
 export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
   const { activeOrganization } = useOrganizationStore();
 
@@ -34,78 +24,89 @@ export function DatabaseUploadModal({ onClose, onSuccess }: Props) {
     setError(null);
     setLoading(true);
 
-    Papa.parse<UploadRow>(file, {
-      header: true,
-      skipEmptyLines: true,
+    try {
+      if (!activeOrganization?.id) throw new Error("Organization not found");
 
-      complete: async (result: ParseResult<UploadRow>) => {
-        try {
-          if (!activeOrganization?.id) {
-            throw new Error("Organization not found");
-          }
+      const { rows: rawRows, headers } = await importTableFile(file);
+      if (!rawRows.length) throw new Error("No rows found");
 
-          const rows = result.data
-            .filter((r): r is UploadRow => !!r.phone)
-            .map((r) => ({
-              phone: r.phone.trim(),
-              first_name: r.first_name?.trim() || null,
-              last_name: r.last_name?.trim() || null,
-              model: r.model?.trim() || null,
-              organization_id: activeOrganization.id,
-            }));
+      const phoneKey = detectPhoneKey(headers);
+      if (!phoneKey) {
+        throw new Error(
+          "No phone/mobile column found. Please include a phone number column (e.g. phone, mobile, mobile no).",
+        );
+      }
 
-          if (rows.length === 0) {
-            throw new Error("No valid rows found");
-          }
+      const upsertRows = rawRows
+        .map((r: UploadRow) => {
+          const rawPhone = String(r[phoneKey] ?? "").trim();
+          const phone = normalizePhoneToE164India(rawPhone);
+          if (!phone) return null;
 
-          const { error } = await supabase
-            .from("contacts")
-            .upsert(rows, { onConflict: "organization_id,phone" });
+          const first_name =
+            (r["first_name"] ?? r["firstname"] ?? r["first name"] ?? "").trim() ||
+            null;
 
-          if (error) throw error;
+          const last_name =
+            (r["last_name"] ?? r["lastname"] ?? r["last name"] ?? "").trim() ||
+            null;
 
-          onSuccess();
-          onClose();
-        } catch (err) {
-          const message =
-            err instanceof Error
-              ? err.message
-              : "Upload failed";
-          setError(message);
-        } finally {
-          setLoading(false);
-        }
-      },
-    });
+          const model =
+            (r["model"] ?? r["vehicle_model"] ?? r["vehicle model"] ?? "").trim() ||
+            null;
+
+          const name = (r["name"] ?? "").trim() || null;
+
+          const metadata: Record<string, string> = { ...r };
+
+          return {
+            organization_id: activeOrganization.id,
+            phone,
+            name,
+            first_name,
+            last_name,
+            model,
+            metadata,
+          };
+        })
+        .filter(Boolean) as any[];
+
+      if (!upsertRows.length) throw new Error("No valid phone numbers found");
+
+      const { error } = await supabase
+        .from("contacts")
+        .upsert(upsertRows, { onConflict: "organization_id,phone" });
+
+      if (error) throw error;
+
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="w-[420px] rounded-lg bg-white p-6">
-        <h2 className="mb-2 text-lg font-semibold">
-          Upload Contacts
-        </h2>
+        <h2 className="mb-2 text-lg font-semibold">Upload Contacts</h2>
 
         <p className="mb-4 text-sm text-slate-500">
-          CSV format only. Required column: <b>phone</b>
+          Upload CSV or Excel. Phone column can be named phone/mobile/mobile no.
         </p>
 
         <input
           type="file"
-          accept=".csv"
+          accept=".csv,.xlsx,.xls"
           disabled={loading}
           onChange={(e) => {
-            if (e.target.files?.[0]) {
-              handleFile(e.target.files[0]);
-            }
+            if (e.target.files?.[0]) void handleFile(e.target.files[0]);
           }}
         />
 
-        {error && (
-          <p className="mt-3 text-sm text-red-600">
-            {error}
-          </p>
-        )}
+        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
         <div className="mt-6 flex justify-end gap-2">
           <button

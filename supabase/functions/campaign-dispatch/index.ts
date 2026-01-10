@@ -1,10 +1,7 @@
 // supabase/functions/campaign-dispatch/index.ts
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import {
-  buildWhatsappComponents,
-  validateTemplateVariables,
-} from "../_shared/templateVariables.ts";
+
 
 
 /* ============================================================
@@ -124,6 +121,24 @@ function waToFromE164(phonePlus: string) {
   // "+91XXXXXXXXXX" -> "91XXXXXXXXXX"
   return phonePlus.replace(/^\+/, "");
 }
+
+/* ============================================================
+   Phase C — Build WhatsApp Variables from Mapping
+============================================================ */
+function buildVariablesFromMapping(params: {
+  row: Record<string, any>;
+  mapping: Record<string, string> | null;
+}): string[] {
+  if (!params.mapping) return [];
+
+  return Object.keys(params.mapping)
+    .sort((a, b) => Number(a) - Number(b))
+    .map((k) => {
+      const field = params.mapping![k];
+      return String(params.row?.[field] ?? "");
+    });
+}
+
 
 
 /* ============================================================
@@ -635,21 +650,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         organizationId: msg.organization_id,
         msg,
       });
-
-      const validation = validateTemplateVariables(
-        msg.variables as any,
-        schema
-      );
       
-      if (!validation.ok) {
-        await markFailed(
-          msg.id,
-          `VARIABLE_MISMATCH: ${validation.error}`
-        );
-        continue;
-      }
-      
-
       const phonePlus = toE164Plus(phoneDigits);
       if (!phonePlus) {
         await markFailed(msg.id, "Invalid phone");
@@ -685,11 +686,11 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
           : headerType === "DOCUMENT"
           ? "document"
           : "template";
-
-          const components = buildWhatsappComponents(
-            msg.variables as any,
-            schema
-          );
+                
+          const variables = buildVariablesFromMapping({
+            row: msg.variables as any,
+            mapping: campaign.variable_mapping,
+          });
           
           const waId = await sendWhatsappTemplate({
             organizationId: msg.organization_id,
@@ -698,23 +699,19 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
             templateName: template.name,
             language: template.language,
           
-            // ✅ BODY VARIABLES (ORDERED BY SCHEMA)
-            variables: [],
+            variables,
           
             renderedText,
             reply_sheet_tab: campaign.reply_sheet_tab,
           
-            // ✅ HEADER + BODY COMPONENTS
             templateComponents: [
               ...buildTemplateHeaderComponents(template),
-              ...components,
             ],
           
             mediaUrl: template.header_media_url,
             mimeType: template.header_media_mime,
             messageType,
-          });
-          
+          });          
 
       // keep your current behavior
       await markSent(msg.id, waId);
@@ -856,19 +853,6 @@ serve(async (req: Request) => {
               msg,
             });
 
-            const validation = validateTemplateVariables(
-              msg.variables as any,
-              schema
-            );
-            
-            if (!validation.ok) {
-              await markFailed(
-                msg.id,
-                `VARIABLE_MISMATCH: ${validation.error}`
-              );
-              continue;
-            }
-            
 
           const phonePlus = toE164Plus(phoneDigits);
           if (!phonePlus) {
@@ -909,11 +893,11 @@ serve(async (req: Request) => {
               : headerType === "DOCUMENT"
               ? "document"
               : "template";
-
-              const components = buildWhatsappComponents(
-                msg.variables as any,
-                schema
-              );
+              
+              const variables = buildVariablesFromMapping({
+                row: msg.variables as any,
+                mapping: campaign.variable_mapping,
+              });
               
               const waId = await sendWhatsappTemplate({
                 organizationId: msg.organization_id,
@@ -922,22 +906,19 @@ serve(async (req: Request) => {
                 templateName: template.name,
                 language: template.language,
               
-                variables: [],
+                variables,
               
                 renderedText,
                 reply_sheet_tab: campaign.reply_sheet_tab,
               
-                // ✅ HEADER + BODY COMPONENTS
                 templateComponents: [
                   ...buildTemplateHeaderComponents(template),
-                  ...components,
                 ],
               
                 mediaUrl: template.header_media_url,
                 mimeType: template.header_media_mime,
                 messageType,
-              });
-              
+              });              
 
           await markSent(msg.id, waId);
 
