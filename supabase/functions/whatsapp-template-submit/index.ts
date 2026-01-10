@@ -4,6 +4,32 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /* =====================================================================================
+   Helpers
+   - Meta requires examples for any component that contains variables.
+   - Template name must be lowercase with underscores.
+===================================================================================== */
+function extractVariableIndices(text: string | null): number[] {
+  if (!text) return [];
+  const matches = [...text.matchAll(/\{\{(\d+)\}\}/g)];
+  return Array.from(new Set(matches.map((m) => Number(m[1])))).sort(
+    (a, b) => a - b,
+  );
+}
+
+function sanitizeTemplateName(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_");
+}
+
+function buildExampleValues(indices: number[]): string[] {
+  return indices.map((i) => `Test${i}`);
+}
+
+/* =====================================================================================
    CORS
 ===================================================================================== */
 const corsHeaders = {
@@ -98,17 +124,27 @@ serve(async (req) => {
     const components: any[] = [];
 
     if (template.header_type === "TEXT" && template.header_text) {
+      const headerVars = extractVariableIndices(template.header_text);
       components.push({
         type: "HEADER",
         format: "TEXT",
         text: template.header_text,
+        ...(headerVars.length
+          ? { example: { header_text: buildExampleValues(headerVars) } }
+          : {}),
       });
     }
 
-    components.push({
-      type: "BODY",
-      text: template.body,
-    });
+    {
+      const bodyVars = extractVariableIndices(template.body ?? null);
+      components.push({
+        type: "BODY",
+        text: template.body,
+        ...(bodyVars.length
+          ? { example: { body_text: [buildExampleValues(bodyVars)] } }
+          : {}),
+      });
+    }
 
     if (template.footer) {
       components.push({
@@ -118,7 +154,7 @@ serve(async (req) => {
     }
 
     const payload = {
-      name: template.name.toLowerCase().replace(/[^a-z0-9_]/g, "_"),
+      name: sanitizeTemplateName(template.name),
       category: template.category,
       language: template.language,
       components,

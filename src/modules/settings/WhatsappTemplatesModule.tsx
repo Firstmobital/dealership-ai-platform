@@ -35,6 +35,17 @@ function extractVariableIndices(text: string | null): number[] {
   return Array.from(new Set(indices)).sort((a, b) => a - b);
 }
 
+function sanitizeTemplateName(input: string): string {
+  // Meta template naming rules: lowercase, numbers, underscore.
+  // UX: also convert spaces/dashes to underscores and collapse repeats.
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_");
+}
+
 /* -------------------------------------------------------
  * Helpers
  * ----------------------------------------------------- */
@@ -341,7 +352,7 @@ export function WhatsappTemplatesModule() {
           disabled={!isEditable}
           value={draft.name ?? ""}
           onChange={(e) =>
-            setDraft((p) => ({ ...p, name: e.target.value }))
+            setDraft((p) => ({ ...p, name: sanitizeTemplateName(e.target.value) }))
           }
         />
 
@@ -435,7 +446,14 @@ export function WhatsappTemplatesModule() {
             onChange={(e) =>
               setDraft((p) => ({
                 ...p,
-                footer: e.target.value.trim() || null,
+                // NOTE: don't trim on every keystroke (it prevents typing spaces).
+                footer: e.target.value || null,
+              }))
+            }
+            onBlur={(e) =>
+              setDraft((p) => ({
+                ...p,
+                footer: (e.target.value ?? "").trim() || null,
               }))
             }
           />
