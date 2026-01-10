@@ -16,7 +16,6 @@ function extractVariableIndices(text: string | null): number[] {
   return Array.from(new Set(indices)).sort((a, b) => a - b);
 }
 
-
 /* -------------------------------------------------------
  * Helpers
  * ----------------------------------------------------- */
@@ -30,13 +29,12 @@ const emptyDraft = (): Partial<WhatsappTemplate> => ({
   footer: null,
   status: "draft",
 
-  // ✅ VARIABLE TEMPLATE SCHEMA DEFAULTS
+  // VARIABLE TEMPLATE SCHEMA DEFAULTS
   header_variable_count: 0,
   header_variable_indices: null,
   body_variable_count: 0,
   body_variable_indices: null,
 });
-
 
 export function WhatsappTemplatesModule() {
   const { activeOrganization } = useOrganizationStore();
@@ -65,7 +63,7 @@ export function WhatsappTemplatesModule() {
    * ----------------------------------------------------- */
   useEffect(() => {
     if (activeOrganization?.id) {
-      fetchTemplates(); // ✅ FIXED
+      fetchTemplates();
     }
   }, [activeOrganization?.id, fetchTemplates]);
 
@@ -89,26 +87,22 @@ export function WhatsappTemplatesModule() {
       return;
     }
 
-        /* ---------------------------------------------
+    /* ---------------------------------------------
      * VARIABLE TEMPLATE SCHEMA COMPUTATION
      * ------------------------------------------- */
-        const headerVars =
-        draft.header_type === "TEXT"
-          ? extractVariableIndices(draft.header_text ?? null)
-          : [];
-  
-      const bodyVars = extractVariableIndices(draft.body ?? null);
-  
-      const schemaPatch = {
-        header_variable_count: headerVars.length,
-        header_variable_indices:
-          headerVars.length > 0 ? headerVars : null,
-  
-        body_variable_count: bodyVars.length,
-        body_variable_indices:
-          bodyVars.length > 0 ? bodyVars : null,
-      };
-  
+    const headerVars =
+      draft.header_type === "TEXT"
+        ? extractVariableIndices(draft.header_text ?? null)
+        : [];
+
+    const bodyVars = extractVariableIndices(draft.body ?? null);
+
+    const schemaPatch = {
+      header_variable_count: headerVars.length,
+      header_variable_indices: headerVars.length > 0 ? headerVars : null,
+      body_variable_count: bodyVars.length,
+      body_variable_indices: bodyVars.length > 0 ? bodyVars : null,
+    };
 
     setSaving(true);
     try {
@@ -118,16 +112,16 @@ export function WhatsappTemplatesModule() {
           ...schemaPatch,
           organization_id: activeOrganization.id,
           status: "draft",
-        } as any);        
+        } as any);
 
-        await fetchTemplates(); // ✅ FIXED
+        await fetchTemplates();
         if (id) setSelectedId(id);
       } else {
         await updateTemplate(selectedId, {
           ...draft,
           ...schemaPatch,
-        } as any);        
-        await fetchTemplates(); // ✅ FIXED
+        } as any);
+        await fetchTemplates();
       }
     } finally {
       setSaving(false);
@@ -171,7 +165,7 @@ export function WhatsappTemplatesModule() {
       }
     );
 
-    await fetchTemplates(); // ✅ FIXED
+    await fetchTemplates();
     setDraft((d) => ({ ...d, status: "pending" }));
     alert("Template submitted to WhatsApp");
   }
@@ -209,7 +203,7 @@ export function WhatsappTemplatesModule() {
         return;
       }
 
-      await fetchTemplates(); // ✅ FIXED
+      await fetchTemplates();
       alert(`Synced templates. Updated: ${json.updated ?? 0}`);
     } finally {
       setSyncing(false);
@@ -315,6 +309,7 @@ export function WhatsappTemplatesModule() {
           </button>
         )}
 
+        {/* TEMPLATE NAME */}
         <input
           className="rounded-md border px-3 py-2 text-sm"
           placeholder="Template name (lowercase, underscores)"
@@ -325,6 +320,32 @@ export function WhatsappTemplatesModule() {
           }
         />
 
+        {/* CATEGORY */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">
+            Category
+          </label>
+          <select
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            disabled={!isEditable}
+            value={draft.category ?? "MARKETING"}
+            onChange={(e) =>
+              setDraft((p) => ({
+                ...p,
+                category: e.target.value as "MARKETING" | "UTILITY",
+              }))
+            }
+          >
+            <option value="MARKETING">Marketing</option>
+            <option value="UTILITY">Utility</option>
+          </select>
+          <p className="mt-1 text-xs text-slate-500">
+            Utility templates are for service updates, PSF, and transactional
+            messages.
+          </p>
+        </div>
+
+        {/* BODY */}
         <textarea
           className="rounded-md border px-3 py-2 text-sm"
           rows={8}
@@ -335,6 +356,29 @@ export function WhatsappTemplatesModule() {
             setDraft((p) => ({ ...p, body: e.target.value }))
           }
         />
+
+        {/* FOOTER */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-slate-600">
+            Footer (optional)
+          </label>
+          <input
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            placeholder="Static footer text (no variables)"
+            disabled={!isEditable}
+            value={draft.footer ?? ""}
+            maxLength={60}
+            onChange={(e) =>
+              setDraft((p) => ({
+                ...p,
+                footer: e.target.value.trim() || null,
+              }))
+            }
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            Footer is static text only (WhatsApp limit ~60 characters).
+          </p>
+        </div>
 
         <div className="text-xs text-slate-500">
           Status: <b>{draft.status}</b>
