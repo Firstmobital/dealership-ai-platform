@@ -2,14 +2,17 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 
 import type { Campaign, CampaignMessage } from "../types/database";
-import { validateTemplateVariables } from "../lib/templateVariables";
+import {
+  parseCsvVariables,
+  validateTemplateVariables,
+} from "../lib/templateVariables";
 
 /* =========================================================
    TYPES
 ========================================================= */
 type CsvRow = {
   phone: string;
-  row: Record<string, string>; // raw uploaded row (normalized headers)
+  row: Record<string, string>; // normalized headers
 };
 
 type CampaignState = {
@@ -28,11 +31,15 @@ type CampaignState = {
     reply_sheet_tab: string;
     scheduledAt: string | null;
     rows: CsvRow[];
-    variable_map: Record<string, string>; // {{1}} -> columnName
+    variable_map: Record<string, string>; // "1" -> columnName
     campaign_type: "marketing" | "utility" | "psf";
   }) => Promise<string>;
 
-  launchCampaign: (campaignId: string, scheduledAt?: string | null) => Promise<void>;
+  launchCampaign: (
+    campaignId: string,
+    scheduledAt?: string | null,
+  ) => Promise<void>;
+
   retryFailedMessages: (campaignId: string) => Promise<void>;
 };
 
@@ -53,7 +60,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   loading: false,
 
   /* ------------------------------------------------------
-     FETCH CAMPAIGNS (ORG ONLY)
+     FETCH CAMPAIGNS
   ------------------------------------------------------ */
   fetchCampaigns: async (organizationId) => {
     set({ loading: true });
@@ -70,10 +77,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       throw error;
     }
 
-    set({
-      campaigns: (data ?? []) as Campaign[],
-      loading: false,
-    });
+    set({ campaigns: (data ?? []) as Campaign[], loading: false });
   },
 
   /* ------------------------------------------------------
@@ -115,7 +119,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   }) => {
     const status: Campaign["status"] = scheduledAt ? "scheduled" : "draft";
 
-    // Sanitize phones early
+    /* 0️⃣ Sanitize phones */
     const cleanedRows = rows
       .map((r) => ({
         ...r,
@@ -135,7 +139,6 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         id,
         name,
         body,
-        language,
         status,
         header_variable_count,
         header_variable_indices,
@@ -157,17 +160,18 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
 
     const bodySnapshot = safeTemplateBody(template.body);
 
-    /* --------------------------------------------------
-       2️⃣ Build per-row variables using variable_map
-       We keep this for now because your system already stores `variables`
-       and templateVariables validation relies on it.
-    -------------------------------------------------- */
+    /* 2️⃣ Build per-row variables (EXPLICIT body vars) */
     const mappedRows = cleanedRows.map((r) => {
-      const variables: Record<string, unknown> = {};
+      const variables: Record<string, string> = {};
 
       Object.keys(variable_map ?? {}).forEach((idx) => {
         const columnName = variable_map[idx];
-        variables[idx] = r.row?.[columnName] ?? "";
+        const safeIdx = String(idx).trim();
+
+        variables[`body_${safeIdx}`] =
+          columnName && r.row?.[columnName] !== undefined
+            ? String(r.row[columnName])
+            : "";
       });
 
       return {
@@ -177,9 +181,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       };
     });
 
-    /* --------------------------------------------------
-       3️⃣ VARIABLE SCHEMA VALIDATION (DEFENSIVE)
-    -------------------------------------------------- */
+    /* 3️⃣ Variable schema validation (CORRECT SHAPE) */
     const schema = {
       header_variable_count: template.header_variable_count,
       header_variable_indices: template.header_variable_indices,
@@ -188,7 +190,19 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     };
 
     for (const row of mappedRows) {
-      const result = validateTemplateVariables(row.variables as any, schema);
+      let parsed;
+      let result;
+
+      try {
+        parsed = parseCsvVariables(row.variables);
+        result = validateTemplateVariables(parsed, schema);
+      } catch {
+        throw new Error(
+          `Template variable validation crashed for phone ${row.phone}. ` +
+            `This indicates a variable index/schema mismatch.`,
+        );
+      }
+
       if (!result.ok) {
         throw new Error(
           `Variable mismatch for phone ${row.phone}: ${result.error}`,
@@ -209,17 +223,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         template_name: template.name ?? null,
         template_body: bodySnapshot,
 
-        template_variables: null,
         status,
         scheduled_at: scheduledAt,
 
         reply_sheet_tab: reply_sheet_tab || null,
 
-        // ✅ Step 4: persist variable_map on campaigns.meta
         meta: {
           variable_map,
           is_psf: campaign_type === "psf",
-        },        
+        },
 
         total_recipients: cleanedRows.length,
         sent_count: 0,
@@ -240,13 +252,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       organization_id: organizationId,
       campaign_id: campaignId,
       phone: row.phone,
-
-      // Keep existing structure
       variables: row.variables,
-
-      // ✅ Step 3 schema: snapshot of full row
       raw_row: row.raw_row,
-
       status: "pending",
     }));
 
@@ -267,7 +274,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   },
 
   /* ------------------------------------------------------
-     LAUNCH CAMPAIGN (SEND NOW OR SCHEDULE)
+     LAUNCH CAMPAIGN
   ------------------------------------------------------ */
   launchCampaign: async (campaignId, scheduledAt) => {
     const effectiveTime = scheduledAt ?? new Date().toISOString();
@@ -315,7 +322,9 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       throw error;
     }
 
-    const orgId = get().campaigns.find((c) => c.id === campaignId)?.organization_id;
+    const orgId = get().campaigns.find(
+      (c) => c.id === campaignId,
+    )?.organization_id;
 
     if (orgId) {
       await get().fetchCampaigns(orgId);
