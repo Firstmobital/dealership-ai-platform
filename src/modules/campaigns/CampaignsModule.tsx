@@ -38,7 +38,6 @@ type Mode = "view" | "create";
 
 type CampaignType = "marketing" | "utility" | "psf";
 
-
 function safeFileNameFromUrl(url: string | null) {
   if (!url) return null;
   try {
@@ -56,12 +55,17 @@ function safeFileNameFromUrl(url: string | null) {
 ========================================================================= */
 function renderTemplatePreview(body: string, vars: Record<string, string>) {
   let out = String(body ?? "");
-  Object.values(vars ?? {}).forEach((v, i) => {
+
+  for (const [idx, value] of Object.entries(vars)) {
+    const safeIdx = String(idx).trim();
+    if (!safeIdx) continue;
+
     out = out.replace(
-      new RegExp(`{{\\s*${i + 1}\\s*}}`, "g"),
-      v || `{{${i + 1}}}`
+      new RegExp(`{{\\s*${safeIdx}\\s*}}`, "g"),
+      value && value.length ? value : `{{${safeIdx}}}`
     );
-  });
+  }
+
   return out;
 }
 
@@ -135,9 +139,7 @@ export function CampaignsModule() {
   >(null);
   const [importError, setImportError] = useState<string | null>(null);
 
-  const [campaignType, setCampaignType] =
-  useState<CampaignType>("marketing");
-
+  const [campaignType, setCampaignType] = useState<CampaignType>("marketing");
 
   // ================================
   // Phase C: Variable Mapping
@@ -156,10 +158,21 @@ export function CampaignsModule() {
     try {
       const { rows } = await parseUploadFile(file);
 
-      const mapped: ParsedCsvRow[] = rows.map((r) => ({
-        phone: r.phone,
-        row: r.raw_row,
-      }));
+      const normalize = (s: string) =>
+        s.toLowerCase().trim().replace(/\s+/g, " ");
+
+      const mapped: ParsedCsvRow[] = rows.map((r) => {
+        const normalizedRow: Record<string, string> = {};
+
+        for (const [k, v] of Object.entries(r.raw_row)) {
+          normalizedRow[normalize(k)] = v;
+        }
+
+        return {
+          phone: r.phone,
+          row: normalizedRow,
+        };
+      });
 
       setImportedRows(rows.map((r) => r.raw_row));
       setParsedRows(mapped);
@@ -226,9 +239,9 @@ export function CampaignsModule() {
   // ================================
   const availableColumns = useMemo(() => {
     if (!parsedRows.length) return [];
-    return Object.keys(parsedRows[0].row).filter(
-      (k) => k && k.toLowerCase() !== "phone"
-    );
+    return Object.keys(parsedRows[0].row)
+      .map((k) => k.toLowerCase().trim())
+      .filter((k) => k && k.toLowerCase() !== "phone");
   }, [parsedRows]);
 
   // Reset media UI cleanly when template changes
@@ -265,10 +278,18 @@ export function CampaignsModule() {
 
   const requiredHeaderVars = selectedTemplate?.header_variable_indices ?? [];
 
+  const requiredTemplateVars = useMemo(() => {
+    return Array.from(
+      new Set([...(requiredHeaderVars ?? []), ...(requiredBodyVars ?? [])])
+    );
+  }, [requiredHeaderVars, requiredBodyVars]);
+
   const previewBody =
     mode === "create"
       ? renderTemplatePreview(
-          selectedTemplate?.body ?? "",
+          `${selectedTemplate?.header_text ?? ""}\n\n${
+            selectedTemplate?.body ?? ""
+          }`,
           (() => {
             const row = parsedRows[0]?.row;
             if (!row) return {};
@@ -276,7 +297,8 @@ export function CampaignsModule() {
             Object.keys(variableMap)
               .sort((a, b) => Number(a) - Number(b))
               .forEach((k) => {
-                out[k] = row[variableMap[k]] ?? "";
+                const col = variableMap[k];
+                out[k] = col && row[col] !== undefined ? row[col] : "";
               });
             return out;
           })()
@@ -286,6 +308,21 @@ export function CampaignsModule() {
   const selectedMsgs = selectedCampaign
     ? messages[selectedCampaign.id] ?? []
     : [];
+
+  const isMappingValid = useMemo(() => {
+    if (!parsedRows.length) return false;
+    if (!requiredTemplateVars.length) return true;
+
+    return requiredTemplateVars.every(
+      (idx) =>
+        variableMap[idx] &&
+        variableMap[idx].trim().length > 0 &&
+        Object.prototype.hasOwnProperty.call(
+          parsedRows[0].row,
+          variableMap[idx]
+        )
+    );
+  }, [parsedRows, requiredTemplateVars, variableMap]);
 
   /* --------------------------------------------------------------------
      ANALYTICS (SAFE FALLBACK)
@@ -373,19 +410,18 @@ export function CampaignsModule() {
     }
 
     // ✅ NEW: validate mapped columns actually exist in uploaded data
-if (parsedRows.length > 0) {
-  const csvColumns = Object.keys(parsedRows[0].row);
+    if (parsedRows.length > 0) {
+      const csvColumns = Object.keys(parsedRows[0].row);
 
-  for (const [idx, column] of Object.entries(variableMap)) {
-    if (!csvColumns.includes(column)) {
-      alert(
-        `Mapped column "${column}" for variable {{${idx}}} does not exist in uploaded file`
-      );
-      return null;
+      for (const [idx, column] of Object.entries(variableMap)) {
+        if (!csvColumns.includes(column)) {
+          alert(
+            `Mapped column "${column}" for variable {{${idx}}} does not exist in uploaded file`
+          );
+          return null;
+        }
+      }
     }
-  }
-}
-
 
     if (needsMedia && !mediaUrl) {
       alert("This template requires media. Please upload before continuing.");
@@ -402,7 +438,7 @@ if (parsedRows.length > 0) {
       alert("PSF campaigns must have a reply sheet tab");
       return null;
     }
-    
+
     setBusy(true);
     try {
       const id = await createCampaignWithMessages({
@@ -414,9 +450,9 @@ if (parsedRows.length > 0) {
         scheduledAt: scheduledAtIsoOrNull(),
         rows: parsedRows,
         variable_map: variableMap,
-        campaign_type: campaignType, 
+        campaign_type: campaignType,
       });
-      
+
       setSelectedCampaignId(id);
       setMode("view");
 
@@ -729,28 +765,28 @@ if (parsedRows.length > 0) {
             </div>
 
             <div className="space-y-1">
-  <label className="text-xs font-medium text-slate-700">
-    Campaign Type
-  </label>
+              <label className="text-xs font-medium text-slate-700">
+                Campaign Type
+              </label>
 
-  <select
-    value={campaignType}
-    onChange={(e) =>
-      setCampaignType(e.target.value as CampaignType)
-    }
-    className="w-full rounded-md border px-3 py-2 text-sm"
-    disabled={busy}
-  >
-    <option value="marketing">Marketing</option>
-    <option value="utility">Utility (Service)</option>
-    <option value="psf">PSF (Post-Service Feedback)</option>
-  </select>
+              <select
+                value={campaignType}
+                onChange={(e) =>
+                  setCampaignType(e.target.value as CampaignType)
+                }
+                className="w-full rounded-md border px-3 py-2 text-sm"
+                disabled={busy}
+              >
+                <option value="marketing">Marketing</option>
+                <option value="utility">Utility (Service)</option>
+                <option value="psf">PSF (Post-Service Feedback)</option>
+              </select>
 
-  <div className="text-[11px] text-slate-500">
-    PSF campaigns automatically create feedback cases and inbox entries.
-  </div>
-</div>
-
+              <div className="text-[11px] text-slate-500">
+                PSF campaigns automatically create feedback cases and inbox
+                entries.
+              </div>
+            </div>
 
             <select
               className="w-full border rounded-md px-3 py-2 text-sm"
@@ -783,7 +819,7 @@ if (parsedRows.length > 0) {
                     Template Variables
                   </div>
 
-                  {requiredBodyVars.map((idx) => (
+                  {requiredTemplateVars.map((idx) => (
                     <div key={idx} className="flex items-center gap-2">
                       <div className="w-16 text-xs font-mono">
                         {"{{" + idx + "}}"}
@@ -1095,7 +1131,7 @@ if (parsedRows.length > 0) {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={launchNow}
-                disabled={busy}
+                disabled={busy || !isMappingValid}
                 className="inline-flex items-center gap-2 rounded-md bg-green-600 text-white px-3 py-2 text-sm hover:bg-green-700 disabled:opacity-60"
               >
                 {busy ? (
@@ -1108,7 +1144,7 @@ if (parsedRows.length > 0) {
 
               <button
                 onClick={saveDraft}
-                disabled={busy}
+                disabled={busy || !isMappingValid}
                 className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
               >
                 {busy ? (
