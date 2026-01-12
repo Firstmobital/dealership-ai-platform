@@ -25,6 +25,8 @@ type PsfState = {
 
   markResolved: (psfCaseId: string) => Promise<void>;
   sendReminder: (psfCaseId: string) => Promise<void>;
+
+  reset: () => void;
 };
 
 /* ============================================================================
@@ -37,6 +39,14 @@ export const usePsfStore = create<PsfState>((set, get) => ({
   error: null,
 
   selectedCase: null,
+
+  reset: () =>
+    set({
+      cases: [],
+      loading: false,
+      error: null,
+      selectedCase: null,
+    }),
 
   /* ------------------------------------------------------------------------
      FETCH PSF CASES (ORG-SCOPED, VIEW-BASED)

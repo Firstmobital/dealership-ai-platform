@@ -136,41 +136,25 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
 
   /* -------------------------------------------------------------------------- */
   /* CREATE ORGANIZATION (ADMIN)                                                 */
+  /* Uses Edge Function because `organizations` inserts are service-role only.   */
   /* -------------------------------------------------------------------------- */
   createOrganization: async (name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
 
-    const { data: userRes } = await supabase.auth.getUser();
-    const user = userRes?.user;
-    if (!user) throw new Error("Not authenticated");
-
-    // 1) Create org
-    const { data: org, error: orgErr } = await supabase
-      .from("organizations")
-      .insert({ name: trimmed })
-      .select("*")
-      .single();
-
-    if (orgErr) {
-      console.error("[Org] create org failed:", orgErr);
-      throw orgErr;
-    }
-
-    // 2) Create membership
-    const { error: mErr } = await supabase.from("organization_users").insert({
-      organization_id: org.id,
-      user_id: user.id,
-      role: "admin",
-      last_active_at: new Date().toISOString(),
+    const { data, error } = await supabase.functions.invoke("org-create", {
+      body: { name: trimmed },
     });
 
-    if (mErr) {
-      console.error("[Org] create membership failed:", mErr);
-      throw mErr;
+    if (error) {
+      console.error("[Org] org-create failed:", error);
+      throw error;
     }
 
-    // 3) Refresh + switch
+    const org = data?.organization;
+    if (!org) throw new Error("Organization creation failed");
+
+    // Refresh + switch
     await get().bootstrapOrganizations();
     await get().setActiveOrganization(org);
   },

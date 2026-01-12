@@ -21,6 +21,8 @@ type WhatsappSettingsState = {
 
   clearError: () => void;
   clearSuccess: () => void;
+
+  reset: () => void;
 };
 
 function normalizeSettings(raw: any | null): WhatsappSettings | null {
@@ -43,6 +45,15 @@ export const useWhatsappSettingsStore = create<WhatsappSettingsState>(
     saving: false,
     error: null,
     success: null,
+
+    reset: () =>
+      set({
+        settings: null,
+        loading: false,
+        saving: false,
+        error: null,
+        success: null,
+      }),
 
     clearError: () => set({ error: null }),
     clearSuccess: () => set({ success: null }),

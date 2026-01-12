@@ -3,6 +3,19 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
+import { useOrganizationStore } from "./useOrganizationStore";
+import { useChatStore } from "./useChatStore";
+import { useCampaignStore } from "./useCampaignStore";
+import { useWorkflowStore } from "./useWorkflowStore";
+import { useWalletStore } from "./useWalletStore";
+import { usePsfStore } from "./usePsfStore";
+import { useKnowledgeBaseStore } from "./useKnowledgeBaseStore";
+import { useWhatsappSettingsStore } from "./useWhatsappSettingsStore";
+import { useWhatsappTemplateStore } from "./useWhatsappTemplateStore";
+import { useAISettingsStore } from "./useAISettingsStore";
+import { useAnalyticsStore } from "./useAnalyticsStore";
+import { useBotPersonalityStore } from "./useBotPersonalityStore";
+import { useUnansweredQuestionsStore } from "./useUnansweredQuestionsStore";
 
 type AuthState = {
   user: User | null;
@@ -130,6 +143,47 @@ export const useAuthStore = create<AuthState>()(
           throw error;
         }
 
+        // Clear all org-scoped / cached state to prevent cross-user leakage
+        try {
+          useChatStore.getState().reset();
+        } catch {}
+        try {
+          useCampaignStore.getState().reset();
+        } catch {}
+        try {
+          useWorkflowStore.getState().reset();
+        } catch {}
+        try {
+          useWalletStore.getState().clearWallet();
+        } catch {}
+        try {
+          usePsfStore.getState().reset();
+        } catch {}
+        try {
+          useKnowledgeBaseStore.getState().reset();
+        } catch {}
+        try {
+          useWhatsappSettingsStore.getState().reset();
+        } catch {}
+        try {
+          useWhatsappTemplateStore.getState().reset();
+        } catch {}
+        try {
+          useAISettingsStore.getState().reset();
+        } catch {}
+        try {
+          useAnalyticsStore.getState().reset();
+        } catch {}
+        try {
+          useBotPersonalityStore.getState().reset();
+        } catch {}
+        try {
+          useUnansweredQuestionsStore.getState().reset();
+        } catch {}
+        try {
+          useOrganizationStore.getState().clearOrganizationState();
+        } catch {}
+
         set({
           loading: false,
           error: null,
@@ -171,4 +225,3 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
-

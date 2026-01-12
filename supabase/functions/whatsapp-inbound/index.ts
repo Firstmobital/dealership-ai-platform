@@ -12,6 +12,9 @@ import OpenAI from "https://esm.sh/openai@4.47.0";
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN");
+// Optional but strongly recommended: validate X-Hub-Signature-256 on POST
+// Set this to your Meta App Secret.
+const WHATSAPP_APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET") || "";
 
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
@@ -59,6 +62,47 @@ function createLogger(ctx: LogContext) {
 /* =====================================================================================
    HELPERS
 ===================================================================================== */
+
+async function verifyMetaSignature(
+  req: Request,
+  rawBody: string,
+  appSecret: string,
+): Promise<boolean> {
+  try {
+    const sig = req.headers.get("X-Hub-Signature-256") ?? "";
+    // Expected format: "sha256=<hex>"
+    const parts = sig.split("=");
+    if (parts.length !== 2 || parts[0] !== "sha256") return false;
+    const expectedHex = parts[1];
+    if (!expectedHex) return false;
+
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(appSecret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      new TextEncoder().encode(rawBody),
+    );
+    const actualHex = Array.from(new Uint8Array(mac))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    // Constant-time compare
+    if (actualHex.length !== expectedHex.length) return false;
+    let diff = 0;
+    for (let i = 0; i < actualHex.length; i++) {
+      diff |= actualHex.charCodeAt(i) ^ expectedHex.charCodeAt(i);
+    }
+    return diff === 0;
+  } catch {
+    return false;
+  }
+}
 
 function normalizeWaPhone(input?: string | null): string | null {
   if (!input) return null;
@@ -621,7 +665,24 @@ serve(async (req) => {
     if (req.method !== "POST")
       return new Response("Method not allowed", { status: 405 });
 
-    const body = await req.json();
+    // Read raw body once (needed for signature verification)
+    const rawBody = await req.text();
+
+    // Verify Meta webhook signature if secret is configured
+    if (WHATSAPP_APP_SECRET) {
+      const ok = await verifyMetaSignature(req, rawBody, WHATSAPP_APP_SECRET);
+      if (!ok) {
+        logger.warn("WEBHOOK_SIGNATURE_INVALID");
+        return new Response("Invalid signature", { status: 401 });
+      }
+    } else {
+      // Not fatal (useful for local dev), but strongly recommended in prod.
+      logger.warn("WEBHOOK_SIGNATURE_SKIPPED", {
+        reason: "WHATSAPP_APP_SECRET not set",
+      });
+    }
+
+    const body = JSON.parse(rawBody || "{}");
 
     for (const entry of body.entry ?? []) {
       for (const change of entry.changes ?? []) {

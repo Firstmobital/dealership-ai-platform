@@ -36,6 +36,8 @@ type WorkflowState = {
   ) => Promise<string | null>;
 
   setSelectedWorkflow: (wf: Workflow | null) => void;
+
+  reset: () => void;
 };
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -49,6 +51,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   selectedWorkflow: null,
   setSelectedWorkflow: (wf) => set({ selectedWorkflow: wf }),
+
+  reset: () =>
+    set({
+      workflows: [],
+      steps: {},
+      logs: {},
+      loading: false,
+      saving: false,
+      error: null,
+      selectedWorkflow: null,
+    }),
 
   /* =====================================================
      FETCH WORKFLOWS (ORG ONLY)

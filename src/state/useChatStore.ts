@@ -69,6 +69,9 @@ type ChatState = {
   aiToggle: Record<string, boolean>;
   unread: Record<string, number>;
 
+  // Cleanup (used on logout / org switch)
+  reset: () => void;
+
   fetchConversations: (
     organizationId: string,
     params?: {
@@ -153,6 +156,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   aiToggle: {},
   unread: {},
+
+  reset: () => {
+    teardownRealtime();
+    set({
+      conversations: [],
+      messages: {},
+      activeConversationId: null,
+      filter: "all",
+      loading: false,
+      search: "",
+      intentFilter: null,
+      assignedFilter: null,
+      aiToggle: {},
+      unread: {},
+    });
+  },
 
   /* -------------------------------------------------------------------------- */
   /* FETCH CONVERSATIONS (ORG ONLY)                                             */

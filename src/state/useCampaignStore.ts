@@ -20,6 +20,8 @@ type CampaignState = {
   messages: Record<string, CampaignMessage[]>;
   loading: boolean;
 
+  reset: () => void;
+
   fetchCampaigns: (organizationId: string) => Promise<void>;
   fetchCampaignMessages: (campaignId: string) => Promise<void>;
 
@@ -58,6 +60,8 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
   campaigns: [],
   messages: {},
   loading: false,
+
+  reset: () => set({ campaigns: [], messages: {}, loading: false }),
 
   /* ------------------------------------------------------
      FETCH CAMPAIGNS

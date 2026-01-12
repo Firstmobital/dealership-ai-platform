@@ -34,6 +34,8 @@ type AISettingsState = {
 
   clearError: () => void;
   clearSuccess: () => void;
+
+  reset: () => void;
 };
 
 /* ============================================================================
@@ -62,6 +64,15 @@ export const useAISettingsStore = create<AISettingsState>((set, get) => ({
   saving: false,
   error: null,
   success: null,
+
+  reset: () =>
+    set({
+      settings: null,
+      loading: false,
+      saving: false,
+      error: null,
+      success: null,
+    }),
 
   clearError: () => set({ error: null }),
   clearSuccess: () => set({ success: null }),

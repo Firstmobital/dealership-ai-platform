@@ -14,12 +14,16 @@ type TemplateState = {
   createTemplate: (payload: Partial<WhatsappTemplate>) => Promise<string | null>;
   updateTemplate: (id: string, payload: Partial<WhatsappTemplate>) => Promise<void>;
   deleteTemplate: (id: string) => Promise<void>;
+
+  reset: () => void;
 };
 
 export const useWhatsappTemplateStore = create<TemplateState>((set, get) => ({
   templates: [],
   loading: false,
   error: null,
+
+  reset: () => set({ templates: [], loading: false, error: null }),
 
   /* --------------------------------------------------
      FETCH ALL TEMPLATES (ORG ONLY)

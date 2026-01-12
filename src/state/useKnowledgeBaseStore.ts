@@ -61,6 +61,8 @@ type KnowledgeBaseState = {
 
   deleteArticle: (articleId: string) => Promise<void>;
 
+  reset: () => void;
+
   setSelectedArticle: (article: KnowledgeArticle | null) => void;
   setSearchTerm: (term: string) => void;
 };
@@ -75,6 +77,16 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   error: null,
   selectedArticle: null,
   searchTerm: "",
+
+  reset: () =>
+    set({
+      articles: [],
+      loading: false,
+      uploading: false,
+      error: null,
+      selectedArticle: null,
+      searchTerm: "",
+    }),
 
   setSelectedArticle: (article) => set({ selectedArticle: article }),
   setSearchTerm: (term) => set({ searchTerm: term }),

@@ -19,6 +19,8 @@ type UnansweredQuestionsState = {
   }) => Promise<void>;
 
   ignoreQuestion: (questionId: string) => Promise<void>;
+
+  reset: () => void;
 };
 
 export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
@@ -27,6 +29,8 @@ export const useUnansweredQuestionsStore = create<UnansweredQuestionsState>(
     loading: false,
     saving: false,
     error: null,
+
+    reset: () => set({ questions: [], loading: false, saving: false, error: null }),
 
     /* -------------------------------------------------- */
     /* FETCH — ONLY OPEN QUESTIONS                        */

@@ -12,6 +12,8 @@ type AnalyticsState = {
   fetchOverview: (from: string, to: string) => Promise<void>;
   fetchCampaigns: () => Promise<void>;
   fetchTemplates: () => Promise<void>;
+
+  reset: () => void;
 };
 
 export const useAnalyticsStore = create<AnalyticsState>((set) => ({
@@ -20,6 +22,8 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
   overview: [],
   campaigns: [],
   templates: [],
+
+  reset: () => set({ loading: false, overview: [], campaigns: [], templates: [] }),
 
   /* ======================================================
      OVERVIEW (Daily WhatsApp Stats — ORG ONLY)

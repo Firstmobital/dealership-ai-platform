@@ -10,6 +10,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+// IMPORTANT: Use anon key for user-scoped checks so RLS applies.
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 const WHATSAPP_API_BASE_URL =
   Deno.env.get("WHATSAPP_API_BASE_URL") ??
@@ -22,7 +24,7 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
 // User-scoped client (for auth + membership checks)
 function createUserClient(req: Request) {
   const authHeader = req.headers.get("Authorization") ?? "";
-  return createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
+  return createClient(PROJECT_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false },
     global: { headers: { Authorization: authHeader } },
   });

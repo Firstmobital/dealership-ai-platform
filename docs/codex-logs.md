@@ -758,3 +758,22 @@ Mapped Meta PAUSED → local approved (no paused state locally).
 - Added jsonb metadata column to contacts for full-row preservation
 - Added jsonb raw_row column to campaign_messages for per-message row snapshot
 - No RLS changes required
+
+# Codex Logs
+
+## 2026-01-12
+
+### Security & correctness fixes
+- **Edge Function user-scoped Supabase client**: updated `whatsapp-send` to use `SUPABASE_ANON_KEY` for user/membership checks so **RLS is enforced**; service-role client remains for privileged writes.
+- **WhatsApp inbound webhook signature verification**: added optional validation of `X-Hub-Signature-256` using `WHATSAPP_APP_SECRET` (recommended for production).
+
+### Multi-tenant org creation
+- Added new Edge Function `org-create` to create an organization + admin membership using service role, authenticated via anon client.
+- Updated frontend `useOrganizationStore.createOrganization()` to call `org-create` instead of inserting into `organizations` directly (works with service-role-only insert policy).
+
+### Logout hardening
+- Added `reset()` actions to key Zustand stores and wired `useAuthStore.signOut()` to clear cached/org-scoped state to prevent cross-user leakage.
+
+### New / updated environment variables
+- `SUPABASE_ANON_KEY` (Edge Functions that need user-scoped reads)
+- `WHATSAPP_APP_SECRET` (WhatsApp inbound signature verification)
