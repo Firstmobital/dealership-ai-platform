@@ -169,25 +169,6 @@ function buildWhatsappParamsFromRow(params: {
 }
 
 /* ============================================================
-   🚨 VARIABLE MISMATCH ENFORCEMENT
-============================================================ */
-function hasVariableMismatch(
-  variables: { type: string; text: string }[],
-  template: WhatsappTemplate
-): boolean {
-  const requiredCount =
-    (template.header_variable_indices?.length ?? 0) +
-    (template.body_variable_indices?.length ?? 0);
-
-  if (requiredCount === 0) return false;
-
-  if (!Array.isArray(variables)) return true;
-  if (variables.length < requiredCount) return true;
-
-  return variables.some((v) => !v || !v.text || !String(v.text).trim());
-}
-
-/* ============================================================
    PHASE 2.4 — TEMPLATE HEADER COMPONENTS
 ============================================================ */
 function buildTemplateHeaderComponents(template: WhatsappTemplate) {
@@ -366,7 +347,7 @@ async function sendWhatsappTemplate(params: {
   phonePlusE164: string; // "+91..."
   templateName: string;
   language: string;
-  variables: string[];
+  variables: { type: "text"; text: string }[];
   renderedText: string;
   reply_sheet_tab: string | null;
 
@@ -387,20 +368,27 @@ async function sendWhatsappTemplate(params: {
       contact_id: params.contactId,
       to: waToFromE164(params.phonePlusE164),
       type: "template",
-      metadata: {
-        reply_sheet_tab: params.reply_sheet_tab,
-      },
+    
       template_name: params.templateName,
       template_language: params.language,
-      template_variables: params.variables,
-
-      template_components: params.templateComponents ?? null,
+    
+      template_components: [
+        ...(params.templateComponents ?? []),
+        {
+          type: "body",
+          parameters: params.variables,
+        },
+      ],
+    
       message_type: params.messageType ?? "template",
       media_url: params.mediaUrl ?? null,
       mime_type: params.mimeType ?? null,
-
+    
       rendered_text: params.renderedText,
-    }),
+      metadata: {
+        reply_sheet_tab: params.reply_sheet_tab,
+      },
+    }),    
   });
 
   const body = await res.json().catch(() => ({}));
@@ -668,6 +656,32 @@ async function linkMessageToConversationAndPsf(params: {
     .eq("phone", params.phoneDigits);
 }
 
+function assertTemplateVariablesPresent(params: {
+  template: WhatsappTemplate;
+  rawRow: Record<string, any> | null;
+  variableMap: Record<string, string> | undefined;
+}) {
+  const missing: number[] = [];
+
+  const indices = [
+    ...(params.template.header_variable_indices ?? []),
+    ...(params.template.body_variable_indices ?? []),
+  ];
+
+  for (const idx of indices) {
+    const col = params.variableMap?.[String(idx)];
+    const val = col ? params.rawRow?.[col] : null;
+
+    if (val === null || val === undefined || String(val).trim() === "") {
+      missing.push(idx);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`variable_mismatch:${missing.join(",")}`);
+  }
+}
+
 /* ============================================================
    DISPATCH SINGLE CAMPAIGN (IMMEDIATE MODE)
 ============================================================ */
@@ -742,17 +756,25 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
           ? "document"
           : "template";
 
+      // 🚨 HARD ENFORCEMENT — NO EMPTY VARIABLES ALLOWED
+      try {
+        assertTemplateVariablesPresent({
+          template,
+          rawRow: msg.raw_row ?? null,
+          variableMap: campaign.meta?.variable_map,
+        });
+      } catch (e) {
+        await markFailed(msg.id, "variable_mismatch");
+        continue;
+      }
+
       const variables = buildWhatsappParamsFromRow({
         template,
         rawRow: msg.raw_row ?? null,
         variableMap: campaign.meta?.variable_map,
       });
 
-      // 🚨 HARD BLOCK — VARIABLE MISMATCH
-      if (hasVariableMismatch(variables, template)) {
-        await markFailed(msg.id, "variable_mismatch");
-        continue; // ⛔ DO NOT SEND TO WHATSAPP
-      }
+      // 🚨 HARD STOP: variable mismatch (Meta will silently drop otherwise)
 
       const waId = await sendWhatsappTemplate({
         organizationId: msg.organization_id,
@@ -774,6 +796,11 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
       });
 
       // keep your current behavior
+      if (!waId) {
+        await markFailed(msg.id, "meta_rejected_message");
+        continue;
+      }
+
       await markSent(msg.id, waId);
 
       // ✅ PSF ADDITION: link conversation + psf case
@@ -985,17 +1012,23 @@ serve(async (req: Request) => {
               ? "document"
               : "template";
 
+          // 🚨 HARD ENFORCEMENT — NO EMPTY VARIABLES ALLOWED
+          try {
+            assertTemplateVariablesPresent({
+              template,
+              rawRow: msg.raw_row ?? null,
+              variableMap: campaign.meta?.variable_map,
+            });
+          } catch (e) {
+            await markFailed(msg.id, "variable_mismatch");
+            continue;
+          }
+
           const variables = buildWhatsappParamsFromRow({
             template,
             rawRow: msg.raw_row ?? null,
             variableMap: campaign.meta?.variable_map,
           });
-
-          // 🚨 HARD BLOCK — VARIABLE MISMATCH
-          if (hasVariableMismatch(variables, template)) {
-            await markFailed(msg.id, "variable_mismatch");
-            continue; // ⛔ DO NOT SEND TO WHATSAPP
-          }
 
           const waId = await sendWhatsappTemplate({
             organizationId: msg.organization_id,
@@ -1016,8 +1049,12 @@ serve(async (req: Request) => {
             messageType,
           });
 
-          await markSent(msg.id, waId);
+          if (!waId) {
+            await markFailed(msg.id, "meta_rejected_message");
+            continue;
+          }
 
+          await markSent(msg.id, waId);
           // ✅ PSF ADDITION: link conversation + psf case
           await linkMessageToConversationAndPsf({
             msg,
