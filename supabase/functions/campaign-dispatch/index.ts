@@ -16,6 +16,13 @@ const supabaseAdmin = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 /* ============================================================
    DISPATCH LIMITS
 ============================================================ */
@@ -137,7 +144,25 @@ function buildWhatsappParamsFromRow(params: {
 
   for (const idx of [...headerVars, ...bodyVars]) {
     const column = params.variableMap[String(idx)];
-    const value = column ? String(params.rawRow[column] ?? "") : "";
+    let rawValue = column ? params.rawRow[column] : "";
+
+let value = "";
+
+if (rawValue === null || rawValue === undefined) {
+  value = "";
+} else if (typeof rawValue === "string" || typeof rawValue === "number") {
+  value = String(rawValue);
+} else if (typeof rawValue === "object") {
+  // try common patterns first
+  value =
+    rawValue.name ??
+    rawValue.label ??
+    rawValue.value ??
+    rawValue.text ??
+    JSON.stringify(rawValue);
+} else {
+  value = String(rawValue);
+}
     out.push({ type: "text", text: value });
   }
 
@@ -769,6 +794,10 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
    MAIN
 ============================================================ */
 serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
     const nowIso = new Date().toISOString();
 
@@ -789,22 +818,41 @@ serve(async (req: Request) => {
           JSON.stringify({
             error: "campaign_id is required for mode=immediate",
           }),
-          { status: 400 }
-        );
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
+            },
+          }
+        );        
       }
 
       const campaign = await fetchCampaignById(immediateCampaignId);
       if (!campaign) {
-        return new Response(JSON.stringify({ error: "Campaign not found" }), {
-          status: 404,
-        });
+        return new Response(
+          JSON.stringify({ error: "Campaign not found" }),
+          {
+            status: 404,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
+            },
+          }
+        );        
       }
 
       if (campaign.status === "sending" || campaign.status === "completed") {
         return new Response(
           JSON.stringify({ error: "Campaign already sent or in progress" }),
-          { status: 400 }
-        );
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
+            },
+          }
+        );        
       }
 
       await markCampaignSending(campaign.id, true);
@@ -817,8 +865,14 @@ serve(async (req: Request) => {
             mode: "immediate",
             campaign_id: campaign.id,
           }),
-          { status: 200 }
-        );
+          {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
+            },
+          }
+        );        
       } catch (e) {
         await markCampaignFailed(
           campaign.id,
@@ -826,8 +880,14 @@ serve(async (req: Request) => {
         );
         return new Response(
           JSON.stringify({ error: "Dispatch failed", details: String(e) }),
-          { status: 500 }
-        );
+          {
+            status: 500,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
+            },
+          }
+        );        
       }
     }
 
@@ -982,13 +1042,25 @@ serve(async (req: Request) => {
         campaigns_processed: campaignsProcessed,
         messages_dispatched: globalSent,
       }),
-      { status: 200 }
-    );
+      {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+        },
+      }
+    );    
   } catch (e) {
     console.error("campaign-dispatch fatal", e);
     return new Response(
       JSON.stringify({ error: "Internal Error", details: String(e) }),
-      { status: 500 }
-    );
+      {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+        },
+      }
+    );    
   }
 });

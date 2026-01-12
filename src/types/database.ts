@@ -301,6 +301,7 @@ export type CampaignMessageStatus =
   | "sent"
   | "delivered"
   | "failed"
+  | "read"
   | "cancelled";
 
 export type CampaignMessage = {

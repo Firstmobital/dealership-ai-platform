@@ -330,29 +330,32 @@ export function CampaignsModule() {
   const analytics = useMemo(() => {
     const total =
       selectedCampaign?.total_recipients ?? selectedMsgs.length ?? 0;
-
-    let sent = selectedCampaign?.sent_count ?? 0;
-    let failed = selectedCampaign?.failed_count ?? 0;
+  
+    let sent = 0;
     let delivered = 0;
-    let pending = Math.max(0, total - sent - failed);
-
-    if (selectedMsgs.length > 0) {
-      sent = failed = delivered = pending = 0;
-      for (const m of selectedMsgs) {
-        if (m.status === "delivered") delivered++;
-        else if (m.status === "failed") failed++;
-        else if (m.status === "sent") sent++;
-        else pending++;
+    let read = 0;
+    let failed = 0;
+    let pending = 0;
+  
+    for (const m of selectedMsgs) {
+      if (m.status === "read") {
+        read++;
+        delivered++;
+        sent++;
+      } else if (m.status === "delivered") {
+        delivered++;
+        sent++;
+      } else if (m.status === "sent") {
+        sent++;
+      } else if (m.status === "failed") {
+        failed++;
+      } else {
+        pending++;
       }
     }
-
-    return { total, sent, delivered, failed, pending };
-  }, [
-    selectedMsgs,
-    selectedCampaign?.total_recipients,
-    selectedCampaign?.sent_count,
-    selectedCampaign?.failed_count,
-  ]);
+  
+    return { total, sent, delivered, read, failed, pending };
+  }, [selectedMsgs, selectedCampaign?.total_recipients]);
 
   /* --------------------------------------------------------------------
      ACTIONS
@@ -594,20 +597,52 @@ alert("🚀 Campaign sent immediately");
   async function onRetryFailed() {
     if (!activeOrganization?.id) return;
     if (!selectedCampaign?.id) return;
-
+  
     setRetrying(true);
     try {
-      await retryFailedMessages(selectedCampaign.id);
+      // FULL RESET — REQUIRED
+      await supabase
+        .from("campaign_messages")
+        .update({
+          status: "pending",
+          error: null,
+          whatsapp_message_id: null,
+          dispatched_at: null,
+        })
+        .eq("campaign_id", selectedCampaign.id)
+        .eq("status", "failed");
+  
+      // Trigger dispatcher immediately
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) throw new Error("Not authenticated");
+  
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/campaign-dispatch`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            mode: "immediate",
+            campaign_id: selectedCampaign.id,
+          }),
+        }
+      );
+  
       await fetchCampaignMessages(selectedCampaign.id);
       await fetchCampaigns(activeOrganization.id);
-      alert("✅ Failed messages moved back to pending");
+  
+      alert("✅ Failed messages retried");
     } catch (e: any) {
       console.error("[CampaignsModule] retry failed error", e);
       alert(e?.message ?? "Failed to retry messages");
     } finally {
       setRetrying(false);
     }
-  }
+  }  
 
   async function uploadTemplateMedia(file: File) {
     if (!activeOrganization?.id || !selectedTemplate?.id) {
@@ -1198,26 +1233,39 @@ alert("🚀 Campaign sent immediately");
         ) : (
           <>
             <div className="rounded-xl border bg-white p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-sm font-semibold text-slate-900">
-                  Analytics
-                </div>
+            <div className="mb-3 flex items-center justify-between">
+  <div className="text-sm font-semibold text-slate-900">
+    Analytics
+  </div>
 
-                {selectedCampaign?.id && analytics.failed > 0 && (
-                  <button
-                    disabled={retrying}
-                    onClick={onRetryFailed}
-                    className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 hover:bg-red-100 disabled:opacity-60"
-                  >
-                    {retrying ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCcw size={14} />
-                    )}
-                    Retry Failed ({analytics.failed})
-                  </button>
-                )}
-              </div>
+  <div className="flex gap-2">
+    {selectedCampaign?.status === "draft" && (
+      <button
+        onClick={launchNow}
+        disabled={busy}
+        className="inline-flex items-center gap-2 rounded-md bg-green-600 text-white px-3 py-2 text-sm hover:bg-green-700 disabled:opacity-60"
+      >
+        <Play size={14} />
+        Launch Campaign
+      </button>
+    )}
+
+    {selectedCampaign?.id && analytics.failed > 0 && (
+      <button
+        disabled={retrying}
+        onClick={onRetryFailed}
+        className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 hover:bg-red-100 disabled:opacity-60"
+      >
+        {retrying ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <RefreshCcw size={14} />
+        )}
+        Retry Failed ({analytics.failed})
+      </button>
+    )}
+  </div>
+</div>
 
               <div className="grid grid-cols-5 gap-3">
                 {[

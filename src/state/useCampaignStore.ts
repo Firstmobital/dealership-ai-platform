@@ -315,11 +315,12 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         status: "pending",
         dispatched_at: null,
         delivered_at: null,
+        read_at: null,
         error: null,
         whatsapp_message_id: null,
       })
       .eq("campaign_id", campaignId)
-      .eq("status", "failed");
+      .eq("status", "failed");  
 
     if (error) {
       console.error("[useCampaignStore] retryFailedMessages error", error);

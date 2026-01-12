@@ -300,9 +300,8 @@ async function processStatusReceipt(
       messagePatch = { whatsapp_status: "delivered", delivered_at: ts };
       break;
     case "read":
-      // campaign_messages enum doesn't have "read"; treat as delivered.
-      patch = { status: "delivered", delivered_at: ts };
-      messagePatch = { whatsapp_status: "read", read_at: ts, delivered_at: ts };
+      patch = { status: "read", read_at: ts };
+      messagePatch = { whatsapp_status: "read", read_at: ts };
       break;
     case "failed":
       patch = {
