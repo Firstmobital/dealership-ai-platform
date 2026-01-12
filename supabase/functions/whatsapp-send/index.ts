@@ -14,8 +14,7 @@ const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 const WHATSAPP_API_BASE_URL =
-  Deno.env.get("WHATSAPP_API_BASE_URL") ??
-  "https://graph.facebook.com/v20.0";
+  Deno.env.get("WHATSAPP_API_BASE_URL") ?? "https://graph.facebook.com/v20.0";
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -97,7 +96,7 @@ type SendBody = {
   sender?: "bot" | "agent";
   metadata?: {
     reply_sheet_tab?: string | null;
-    } | null;
+  } | null;
 };
 
 /* ==========================================================================
@@ -136,24 +135,53 @@ async function resolveWhatsappSettings(orgId: string) {
 =========================================================================== */
 
 function buildTemplateComponents(body: SendBody): any[] {
-  const components: any[] = [];
+  // Campaigns MUST use variables only
+  if (Array.isArray(body.template_variables)) {
+    if (body.template_variables.some(v => !v || !String(v).trim())) {
+      throw new Error("Empty template variable detected");
+    }
 
+    return [
+      {
+        type: "body",
+        parameters: body.template_variables.map((v) => ({
+          type: "text",
+          text: String(v),
+        })),
+      },
+    ];
+  }
+
+  // Inbox / manual sends may still use explicit components
   if (Array.isArray(body.template_components)) {
-    components.push(...body.template_components);
+    return body.template_components;
   }
 
-  if (Array.isArray(body.template_variables) && body.template_variables.length) {
-    components.push({
-      type: "body",
-      parameters: body.template_variables.map((v) => ({
-        type: "text",
-        text: String(v ?? ""),
-      })),
-    });
-  }
-
-  return components;
+  return [];
 }
+
+function persistVariableMismatch(params: {
+  conversationId: string | null;
+  sender: "bot" | "agent";
+  errorDetails: string;
+  metadata?: any;
+}) {
+  const { conversationId, sender, errorDetails, metadata } = params;
+
+  if (!conversationId) return;
+
+  return supabase.from("messages").insert({
+    conversation_id: conversationId,
+    sender,
+    channel: "whatsapp",
+    whatsapp_status: "failed",
+    error: "variable_mismatch",
+    error_details: errorDetails,
+    metadata: metadata ?? null,
+    sent_at: new Date().toISOString(),
+  });
+}
+
 
 /* ===========================================================================
    BUILD WHATSAPP PAYLOAD
@@ -195,7 +223,9 @@ function buildWhatsappPayload(body: SendBody) {
       ...payload,
       image: {
         link: body.image_url,
-        ...(body.text?.trim() ? { caption: body.text.trim().slice(0, 1000) } : {}),
+        ...(body.text?.trim()
+          ? { caption: body.text.trim().slice(0, 1000) }
+          : {}),
       },
     };
   }
@@ -206,7 +236,9 @@ function buildWhatsappPayload(body: SendBody) {
       ...payload,
       video: {
         link: body.video_url,
-        ...(body.text?.trim() ? { caption: body.text.trim().slice(0, 1000) } : {}),
+        ...(body.text?.trim()
+          ? { caption: body.text.trim().slice(0, 1000) }
+          : {}),
       },
     };
   }
@@ -223,7 +255,9 @@ function buildWhatsappPayload(body: SendBody) {
       document: {
         link: body.document_url,
         filename: body.filename ?? "Document",
-        ...(body.text?.trim() ? { caption: body.text.trim().slice(0, 1000) } : {}),
+        ...(body.text?.trim()
+          ? { caption: body.text.trim().slice(0, 1000) }
+          : {}),
       },
     };
   }
@@ -281,15 +315,18 @@ serve(async (req: Request) => {
         .maybeSingle();
 
       if (convErr || !conv?.id) {
-        return new Response(JSON.stringify({ error: "Conversation not found" }), {
-          status: 404,
-        });
+        return new Response(
+          JSON.stringify({ error: "Conversation not found" }),
+          {
+            status: 404,
+          }
+        );
       }
 
       if (conv.channel !== "whatsapp") {
         return new Response(
           JSON.stringify({ error: "Conversation is not WhatsApp" }),
-          { status: 400 },
+          { status: 400 }
         );
       }
 
@@ -318,7 +355,7 @@ serve(async (req: Request) => {
       if (!to) {
         return new Response(
           JSON.stringify({ error: "Invalid or missing contact phone" }),
-          { status: 400 },
+          { status: 400 }
         );
       }
 
@@ -327,21 +364,44 @@ serve(async (req: Request) => {
       if (!settings?.api_token || !settings?.whatsapp_phone_id) {
         return new Response(
           JSON.stringify({ error: "WhatsApp settings not found" }),
-          { status: 400 },
+          { status: 400 }
         );
       }
 
       // Build WA payload
-      const waPayload = buildWhatsappPayload({
-        ...body,
-        organization_id: orgId,
-        to,
-        type: msgType,
-        // Map unified media fields
-        image_url: msgType === "image" ? body.media_url ?? body.image_url : body.image_url,
-        document_url:
-          msgType === "document" ? body.media_url ?? body.document_url : body.document_url,
-      });
+      let waPayload: any;
+
+try {
+  waPayload = buildWhatsappPayload({
+    ...body,
+    organization_id: orgId,
+    to,
+    type: msgType,
+    image_url:
+      msgType === "image"
+        ? body.media_url ?? body.image_url
+        : body.image_url,
+    document_url:
+      msgType === "document"
+        ? body.media_url ?? body.document_url
+        : body.document_url,
+  });
+} catch (err: any) {
+  await persistVariableMismatch({
+    conversationId,
+    sender: "agent",
+    errorDetails: err.message,
+  });
+
+  return new Response(
+    JSON.stringify({
+      error: "VARIABLE_MISMATCH",
+      details: err.message,
+    }),
+    { status: 422 }
+  );
+}
+
 
       // Idempotency (conversation_id based)
       const keyMaterial = stableJsonStringify({
@@ -372,7 +432,7 @@ serve(async (req: Request) => {
             message_id: existing.id,
             whatsapp_message_id: existing.whatsapp_message_id ?? null,
           }),
-          { status: 200 },
+          { status: 200 }
         );
       }
 
@@ -388,15 +448,35 @@ serve(async (req: Request) => {
       });
 
       const metaResponse = await waRes.json().catch(() => null);
+
+      console.log("[whatsapp-send][system] META RESPONSE:", metaResponse);
+
       if (!waRes.ok) {
         return new Response(
           JSON.stringify({ error: "Meta send failed", metaResponse }),
-          { status: 500 },
+          { status: 500 }
         );
       }
 
-      const waMessageId =
-        metaResponse?.messages?.[0]?.id ?? metaResponse?.message_id ?? null;
+      const waMessageId = metaResponse?.messages?.[0]?.id ?? null;
+
+      if (!waMessageId) {
+        await persistVariableMismatch({
+          conversationId,
+          sender: body.sender ?? "bot",
+          errorDetails: "Meta rejected template payload",
+          metadata: metaResponse,
+        });
+      
+        return new Response(
+          JSON.stringify({
+            error: "VARIABLE_MISMATCH",
+            details: "Meta rejected template payload",
+          }),
+          { status: 422 }
+        );
+      }
+      
 
       // Insert message (sender=agent) + set initial receipt state
       const nowIso = new Date().toISOString();
@@ -421,7 +501,7 @@ serve(async (req: Request) => {
       if (insertErr) {
         return new Response(
           JSON.stringify({ error: "DB insert failed", details: insertErr }),
-          { status: 500 },
+          { status: 500 }
         );
       }
 
@@ -446,7 +526,7 @@ serve(async (req: Request) => {
           whatsapp_message_id: waMessageId,
           meta_response: metaResponse,
         }),
-        { status: 200 },
+        { status: 200 }
       );
     }
 
@@ -458,12 +538,27 @@ serve(async (req: Request) => {
     const orgId = body.organization_id?.trim();
     const contactId = body.contact_id ?? null;
     const type = body.type;
-    const to = body.to?.trim();
 
-    if (!orgId || !type || !to) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), {
-        status: 400,
-      });
+    const rawTo = body.to?.trim() ?? "";
+    const toNorm = normalizePhoneToWaIndia(rawTo);
+
+    if (!toNorm) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid recipient phone",
+          rawTo,
+        }),
+        { status: 400 }
+      );
+    }
+
+    body.to = toNorm;
+
+    if (!orgId || !type || !body.to) {
+      return new Response(
+        JSON.stringify({ error: "Missing required fields" }),
+        { status: 400 }
+      );
     }
 
     if (type === "typing_on") {
@@ -474,20 +569,43 @@ serve(async (req: Request) => {
     if (!settings?.api_token || !settings?.whatsapp_phone_id) {
       return new Response(
         JSON.stringify({ error: "WhatsApp settings not found" }),
-        { status: 400 },
+        { status: 400 }
       );
     }
 
-    const waPayload = buildWhatsappPayload(body);
-    if (!waPayload) {
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
-    }
+    let waPayload: any;
+
+    let conversationId: string | null = null;
+
+try {
+  waPayload = buildWhatsappPayload(body);
+} catch (err: any) {
+  await persistVariableMismatch({
+    conversationId,
+    sender: body.sender ?? "bot",
+    errorDetails: err.message,
+    metadata: body.metadata ?? null,
+  });
+
+  return new Response(
+    JSON.stringify({
+      error: "VARIABLE_MISMATCH",
+      details: err.message,
+    }),
+    { status: 422 }
+  );
+}
+
+if (!waPayload) {
+  return new Response(JSON.stringify({ success: true }), { status: 200 });
+}
+
 
     /* ============================================================
        P1-A — OUTBOUND IDEMPOTENCY
     ============================================================ */
 
-    let conversationId: string | null = null;
+    
 
     if (contactId) {
       const { data: conversation } = await supabase
@@ -507,7 +625,7 @@ serve(async (req: Request) => {
       const keyMaterial = stableJsonStringify({
         orgId,
         conversationId,
-        to,
+        to: body.to,
         type,
         text: body.text ?? null,
         template_name: body.template_name ?? null,
@@ -539,7 +657,7 @@ serve(async (req: Request) => {
             deduped: true,
             whatsapp_message_id: existing.whatsapp_message_id ?? null,
           }),
-          { status: 200 },
+          { status: 200 }
         );
       }
     }
@@ -561,17 +679,34 @@ serve(async (req: Request) => {
 
     const metaResponse = await waRes.json().catch(() => null);
 
+    console.log("[whatsapp-send][inbox] META RESPONSE:", metaResponse);
+
     if (!waRes.ok) {
       return new Response(
         JSON.stringify({ error: "Meta send failed", metaResponse }),
-        { status: 500 },
+        { status: 500 }
       );
     }
 
-    const waMessageId =
-      metaResponse?.messages?.[0]?.id ??
-      metaResponse?.message_id ??
-      null;
+    const waMessageId = metaResponse?.messages?.[0]?.id ?? null;
+
+    if (!waMessageId) {
+      await persistVariableMismatch({
+        conversationId,
+        sender: body.sender ?? "bot",
+        errorDetails: "Meta rejected template payload",
+        metadata: metaResponse,
+      });
+    
+      return new Response(
+        JSON.stringify({
+          error: "VARIABLE_MISMATCH",
+          details: "Meta rejected template payload",
+        }),
+        { status: 422 }
+      );
+    }
+    
 
     if (conversationId) {
       const nowIso = new Date().toISOString();
@@ -598,13 +733,12 @@ serve(async (req: Request) => {
 
     return new Response(
       JSON.stringify({ success: true, meta_response: metaResponse }),
-      { status: 200 },
+      { status: 200 }
     );
   } catch (err) {
     console.error("[whatsapp-send] Fatal:", err);
-    return new Response(
-      JSON.stringify({ error: "Internal Server Error" }),
-      { status: 500 },
-    );
+    return new Response(JSON.stringify({ error: "Internal Server Error" }), {
+      status: 500,
+    });
   }
 });

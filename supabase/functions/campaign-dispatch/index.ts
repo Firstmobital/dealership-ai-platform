@@ -92,7 +92,6 @@ type WhatsappTemplate = {
   body_variable_indices: number[] | null;
 };
 
-
 type DispatchMode = "scheduled" | "immediate";
 
 /* ============================================================
@@ -146,29 +145,47 @@ function buildWhatsappParamsFromRow(params: {
     const column = params.variableMap[String(idx)];
     let rawValue = column ? params.rawRow[column] : "";
 
-let value = "";
+    let value = "";
 
-if (rawValue === null || rawValue === undefined) {
-  value = "";
-} else if (typeof rawValue === "string" || typeof rawValue === "number") {
-  value = String(rawValue);
-} else if (typeof rawValue === "object") {
-  // try common patterns first
-  value =
-    rawValue.name ??
-    rawValue.label ??
-    rawValue.value ??
-    rawValue.text ??
-    JSON.stringify(rawValue);
-} else {
-  value = String(rawValue);
-}
+    if (rawValue === null || rawValue === undefined) {
+      value = "";
+    } else if (typeof rawValue === "string" || typeof rawValue === "number") {
+      value = String(rawValue);
+    } else if (typeof rawValue === "object") {
+      // try common patterns first
+      value =
+        rawValue.name ??
+        rawValue.label ??
+        rawValue.value ??
+        rawValue.text ??
+        JSON.stringify(rawValue);
+    } else {
+      value = String(rawValue);
+    }
     out.push({ type: "text", text: value });
   }
 
   return out;
 }
 
+/* ============================================================
+   🚨 VARIABLE MISMATCH ENFORCEMENT
+============================================================ */
+function hasVariableMismatch(
+  variables: { type: string; text: string }[],
+  template: WhatsappTemplate
+): boolean {
+  const requiredCount =
+    (template.header_variable_indices?.length ?? 0) +
+    (template.body_variable_indices?.length ?? 0);
+
+  if (requiredCount === 0) return false;
+
+  if (!Array.isArray(variables)) return true;
+  if (variables.length < requiredCount) return true;
+
+  return variables.some((v) => !v || !v.text || !String(v.text).trim());
+}
 
 /* ============================================================
    PHASE 2.4 — TEMPLATE HEADER COMPONENTS
@@ -222,9 +239,7 @@ function resolveTemplateText(
 
   for (const [idx, column] of Object.entries(mapping ?? {})) {
     const value =
-      rawRow && column in rawRow
-        ? String(rawRow[column] ?? "")
-        : "";
+      rawRow && column in rawRow ? String(rawRow[column] ?? "") : "";
 
     text = text.replaceAll(`{{${idx}}}`, value);
   }
@@ -232,14 +247,14 @@ function resolveTemplateText(
   return text;
 }
 
-
 /* ============================================================
    FETCH TEMPLATE
 ============================================================ */
 async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
   const { data, error } = await supabaseAdmin
     .from("whatsapp_templates")
-    .select(`
+    .select(
+      `
       name,
       language,
       status,
@@ -251,7 +266,8 @@ async function fetchTemplate(templateId: string): Promise<WhatsappTemplate> {
       header_variable_indices,
       body_variable_count,
       body_variable_indices
-    `)    
+    `
+    )
     .eq("id", templateId)
     .single();
 
@@ -373,7 +389,7 @@ async function sendWhatsappTemplate(params: {
       type: "template",
       metadata: {
         reply_sheet_tab: params.reply_sheet_tab,
-        },
+      },
       template_name: params.templateName,
       template_language: params.language,
       template_variables: params.variables,
@@ -407,7 +423,7 @@ async function fetchCampaignById(campaignId: string): Promise<Campaign | null> {
     .from("campaigns")
     .select(
       "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
-    )    
+    )
     .eq("id", campaignId)
     .maybeSingle();
 
@@ -423,7 +439,7 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
     .from("campaigns")
     .select(
       "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
-    )    
+    )
     .in("status", ["scheduled", "sending"])
     .lte("scheduled_at", nowIso)
     .limit(MAX_CAMPAIGNS_PER_RUN);
@@ -440,7 +456,7 @@ async function fetchMessages(campaignId: string): Promise<CampaignMessage[]> {
     .from("campaign_messages")
     .select(
       "id, organization_id, campaign_id, contact_id, phone, raw_row, variables, status"
-    )    
+    )
     .eq("campaign_id", campaignId)
     .in("status", ["pending", "queued"])
     .limit(MAX_MESSAGES_PER_CAMPAIGN_PER_RUN);
@@ -462,30 +478,23 @@ async function createPsfCasesForCampaign(params: {
 
   const rows = messages.map((m) => {
     const raw = m.raw_row ?? {};
-  
+
     return {
       organization_id: m.organization_id,
       campaign_id: m.campaign_id,
       phone: normalizeToIndiaDigits(m.phone),
-  
+
       // ✅ PSF summary fields (for inbox + UX)
-      customer_name:
-        raw.name ??
-        raw.customer_name ??
-        raw.first_name ??
-        null,
-  
-      model:
-        raw.model ??
-        raw.vehicle_model ??
-        null,
-  
+      customer_name: raw.name ?? raw.customer_name ?? raw.first_name ?? null,
+
+      model: raw.model ?? raw.vehicle_model ?? null,
+
       // ✅ full original uploaded row (authoritative)
       uploaded_data: raw,
-  
+
       initial_sent_at: new Date().toISOString(),
     };
-  });  
+  });
 
   if (!rows.length) return;
 
@@ -674,7 +683,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
     body_variable_count: template.body_variable_count,
     body_variable_indices: template.body_variable_indices,
   };
-  
+
   const messages = await fetchMessages(campaign.id);
   // ✅ PSF STEP 2 — create PSF cases before sending
   await createPsfCasesForCampaign({
@@ -696,7 +705,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         organizationId: msg.organization_id,
         msg,
       });
-      
+
       const phonePlus = toE164Plus(phoneDigits);
       if (!phonePlus) {
         await markFailed(msg.id, "Invalid phone");
@@ -712,7 +721,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
             template.body,
             msg.raw_row ?? {},
             campaign.meta?.variable_map ?? null
-          );          
+          );
         }
         await setRenderedText(msg.id, renderedText);
       } catch {
@@ -732,34 +741,37 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
           : headerType === "DOCUMENT"
           ? "document"
           : "template";
-                
-          const variables = buildWhatsappParamsFromRow({
-            template,
-            rawRow: msg.raw_row ?? null,
-            variableMap: campaign.meta?.variable_map,
-          });
-          
-          
-          const waId = await sendWhatsappTemplate({
-            organizationId: msg.organization_id,
-            contactId,
-            phonePlusE164: phonePlus,
-            templateName: template.name,
-            language: template.language,
-          
-            variables,
-          
-            renderedText,
-            reply_sheet_tab: campaign.reply_sheet_tab,
-          
-            templateComponents: [
-              ...buildTemplateHeaderComponents(template),
-            ],
-          
-            mediaUrl: template.header_media_url,
-            mimeType: template.header_media_mime,
-            messageType,
-          });          
+
+      const variables = buildWhatsappParamsFromRow({
+        template,
+        rawRow: msg.raw_row ?? null,
+        variableMap: campaign.meta?.variable_map,
+      });
+
+      // 🚨 HARD BLOCK — VARIABLE MISMATCH
+      if (hasVariableMismatch(variables, template)) {
+        await markFailed(msg.id, "variable_mismatch");
+        continue; // ⛔ DO NOT SEND TO WHATSAPP
+      }
+
+      const waId = await sendWhatsappTemplate({
+        organizationId: msg.organization_id,
+        contactId,
+        phonePlusE164: phonePlus,
+        templateName: template.name,
+        language: template.language,
+
+        variables,
+
+        renderedText,
+        reply_sheet_tab: campaign.reply_sheet_tab,
+
+        templateComponents: [...buildTemplateHeaderComponents(template)],
+
+        mediaUrl: template.header_media_url,
+        mimeType: template.header_media_mime,
+        messageType,
+      });
 
       // keep your current behavior
       await markSent(msg.id, waId);
@@ -825,21 +837,18 @@ serve(async (req: Request) => {
               "Content-Type": "application/json",
             },
           }
-        );        
+        );
       }
 
       const campaign = await fetchCampaignById(immediateCampaignId);
       if (!campaign) {
-        return new Response(
-          JSON.stringify({ error: "Campaign not found" }),
-          {
-            status: 404,
-            headers: {
-              ...corsHeaders,
-              "Content-Type": "application/json",
-            },
-          }
-        );        
+        return new Response(JSON.stringify({ error: "Campaign not found" }), {
+          status: 404,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+          },
+        });
       }
 
       if (campaign.status === "sending" || campaign.status === "completed") {
@@ -852,7 +861,7 @@ serve(async (req: Request) => {
               "Content-Type": "application/json",
             },
           }
-        );        
+        );
       }
 
       await markCampaignSending(campaign.id, true);
@@ -872,7 +881,7 @@ serve(async (req: Request) => {
               "Content-Type": "application/json",
             },
           }
-        );        
+        );
       } catch (e) {
         await markCampaignFailed(
           campaign.id,
@@ -887,7 +896,7 @@ serve(async (req: Request) => {
               "Content-Type": "application/json",
             },
           }
-        );        
+        );
       }
     }
 
@@ -915,7 +924,7 @@ serve(async (req: Request) => {
         body_variable_count: template.body_variable_count,
         body_variable_indices: template.body_variable_indices,
       };
-      
+
       const messages = await fetchMessages(campaign.id);
       // ✅ PSF STEP 2 — create PSF cases before sending
       await createPsfCasesForCampaign({
@@ -936,7 +945,6 @@ serve(async (req: Request) => {
               msg,
             });
 
-
           const phonePlus = toE164Plus(phoneDigits);
           if (!phonePlus) {
             await markFailed(msg.id, "Invalid phone");
@@ -952,7 +960,7 @@ serve(async (req: Request) => {
                 template.body,
                 msg.raw_row ?? {},
                 campaign.meta?.variable_map ?? null
-              );              
+              );
             }
             await setRenderedText(msg.id, renderedText);
           } catch {
@@ -976,34 +984,37 @@ serve(async (req: Request) => {
               : headerType === "DOCUMENT"
               ? "document"
               : "template";
-              
-              const variables = buildWhatsappParamsFromRow({
-                template,
-                rawRow: msg.raw_row ?? null,
-                variableMap: campaign.meta?.variable_map,
-              });
-              
-              
-              const waId = await sendWhatsappTemplate({
-                organizationId: msg.organization_id,
-                contactId,
-                phonePlusE164: phonePlus,
-                templateName: template.name,
-                language: template.language,
-              
-                variables,
-              
-                renderedText,
-                reply_sheet_tab: campaign.reply_sheet_tab,
-              
-                templateComponents: [
-                  ...buildTemplateHeaderComponents(template),
-                ],
-              
-                mediaUrl: template.header_media_url,
-                mimeType: template.header_media_mime,
-                messageType,
-              });              
+
+          const variables = buildWhatsappParamsFromRow({
+            template,
+            rawRow: msg.raw_row ?? null,
+            variableMap: campaign.meta?.variable_map,
+          });
+
+          // 🚨 HARD BLOCK — VARIABLE MISMATCH
+          if (hasVariableMismatch(variables, template)) {
+            await markFailed(msg.id, "variable_mismatch");
+            continue; // ⛔ DO NOT SEND TO WHATSAPP
+          }
+
+          const waId = await sendWhatsappTemplate({
+            organizationId: msg.organization_id,
+            contactId,
+            phonePlusE164: phonePlus,
+            templateName: template.name,
+            language: template.language,
+
+            variables,
+
+            renderedText,
+            reply_sheet_tab: campaign.reply_sheet_tab,
+
+            templateComponents: [...buildTemplateHeaderComponents(template)],
+
+            mediaUrl: template.header_media_url,
+            mimeType: template.header_media_mime,
+            messageType,
+          });
 
           await markSent(msg.id, waId);
 
@@ -1049,7 +1060,7 @@ serve(async (req: Request) => {
           "Content-Type": "application/json",
         },
       }
-    );    
+    );
   } catch (e) {
     console.error("campaign-dispatch fatal", e);
     return new Response(
@@ -1061,6 +1072,6 @@ serve(async (req: Request) => {
           "Content-Type": "application/json",
         },
       }
-    );    
+    );
   }
 });

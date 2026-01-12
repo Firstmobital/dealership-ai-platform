@@ -70,6 +70,147 @@ function renderTemplatePreview(body: string, vars: Record<string, string>) {
 }
 
 /* ========================================================================
+   VARIABLE / CSV HELPERS
+========================================================================= */
+
+function normalizeKey(s: string) {
+  return String(s ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_-]+/g, " ")
+    .replace(/[^\w\s]/g, "");
+}
+
+// SAFE auto-map: only maps {{idx}} if a column clearly matches patterns like:
+// "1", "var 1", "var1", "v1", "template 1", "parameter 1", "{{1}}", "col1"
+function inferVarColumn(idx: string, availableCols: string[]) {
+  const n = String(idx).trim();
+  if (!n) return null;
+
+  const patterns = [
+    n,
+    `{{${n}}}`,
+    `var ${n}`,
+    `var${n}`,
+    `v ${n}`,
+    `v${n}`,
+    `template ${n}`,
+    `parameter ${n}`,
+    `param ${n}`,
+    `column ${n}`,
+    `col ${n}`,
+    `col${n}`,
+    `column${n}`,
+  ].map(normalizeKey);
+
+  const matches = availableCols.filter((c) => patterns.includes(normalizeKey(c)));
+  if (matches.length === 1) return matches[0];
+
+  // also allow exact numeric column header "1"
+  const exact = availableCols.find((c) => normalizeKey(c) === normalizeKey(n));
+  if (exact) return exact;
+
+  return null;
+}
+
+
+function validateMappingAndRows(args: {
+  parsedRows: ParsedCsvRow[];
+  requiredTemplateVars: string[];
+  variableMap: Record<string, string>;
+}) {
+  const { parsedRows, requiredTemplateVars, variableMap } = args;
+
+  if (!parsedRows.length) {
+    return {
+      ok: false,
+      mappingOk: false,
+      rowsOk: false,
+      reason: "No contacts uploaded",
+      invalidCount: 0,
+      samplePhones: [] as string[],
+    };
+  }
+
+  // if no template variables required -> OK
+  if (!requiredTemplateVars.length) {
+    return {
+      ok: true,
+      mappingOk: true,
+      rowsOk: true,
+      reason: "",
+      invalidCount: 0,
+      samplePhones: [] as string[],
+    };
+  }
+
+  // mapping validity
+  for (const idx of requiredTemplateVars) {
+    const col = variableMap[idx];
+    if (!col || !String(col).trim()) {
+      return {
+        ok: false,
+        mappingOk: false,
+        rowsOk: false,
+        reason: `Variable {{${idx}}} is not mapped`,
+        invalidCount: 0,
+        samplePhones: [] as string[],
+      };
+    }
+    if (!Object.prototype.hasOwnProperty.call(parsedRows[0].row, col)) {
+      return {
+        ok: false,
+        mappingOk: false,
+        rowsOk: false,
+        reason: `Mapped column "${col}" for {{${idx}}} does not exist in file`,
+        invalidCount: 0,
+        samplePhones: [] as string[],
+      };
+    }
+  }
+
+  // row value validity (empty values are variable mismatch)
+  let invalidCount = 0;
+  const samplePhones: string[] = [];
+
+  for (const r of parsedRows) {
+    let bad = false;
+    for (const idx of requiredTemplateVars) {
+      const col = variableMap[idx];
+      const val = col ? r.row[col] : "";
+      if (!val || !String(val).trim()) {
+        bad = true;
+        break;
+      }
+    }
+    if (bad) {
+      invalidCount++;
+      if (samplePhones.length < 5) samplePhones.push(r.phone);
+    }
+  }
+
+  if (invalidCount > 0) {
+    return {
+      ok: false,
+      mappingOk: true,
+      rowsOk: false,
+      reason: `Some rows have missing/empty template variables`,
+      invalidCount,
+      samplePhones,
+    };
+  }
+
+  return {
+    ok: true,
+    mappingOk: true,
+    rowsOk: true,
+    reason: "",
+    invalidCount: 0,
+    samplePhones: [] as string[],
+  };
+}
+
+/* ========================================================================
    PREVIEW CARD
 ========================================================================= */
 function WhatsAppPreviewCard({
@@ -239,10 +380,8 @@ export function CampaignsModule() {
   // ================================
   const availableColumns = useMemo(() => {
     if (!parsedRows.length) return [];
-    return Object.keys(parsedRows[0].row)
-      .map((k) => k.toLowerCase().trim())
-      .filter((k) => k && k.toLowerCase() !== "phone");
-  }, [parsedRows]);
+    return Object.keys(parsedRows[0].row);
+  }, [parsedRows]);  
 
   // Reset media UI cleanly when template changes
   useEffect(() => {
@@ -252,6 +391,7 @@ export function CampaignsModule() {
     setMediaUploadSuccess(false);
     setMediaUrl(selectedTemplate?.header_media_url ?? null);
     setMediaMime(selectedTemplate?.header_media_mime ?? null);
+    setVariableMap({});
   }, [selectedTemplate?.id]);
 
   const attachedFileName = useMemo(
@@ -294,12 +434,13 @@ export function CampaignsModule() {
             const row = parsedRows[0]?.row;
             if (!row) return {};
             const out: Record<string, string> = {};
-            Object.keys(variableMap)
-              .sort((a, b) => Number(a) - Number(b))
-              .forEach((k) => {
-                const col = variableMap[k];
-                out[k] = col && row[col] !== undefined ? row[col] : "";
-              });
+            requiredTemplateVars
+  .map(String)
+  .sort((a, b) => Number(a) - Number(b))
+  .forEach((k) => {
+    const col = variableMap[k];
+    out[k] = col && row && row[col] !== undefined ? row[col] : "";
+  });
             return out;
           })()
         )
@@ -323,6 +464,40 @@ export function CampaignsModule() {
         )
     );
   }, [parsedRows, requiredTemplateVars, variableMap]);
+
+  // ================================
+// Phase C: SAFE auto-map CSV → template variables
+// ================================
+useEffect(() => {
+  if (!availableColumns.length) return;
+  if (!requiredTemplateVars.length) return;
+
+  setVariableMap((prev) => {
+    const next = { ...prev };
+    let changed = false;
+
+    for (const idx of requiredTemplateVars) {
+      if (next[idx]) continue; // never override user choice
+      const inferred = inferVarColumn(String(idx), availableColumns);
+      if (inferred) {
+        next[idx] = inferred;
+        changed = true;
+      }
+    }
+
+    return changed ? next : prev;
+  });
+}, [availableColumns, requiredTemplateVars]);
+
+
+// Full validation (mapping + per-row non-empty variables)
+const variableValidation = useMemo(() => {
+  return validateMappingAndRows({
+    parsedRows,
+    requiredTemplateVars: requiredTemplateVars.map(String),
+    variableMap,
+  });
+}, [parsedRows, requiredTemplateVars, variableMap]);
 
   /* --------------------------------------------------------------------
      ANALYTICS (SAFE FALLBACK)
@@ -373,6 +548,7 @@ export function CampaignsModule() {
     setTestPhone("");
     setVariableMap({});
 
+
     // ✅ NEW: reset scheduling UI
     setSendMode("now");
     setScheduledAtLocal("");
@@ -405,12 +581,27 @@ export function CampaignsModule() {
     }
 
     // Phase C: Variable mapping validation
-    for (const idx of [...requiredHeaderVars, ...requiredBodyVars]) {
-      if (!variableMap[idx]) {
-        alert(`Please map variable {{${idx}}}`);
-        return null;
-      }
-    }
+        // ✅ Phase C: Variable mapping + per-row value validation
+        const v = validateMappingAndRows({
+          parsedRows,
+          requiredTemplateVars: requiredTemplateVars.map(String),
+          variableMap,
+        });
+    
+        if (!v.mappingOk) {
+          alert(v.reason || "Template variables are not mapped correctly");
+          return null;
+        }
+    
+        if (!v.rowsOk) {
+          alert(
+            `${v.reason}\nInvalid rows: ${v.invalidCount}\nExamples: ${v.samplePhones.join(
+              ", "
+            )}`
+          );
+          return null;
+        }
+    
 
     // ✅ NEW: validate mapped columns actually exist in uploaded data
     if (parsedRows.length > 0) {
@@ -870,6 +1061,30 @@ alert("🚀 Campaign sent immediately");
               ))}
             </select>
 
+
+                        {/* ✅ Variable validation banner */}
+                        {!variableValidation.ok && (requiredTemplateVars.length > 0 || parsedRows.length > 0) ? (
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm">
+                <div className="font-semibold text-red-800">Variable mismatch risk</div>
+                <div className="text-red-700 text-xs mt-1">
+                  {variableValidation.reason}
+                  {variableValidation.invalidCount > 0 ? (
+                    <>
+                      <div className="mt-1">
+                        Invalid rows: <b>{variableValidation.invalidCount}</b>
+                      </div>
+                      {variableValidation.samplePhones.length ? (
+                        <div className="mt-1">
+                          Examples: <span className="font-mono">{variableValidation.samplePhones.join(", ")}</span>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+
             {/* =========================
     Phase C: Variable Mapping
 ========================== */}
@@ -1192,7 +1407,7 @@ alert("🚀 Campaign sent immediately");
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={launchNow}
-                disabled={busy || !isMappingValid}
+                disabled={busy || !variableValidation.ok}
                 className="inline-flex items-center gap-2 rounded-md bg-green-600 text-white px-3 py-2 text-sm hover:bg-green-700 disabled:opacity-60"
               >
                 {busy ? (
@@ -1205,7 +1420,7 @@ alert("🚀 Campaign sent immediately");
 
               <button
                 onClick={saveDraft}
-                disabled={busy || !isMappingValid}
+                disabled={busy || !variableValidation.ok}
                 className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-60"
               >
                 {busy ? (
@@ -1325,7 +1540,12 @@ alert("🚀 Campaign sent immediately");
                         <tr key={m.id} className="border-b">
                           <td className="px-2 py-2 font-mono">{m.phone}</td>
                           <td className="px-2 py-2">{m.status}</td>
-                          <td className="px-2 py-2 text-red-600">{m.error}</td>
+
+
+<td className="px-2 py-2 text-red-600">
+  {m.error === "variable_mismatch" ? "Variable mismatch" : (m.error ?? "")}
+</td>
+
                         </tr>
                       ))}
                       {selectedMsgs.length === 0 ? (
