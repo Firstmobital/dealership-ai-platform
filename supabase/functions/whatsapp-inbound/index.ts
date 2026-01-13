@@ -115,20 +115,29 @@ function normalizeWaPhone(input?: string | null): string | null {
 async function fetchLatestReplySheetTab(params: {
   conversationId: string;
 }) {
+  // 1) Prefer conversation-level routing (stable across multiple replies)
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("campaign_reply_sheet_tab")
+    .eq("id", params.conversationId)
+    .maybeSingle();
+
+  const direct = (conv as any)?.campaign_reply_sheet_tab ?? null;
+  if (direct) return direct;
+
+  // 2) Fallback: latest outbound message metadata
   const { data, error } = await supabase
     .from("messages")
     .select("metadata")
     .eq("conversation_id", params.conversationId)
-    .eq("sender", "bot") // outbound campaign / bot messages
+    .in("sender", ["bot", "agent"]) // outbound campaign / agent-sent messages
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (error || !data?.metadata) return null;
-
-  return data.metadata?.reply_sheet_tab ?? null;
+  return (data as any).metadata?.reply_sheet_tab ?? null;
 }
-
 
 /* =====================================================================================
    MEDIA HELPERS

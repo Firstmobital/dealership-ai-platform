@@ -331,7 +331,6 @@ async function createWalletDebit(params: {
   return data.id;
 }
 
-
 /* ============================================================================
    GREETING DETECTOR (HARD RULE)
 ============================================================================ */
@@ -442,7 +441,6 @@ Customer message:
     };
   }
 }
-
 
 /* ============================================================================
    PHASE 4 — PRICING (CUSTOMER) + COST (PLATFORM)
@@ -678,6 +676,19 @@ Rules you MUST follow:
 `.trim();
 }
 
+function buildCampaignFactsBlock(
+  campaignContext: Record<string, any> | null
+): string {
+  if (!campaignContext) return "";
+
+  return `
+KNOWN FROM CAMPAIGN (DO NOT ASK AGAIN):
+${Object.entries(campaignContext)
+  .map(([k, v]) => `- ${k.replace(/_/g, " ")}: ${v}`)
+  .join("\n")}
+`.trim();
+}
+
 /* ============================================================================
    BOT PERSONALITY (ORG → SUB-ORG OVERRIDE)
 ============================================================================ */
@@ -733,27 +744,21 @@ function containsPhrase(haystack: string, needle: string): boolean {
   return h.includes(n);
 }
 
-function titleMatchesMessage(
-  message: string,
-  title: string
-): boolean {
+function titleMatchesMessage(message: string, title: string): boolean {
   const msg = normalizeForMatch(message);
   const titleNorm = normalizeForMatch(title);
 
-  const tokens = titleNorm
-    .split(" ")
-    .filter(
-      (t) =>
-        t.length >= 3 &&
-        !/^\d{4}$/.test(t) && // ignore years like 2026
-        t !== "pricing" // normalize price/pricing difference
-    );
+  const tokens = titleNorm.split(" ").filter(
+    (t) =>
+      t.length >= 3 &&
+      !/^\d{4}$/.test(t) && // ignore years like 2026
+      t !== "pricing" // normalize price/pricing difference
+  );
 
   if (!tokens.length) return false;
 
   return tokens.every((t) => containsPhrase(msg, t));
 }
-
 
 async function resolveKnowledgeContext(params: {
   userMessage: string;
@@ -778,44 +783,43 @@ async function resolveKnowledgeContext(params: {
     .eq("organization_id", organizationId)
     .eq("status", "published");
 
-    if (error) {
-      logger.error("[kb] failed to load articles", { error });
-      return null;
-    }
-    
-    if (!articles?.length) {
-      logger.warn("[kb] ZERO articles found for organization", {
-        organization_id: organizationId,
-      });
-      return null;
-    }    
+  if (error) {
+    logger.error("[kb] failed to load articles", { error });
+    return null;
+  }
+
+  if (!articles?.length) {
+    logger.warn("[kb] ZERO articles found for organization", {
+      organization_id: organizationId,
+    });
+    return null;
+  }
 
   const scoped = articles as any[];
 
   // 🔍 AI-assisted model scoping (smart, typo-safe)
-let kbScoped = scoped;
+  let kbScoped = scoped;
 
-if (params.vehicleModel) {
-  const model = normalizeForMatch(params.vehicleModel);
+  if (params.vehicleModel) {
+    const model = normalizeForMatch(params.vehicleModel);
 
-  const filtered = scoped.filter((a) =>
-    normalizeForMatch(a.title).includes(model)
-  );
+    const filtered = scoped.filter((a) =>
+      normalizeForMatch(a.title).includes(model)
+    );
 
-  if (filtered.length > 0) {
-    kbScoped = filtered;
+    if (filtered.length > 0) {
+      kbScoped = filtered;
+    }
+
+    logger.info("[kb] scoped by AI model", {
+      vehicle_model: params.vehicleModel,
+      before: scoped.length,
+      after: filtered.length,
+      used_filtered: filtered.length > 0,
+    });
   }
 
-  logger.info("[kb] scoped by AI model", {
-    vehicle_model: params.vehicleModel,
-    before: scoped.length,
-    after: filtered.length,
-    used_filtered: filtered.length > 0,
-  });
-}
-
-const effectiveArticles = kbScoped;
-
+  const effectiveArticles = kbScoped;
 
   // -------------------------
   // PASS 1 — EXACT TITLE MATCH
@@ -828,10 +832,8 @@ const effectiveArticles = kbScoped;
       title_len: normalizeForMatch(a.title).length,
     }))
     .filter(
-      (a) =>
-        a.title_len >= 4 &&
-        titleMatchesMessage(userMessage, a.title)
-    )    
+      (a) => a.title_len >= 4 && titleMatchesMessage(userMessage, a.title)
+    )
     .sort(
       (a, b) =>
         b.title_len - a.title_len || String(a.id).localeCompare(String(b.id))
@@ -848,7 +850,6 @@ const effectiveArticles = kbScoped;
       title: best.title,
     };
   }
-
 
   // -------------------------
   // PASS 2 — KEYWORD MATCH (DETERMINISTIC, NO SCORING)
@@ -897,44 +898,43 @@ const effectiveArticles = kbScoped;
     keywordCandidates[1].matchCount === top.matchCount &&
     keywordCandidates[1].bestLen === top.bestLen;
 
-    if (tied) {
-      // 🔒 Deterministic tie-breaker using locked entity (model)
-      if (params.vehicleModel) {
-        const modelNorm = normalizeForMatch(params.vehicleModel);
-    
-        const entityFiltered = keywordCandidates.filter((x) =>
-          normalizeForMatch(x.a.title).includes(modelNorm)
-        );
-    
-        if (entityFiltered.length === 1) {
-          const best = entityFiltered[0].a;
-    
-          logger.info("[kb] keyword tie resolved by locked model", {
-            model: params.vehicleModel,
-            article_id: best.id,
-            title: best.title,
-          });
-    
-          return {
-            context: String(best.content || "").trim(),
-            match_type: "keyword",
-            article_id: best.id,
-            title: best.title,
-          };
-        }
+  if (tied) {
+    // 🔒 Deterministic tie-breaker using locked entity (model)
+    if (params.vehicleModel) {
+      const modelNorm = normalizeForMatch(params.vehicleModel);
+
+      const entityFiltered = keywordCandidates.filter((x) =>
+        normalizeForMatch(x.a.title).includes(modelNorm)
+      );
+
+      if (entityFiltered.length === 1) {
+        const best = entityFiltered[0].a;
+
+        logger.info("[kb] keyword tie resolved by locked model", {
+          model: params.vehicleModel,
+          article_id: best.id,
+          title: best.title,
+        });
+
+        return {
+          context: String(best.content || "").trim(),
+          match_type: "keyword",
+          article_id: best.id,
+          title: best.title,
+        };
       }
-    
-      logger.warn("[kb] keyword tie -> reject", {
-        top: keywordCandidates.slice(0, 5).map((x) => ({
-          id: x.a.id,
-          title: x.a.title,
-          matchCount: x.matchCount,
-        })),
-      });
-    
-      return null;
     }
-    
+
+    logger.warn("[kb] keyword tie -> reject", {
+      top: keywordCandidates.slice(0, 5).map((x) => ({
+        id: x.a.id,
+        title: x.a.title,
+        matchCount: x.matchCount,
+      })),
+    });
+
+    return null;
+  }
 
   const best = top.a;
   logger.info("[kb] keyword match", {
@@ -1208,7 +1208,6 @@ async function logUnansweredQuestion(params: {
   }
 }
 
-
 /* ============================================================================
    FOLLOW-UP SUGGESTION PROMPT (PHASE 1)
 ============================================================================ */
@@ -1240,48 +1239,46 @@ Return ONLY the suggested message text.
    MAIN HANDLER
 ============================================================================ */
 serve(async (req: Request): Promise<Response> => {
-
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200 });
   }
-  
+
   const request_id = crypto.randomUUID();
   const baseLogger = createLogger({ request_id });
 
   try {
     // 0) Parse body — SAFE (prevents crash on empty / invalid JSON)
-let body: {
-  conversation_id?: string;
-  user_message?: string;
-  mode?: "reply" | "suggest_followup";
-} | null = null;
+    let body: {
+      conversation_id?: string;
+      user_message?: string;
+      mode?: "reply" | "suggest_followup";
+    } | null = null;
 
-const rawBody = await req.text();
+    const rawBody = await req.text();
 
-if (rawBody && rawBody.trim().length > 0) {
-  try {
-    body = JSON.parse(rawBody);
-  } catch (err) {
-    baseLogger.error("[validation] Invalid JSON body", {
-      body_length: rawBody.length,
-      error: String(err),
-    });    
+    if (rawBody && rawBody.trim().length > 0) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch (err) {
+        baseLogger.error("[validation] Invalid JSON body", {
+          body_length: rawBody.length,
+          error: String(err),
+        });
 
-    return new Response(
-      JSON.stringify({ error: "Invalid JSON body" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
-  }
-}
+        return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
 
-if (!body) {
-  baseLogger.warn("[validation] Empty request body");
-  return new Response(
-    JSON.stringify({ error: "Empty request body" }),
-    { status: 400, headers: { "Content-Type": "application/json" } }
-  );
-}
-
+    if (!body) {
+      baseLogger.warn("[validation] Empty request body");
+      return new Response(JSON.stringify({ error: "Empty request body" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     const conversation_id = body.conversation_id;
     const raw_message = body.user_message;
@@ -1313,6 +1310,10 @@ if (!body) {
       ai_mode: AiMode | null;
       ai_summary: string | null;
       ai_last_entities: Record<string, any> | null;
+      campaign_id?: string | null;
+      workflow_id?: string | null;
+      campaign_context?: Record<string, any> | null;
+      campaign_reply_sheet_tab?: string | null;
     }>("load_conversation", baseLogger, () =>
       supabase
         .from("conversations")
@@ -1330,9 +1331,13 @@ if (!body) {
           ai_locked_by,
           ai_locked_at,
           ai_locked_until,
+          campaign_id,
+          workflow_id,
+          campaign_context,
+          campaign_reply_sheet_tab,
           ai_lock_reason
           `
-        )        
+        )
         .eq("id", conversation_id)
         .maybeSingle()
     );
@@ -1365,70 +1370,73 @@ if (!body) {
    4.1 AGENT TAKEOVER — HARD AI LOCK (SERVER ENFORCED)
 ============================================================================ */
 
-/* ============================================================================
+    /* ============================================================================
    AGENT TAKEOVER — EXPIRING AI LOCK (P1-C)
 ============================================================================ */
 
-if (conv.ai_locked === true) {
-  const until = conv.ai_locked_until
-    ? Date.parse(conv.ai_locked_until)
-    : NaN;
-  const now = Date.now();
+    if (conv.ai_locked === true) {
+      const until = conv.ai_locked_until
+        ? Date.parse(conv.ai_locked_until)
+        : NaN;
+      const now = Date.now();
 
-  // 🔒 Lock active → block AI
-  if (!Number.isNaN(until) && until > now) {
-    baseLogger.warn("[ai-handler] blocked by agent takeover (active lock)", {
-      conversation_id,
-      organization_id: conv.organization_id,
-      ai_locked_by: conv.ai_locked_by,
-      ai_locked_at: conv.ai_locked_at,
-      ai_locked_until: conv.ai_locked_until,
-      ai_lock_reason: conv.ai_lock_reason,
-    });
+      // 🔒 Lock active → block AI
+      if (!Number.isNaN(until) && until > now) {
+        baseLogger.warn(
+          "[ai-handler] blocked by agent takeover (active lock)",
+          {
+            conversation_id,
+            organization_id: conv.organization_id,
+            ai_locked_by: conv.ai_locked_by,
+            ai_locked_at: conv.ai_locked_at,
+            ai_locked_until: conv.ai_locked_until,
+            ai_lock_reason: conv.ai_lock_reason,
+          }
+        );
 
-    await logAuditEvent(supabase, {
-      organization_id: conv.organization_id,
-      action: "ai_reply_blocked_agent_takeover",
-      entity_type: "conversation",
-      entity_id: conversation_id,
-      actor_user_id: conv.ai_locked_by ?? null,
-      actor_email: null,
-      metadata: {
-        reason: conv.ai_lock_reason ?? "agent_takeover",
-        channel: conv.channel,
-        request_id,
-        locked_until: conv.ai_locked_until,
-      },
-    });
+        await logAuditEvent(supabase, {
+          organization_id: conv.organization_id,
+          action: "ai_reply_blocked_agent_takeover",
+          entity_type: "conversation",
+          entity_id: conversation_id,
+          actor_user_id: conv.ai_locked_by ?? null,
+          actor_email: null,
+          metadata: {
+            reason: conv.ai_lock_reason ?? "agent_takeover",
+            channel: conv.channel,
+            request_id,
+            locked_until: conv.ai_locked_until,
+          },
+        });
 
-    return new Response(
-      JSON.stringify({
+        return new Response(
+          JSON.stringify({
+            conversation_id,
+            no_reply: true,
+            reason: "AI_LOCKED_BY_AGENT",
+            request_id,
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      // ⏱️ Lock expired → auto-unlock
+      await supabase
+        .from("conversations")
+        .update({
+          ai_locked: false,
+          ai_locked_by: null,
+          ai_locked_at: null,
+          ai_locked_until: null,
+          ai_lock_reason: null,
+        })
+        .eq("id", conversation_id);
+
+      baseLogger.info("[ai-handler] agent lock expired → auto-unlocked", {
         conversation_id,
-        no_reply: true,
-        reason: "AI_LOCKED_BY_AGENT",
-        request_id,
-      }),
-      { headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  // ⏱️ Lock expired → auto-unlock
-  await supabase
-    .from("conversations")
-    .update({
-      ai_locked: false,
-      ai_locked_by: null,
-      ai_locked_at: null,
-      ai_locked_until: null,
-      ai_lock_reason: null,
-    })
-    .eq("id", conversation_id);
-
-  baseLogger.info("[ai-handler] agent lock expired → auto-unlocked", {
-    conversation_id,
-    organization_id: conv.organization_id,
-  });
-}
+        organization_id: conv.organization_id,
+      });
+    }
 
     // Phase 1 — AI mode guard
     const aiMode: AiMode = (conv.ai_mode as AiMode) || "auto";
@@ -1583,9 +1591,8 @@ if (conv.ai_locked === true) {
       personality?.fallback_message ??
       "I’m sorry, I don’t have enough information to answer that.";
 
-      const greetingMessage =
-      personality?.greeting_message ??
-      "Hello how can I help you today?";
+    const greetingMessage =
+      personality?.greeting_message ?? "Hello how can I help you today?";
 
     const personaBlock = `
 Tone & Language:
@@ -1610,9 +1617,9 @@ ${personality.donts || "- None specified."}
     // ------------------------------------------------------------------
     if (isGreetingMessage(user_message)) {
       const greetText =
-  personality.greeting_message ??
-  personality.fallback_message ??
-  "Hello 👋 How can I help you today?";
+        personality.greeting_message ??
+        personality.fallback_message ??
+        "Hello 👋 How can I help you today?";
 
       // Save bot message
       await supabase.from("messages").insert({
@@ -1746,37 +1753,35 @@ ${personality.donts || "- None specified."}
       );
     }
 
-        /* ============================================================================
+    /* ============================================================================
    AI UNDERSTANDING (EARLY — REQUIRED FOR ENTITY LOCKING)
 ============================================================================ */
 
-let aiExtract: AiExtractedIntent = {
-  vehicle_model: null,
-  fuel_type: null,
-  intent: "other",
-};
+    let aiExtract: AiExtractedIntent = {
+      vehicle_model: null,
+      fuel_type: null,
+      intent: "other",
+    };
 
-// Only extract intent if KB may be used
-if (!isGreetingMessage(user_message) && aiMode !== "suggest") {
-  aiExtract = await extractUserIntentWithAI({
-    userMessage: user_message,
-    logger,
-  });
+    // Only extract intent if KB may be used
+    if (!isGreetingMessage(user_message) && aiMode !== "suggest") {
+      aiExtract = await extractUserIntentWithAI({
+        userMessage: user_message,
+        logger,
+      });
 
-  logger.info("[ai-extract] result", aiExtract);
-}
+      logger.info("[ai-extract] result", aiExtract);
+    }
 
     /* ---------------------------------------------------------------------------
    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
 --------------------------------------------------------------------------- */
 
-// 🧠 Merge AI-extracted entities into locked entities (Issue 4)
-const nextEntities = mergeEntities(conv.ai_last_entities, {
-  model: aiExtract.vehicle_model ?? undefined,
-  fuel_type: aiExtract.fuel_type ?? undefined,
-});
-
-
+    // 🧠 Merge AI-extracted entities into locked entities (Issue 4)
+    const nextEntities = mergeEntities(conv.ai_last_entities, {
+      model: aiExtract.vehicle_model ?? undefined,
+      fuel_type: aiExtract.fuel_type ?? undefined,
+    });
 
     // 5) Follow-up suggestion mode (NO send, NO DB write)
     if (mode === "suggest_followup") {
@@ -1860,9 +1865,6 @@ const nextEntities = mergeEntities(conv.ai_last_entities, {
     let kbAttempted = false;
     let kbFound = false;
 
-
-
-
     // 10) Phase 6 — Deterministic KB (no vectors)
     let contextText = "";
     let kbMatchMeta: {
@@ -1892,32 +1894,46 @@ const nextEntities = mergeEntities(conv.ai_last_entities, {
     }
 
     // 🧠 Intent-aware soft handling (Issue 3 - Option B)
-// If user intent is pricing/features but KB has no match,
-// allow AI to ask ONE clarifying question instead of fallback.
-const intentNeedsKB =
-aiExtract.intent === "pricing" || aiExtract.intent === "features";
+    // If user intent is pricing/features but KB has no match,
+    // allow AI to ask ONE clarifying question instead of fallback.
+    const intentNeedsKB =
+      aiExtract.intent === "pricing" || aiExtract.intent === "features";
 
-if (!kbFound && intentNeedsKB) {
-logger.info("[decision] intent_requires_clarification", {
-  intent: aiExtract.intent,
-  vehicle_model: aiExtract.vehicle_model,
-});
+    if (!kbFound && intentNeedsKB) {
+      logger.info("[decision] intent_requires_clarification", {
+        intent: aiExtract.intent,
+        vehicle_model: aiExtract.vehicle_model,
+      });
 
-// IMPORTANT:
-// Leave contextText empty
-// System prompt will instruct AI to ask ONE clarifying question
-}
-
+      // IMPORTANT:
+      // Leave contextText empty
+      // System prompt will instruct AI to ask ONE clarifying question
+    }
 
     // ------------------------------------------------------------------
     // WORKFLOW CONTEXT (GUIDANCE ONLY — NO EXECUTION)
     // ------------------------------------------------------------------
     let workflowInstructionText = "";
+    let resolvedWorkflow: WorkflowLogRow | null = null;
 
     const activeWorkflow = await loadActiveWorkflow(conversation_id, logger);
+    resolvedWorkflow = activeWorkflow;
 
-    let resolvedWorkflow = activeWorkflow;
+    // 🔒 NEW: honor workflow attached by campaign
+    if (!resolvedWorkflow && conv.workflow_id) {
+      resolvedWorkflow = await startWorkflow(
+        conv.workflow_id,
+        conversation_id,
+        logger
+      );
 
+      logger.info("[workflow] attached from campaign", {
+        workflow_id: conv.workflow_id,
+        conversation_id,
+      });
+    }
+
+    // fallback to detection only if nothing exists
     if (!resolvedWorkflow) {
       const wf = await detectWorkflowTrigger(
         user_message,
@@ -1959,6 +1975,10 @@ logger.info("[decision] intent_requires_clarification", {
       logger.info("[decision] workflow_override_kb", { has_workflow: true });
     }
 
+    const campaignFactsBlock = buildCampaignFactsBlock(
+      conv.campaign_context ?? null
+    );
+
     // 11) System prompt
     const systemPrompt = `
 You are an AI assistant representing this business.
@@ -1989,15 +2009,20 @@ CRITICAL ENTITY RULE:
 - If Locked Entities includes "model", you MUST NOT switch to any other model unless the user explicitly mentions a different model.
 
 ------------------------
+KNOWN FACTS (CRITICAL)
+------------------------
+${campaignFactsBlock}
+
+RULE:
+- NEVER ask for information listed above.
+- If already known, proceed to the next logical step.
+
+------------------------
 BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ------------------------
 ${personaBlock}
 PRICING / DISCOUNT POLICY (IMPORTANT):
 - Read DOs and DON'Ts above.
-- If DON'Ts mentions price/pricing/discount/offer/negotiation:
-  you MUST NOT provide that information and must politely follow policy.
-- If not forbidden in DON'Ts:
-  you MAY share prices, offers, discounts if the customer asks.
 - Never invent a price/offer. If you do not know, use the fallback message exactly.
 
 ------------------------
@@ -2088,7 +2113,6 @@ Respond now to the customer's latest message only.
       has_workflow: Boolean(workflowInstructionText?.trim()),
       has_campaign: Boolean(campaignContextText?.trim()),
     });
-    
 
     // 13) Run AI completion
     const aiResult = await runAICompletion({
@@ -2228,34 +2252,42 @@ Respond now to the customer's latest message only.
 
     // 15) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
-      logger.info("[ai-handler] AI chose not to reply", { user_message });
+      if (resolvedWorkflow) {
+        logger.warn("[ai-handler] NO_REPLY blocked due to active workflow", {
+          workflow_id: resolvedWorkflow.workflow_id,
+        });
 
-      // AUDIT: AI no-reply
-      await logAuditEvent(supabase, {
-        organization_id: organizationId,
-        action: "ai_no_reply",
-        entity_type: "conversation",
-        entity_id: conversation_id,
-        actor_user_id: null,
-        actor_email: null,
-        metadata: {
-          channel,
-          request_id,
-          user_message: user_message.slice(0, 500),
-          kb_match: kbMatchMeta ?? null,
-          has_workflow: Boolean(workflowInstructionText?.trim()),
-        },
-      });
+        aiResponseText = "Okay, noted. Let me know how you’d like to proceed.";
+      } else {
+        logger.info("[ai-handler] AI chose not to reply", { user_message });
 
-      await supabase
-        .from("conversations")
-        .update({ last_message_at: new Date().toISOString() })
-        .eq("id", conversation_id);
+        // AUDIT: AI no-reply
+        await logAuditEvent(supabase, {
+          organization_id: organizationId,
+          action: "ai_no_reply",
+          entity_type: "conversation",
+          entity_id: conversation_id,
+          actor_user_id: null,
+          actor_email: null,
+          metadata: {
+            channel,
+            request_id,
+            user_message: user_message.slice(0, 500),
+            kb_match: kbMatchMeta ?? null,
+            has_workflow: Boolean(workflowInstructionText?.trim()),
+          },
+        });
 
-      return new Response(
-        JSON.stringify({ conversation_id, no_reply: true, request_id }),
-        { headers: { "Content-Type": "application/json" } }
-      );
+        await supabase
+          .from("conversations")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", conversation_id);
+
+        return new Response(
+          JSON.stringify({ conversation_id, no_reply: true, request_id }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
     }
 
     // --------------------------------------------------
@@ -2336,13 +2368,12 @@ Respond now to the customer's latest message only.
     });
 
     // 🔒 Persist locked entities (Issue 4)
-await supabase
-.from("conversations")
-.update({
-  ai_last_entities: nextEntities,
-})
-.eq("id", conversation_id);
-
+    await supabase
+      .from("conversations")
+      .update({
+        ai_last_entities: nextEntities,
+      })
+      .eq("id", conversation_id);
 
     await supabase
       .from("conversations")

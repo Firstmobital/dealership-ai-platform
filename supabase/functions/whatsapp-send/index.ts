@@ -97,6 +97,14 @@ type SendBody = {
   metadata?: {
     reply_sheet_tab?: string | null;
   } | null;
+
+  // Campaign context (optional)
+  campaign_id?: string | null;
+  campaign_message_id?: string | null;
+
+  // Best-effort plain text for UI (especially templates)
+  rendered_text?: string | null;
+
 };
 
 /* ==========================================================================
@@ -479,6 +487,20 @@ try {
       
 
       // Insert message (sender=agent) + set initial receipt state
+      const persistedText = (() => {
+        if (msgType === 'text') return body.text ?? null;
+        // For templates/media, prefer rendered_text for UI/chat history
+        return body.text ?? body.rendered_text ?? null;
+      })();
+
+      const persistedMetadata = (() => {
+        const base = body.metadata ?? null;
+        if (!base && !body.rendered_text) return null;
+        const out: any = { ...(base ?? {}) };
+        if (body.rendered_text) out.rendered_text = body.rendered_text;
+        return Object.keys(out).length ? out : null;
+      })();
+
       const nowIso = new Date().toISOString();
       const { data: inserted, error: insertErr } = await supabase
         .from("messages")
@@ -487,10 +509,13 @@ try {
           sender: "agent",
           channel: "whatsapp",
           message_type: body.message_type ?? msgType,
-          text: msgType === "text" ? body.text ?? null : body.text ?? null,
+          text: msgType === "text" ? (body.text ?? null) : ((body.text ?? (body as any).rendered_text ?? null) as any),
           media_url: body.media_url ?? null,
           mime_type: body.mime_type ?? null,
           whatsapp_message_id: waMessageId,
+          metadata: persistedMetadata,
+          campaign_id: body.campaign_id ?? null,
+          campaign_message_id: body.campaign_message_id ?? null,
           outbound_dedupe_key: outboundDedupeKey,
           whatsapp_status: "sent",
           sent_at: nowIso,

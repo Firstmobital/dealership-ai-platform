@@ -55,6 +55,8 @@ type Campaign = {
     is_psf?: boolean;
   } | null;
   reply_sheet_tab: string | null;
+  campaign_id: string;
+  campaign_message_id: string;
 };
 
 type CampaignMessageStatus =
@@ -350,6 +352,8 @@ async function sendWhatsappTemplate(params: {
   variables: { type: "text"; text: string }[];
   renderedText: string;
   reply_sheet_tab: string | null;
+  campaign_id: string;
+  campaign_message_id: string;
 
   // Phase 2.4
   templateComponents?: any[];
@@ -385,6 +389,8 @@ async function sendWhatsappTemplate(params: {
       mime_type: params.mimeType ?? null,
     
       rendered_text: params.renderedText,
+      campaign_id: params.campaign_id,
+      campaign_message_id: params.campaign_message_id,
       metadata: {
         reply_sheet_tab: params.reply_sheet_tab,
       },
@@ -642,6 +648,81 @@ async function linkMessageToConversationAndPsf(params: {
     channel: "whatsapp",
   });
 
+
+  // Persist campaign context on the conversation so the AI + Google Sheets routing
+  // remain stable across multiple replies (even if the latest outbound message isn't reloaded).
+  const campaignContext: any = {
+    campaign_id: params.msg.campaign_id,
+    campaign_message_id: params.msg.id,
+    reply_sheet_tab: params.campaign.reply_sheet_tab ?? null,
+    variables: {},
+  };
+
+  // Extract only mapped variables (prevents huge raw_row payloads)
+  try {
+    const varMap = params.campaign.meta?.variable_map ?? {};
+    const raw = params.msg.raw_row ?? {};
+    for (const [idx, col] of Object.entries(varMap)) {
+      const v: any = (raw as any)?.[String(col)];
+      campaignContext.variables[String(idx)] = v === null || v === undefined ? "" : String(v);
+    }
+  } catch {
+    // best-effort only
+  }
+
+  // Best-effort: auto-attach a workflow by matching workflow.name to reply_sheet_tab
+  // (e.g. Service / Sales / PSF). If found, start it immediately.
+  let matchedWorkflowId: string | null = null;
+  try {
+    const tab = (params.campaign.reply_sheet_tab ?? "").trim().toLowerCase();
+    if (tab) {
+      const { data: wfs } = await supabaseAdmin
+        .from("workflows")
+        .select("id, name, is_active")
+        .eq("organization_id", params.msg.organization_id)
+        .eq("is_active", true);
+
+      const match = (wfs ?? []).find((w: any) =>
+        String(w.name ?? "").trim().toLowerCase() === tab
+      );
+      if (match?.id) matchedWorkflowId = match.id;
+    }
+  } catch {
+    // best-effort only
+  }
+
+  // Save to conversation
+  await supabaseAdmin
+    .from("conversations")
+    .update({
+      campaign_id: params.msg.campaign_id,
+      workflow_id: matchedWorkflowId,
+      campaign_context: campaignContext,
+      campaign_reply_sheet_tab: params.campaign.reply_sheet_tab ?? null,
+    })
+    .eq("id", conversationId);
+
+  // Start workflow log once (if matched)
+  if (matchedWorkflowId) {
+    const { data: existing } = await supabaseAdmin
+      .from("workflow_logs")
+      .select("id")
+      .eq("conversation_id", conversationId)
+      .eq("workflow_id", matchedWorkflowId)
+      .eq("completed", false)
+      .maybeSingle();
+
+    if (!existing?.id) {
+      await supabaseAdmin.from("workflow_logs").insert({
+        workflow_id: matchedWorkflowId,
+        conversation_id: conversationId,
+        current_step_number: 1,
+        variables: campaignContext.variables ?? {},
+        completed: false,
+      });
+    }
+  }
+
   // requires migration: campaign_messages.conversation_id
   await setMessageConversationId({
     campaignMessageId: params.msg.id,
@@ -786,7 +867,10 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         variables,
 
         renderedText,
+
         reply_sheet_tab: campaign.reply_sheet_tab,
+        campaign_id: msg.campaign_id,
+        campaign_message_id: msg.id,
 
         templateComponents: [...buildTemplateHeaderComponents(template)],
 
@@ -1040,7 +1124,10 @@ serve(async (req: Request) => {
             variables,
 
             renderedText,
-            reply_sheet_tab: campaign.reply_sheet_tab,
+
+        reply_sheet_tab: campaign.reply_sheet_tab,
+        campaign_id: msg.campaign_id,
+        campaign_message_id: msg.id,
 
             templateComponents: [...buildTemplateHeaderComponents(template)],
 
