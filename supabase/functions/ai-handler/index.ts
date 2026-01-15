@@ -415,6 +415,9 @@ From the customer message below, extract:
 - intent: pricing | features | service | offer | other
 
 Rules:
+- Insurance, on-road price, RTO, EMI all fall under "pricing"
+
+Rules:
 - Fix spelling mistakes silently
 - If unsure, return null for that field
 - Return STRICT JSON only
@@ -1602,6 +1605,11 @@ Tone & Language:
 - Response length: ${personality.short_responses ? "Short" : "Normal"}
 - Emoji usage: ${personality.emoji_usage ? "Allowed" : "Not allowed"}
 
+TONE OVERRIDE (IMPORTANT):
+- Sound like an experienced car sales executive on WhatsApp.
+- Be confident, friendly, and helpful.
+- Avoid corporate disclaimers and call-center language.
+
 Business Information:
 ${personality.business_context || "No business context provided."}
 
@@ -1873,11 +1881,15 @@ ${personality.donts || "- None specified."}
       title: string;
     } | null = null;
 
+    kbAttempted = true;
     const resolvedKB = await resolveKnowledgeContext({
       userMessage: user_message,
       organizationId,
       logger,
-      vehicleModel: aiExtract.vehicle_model,
+      vehicleModel:
+  aiExtract.vehicle_model ??
+  (conv.ai_last_entities?.model ?? null),
+
     });
     if (resolvedKB?.context) {
       contextText = resolvedKB.context;
@@ -2022,8 +2034,10 @@ BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ------------------------
 ${personaBlock}
 PRICING / DISCOUNT POLICY (IMPORTANT):
-- Read DOs and DON'Ts above.
-- Never invent a price/offer. If you do not know, use the fallback message exactly.
+- NEVER invent prices or offers.
+- If pricing is present in Knowledge Context, you MUST answer using it.
+- You may add a soft disclaimer (e.g. "may vary slightly by insurer").
+- Only use fallback if pricing is NOT present in Knowledge Context.
 
 ------------------------
 WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
@@ -2047,7 +2061,10 @@ ${contextText}
 ------------------------
 KNOWLEDGE USAGE RULES (CRITICAL)
 ------------------------
-- The knowledge context is reference material ONLY.
+- The knowledge context is AUTHORITATIVE.
+- If the answer exists in the knowledge context, you MUST answer confidently.
+- Use soft disclaimers if needed, never refusal.
+- Do NOT escalate if KB contains the answer.
 - NEVER copy or paste it verbatim.
 - ALWAYS summarize, rephrase, and explain in your own words.
 - Use bullet points where helpful.
@@ -2069,7 +2086,8 @@ ENTITY SAFETY RULE (CRITICAL)
 - If intent is unclear, ask ONE clarifying question.
 - Do NOT guess.
 - Do NOT invent offerings.
-
+- If a Locked Entity exists (e.g. model), you MUST use it to answer pricing or insurance questions.
+- Do NOT ask again for model if it is already locked.
 
 ------------------------
 RESPONSE DECISION RULES (CRITICAL)
@@ -2089,6 +2107,11 @@ You MUST reply normally if:
 - The user shows interest
 - The user requests clarification
 - The user re-engages after a gap
+
+If you need to ask a clarifying question:
+- Ask exactly ONE short question
+- Prefer asking about variant or fuel type
+
 
 ------------------------
 FORMATTING & STYLE
@@ -2312,7 +2335,7 @@ Respond now to the customer's latest message only.
     }
 
     // 16) Phase 6.3 — Log unanswered question (fallback only)
-    if (aiResponseText === fallbackMessage) {
+    if (aiResponseText === fallbackMessage && !intentNeedsKB) {
       await logUnansweredQuestion({
         organization_id: organizationId,
         conversation_id,
