@@ -792,9 +792,10 @@ async function resolveKnowledgeContextSemantic(params: {
     const { data, error } = await supabase.rpc("match_knowledge_chunks", {
       query_embedding: embedding,
       match_threshold: 0.60,
-      match_count: 6,
-      p_organization_id: organizationId
-    });    
+      match_count: 8,
+      p_organization_id: organizationId,
+      p_only_published: true,
+    });
 
     if (error || !data?.length) return null;
 
@@ -805,7 +806,7 @@ if (params.vehicleModel) {
   const modelNorm = normalizeForMatch(params.vehicleModel);
 
   const modelFiltered = filtered.filter((row: any) =>
-    normalizeForMatch(row.title).includes(modelNorm)
+    normalizeForMatch(row.article_title || "").includes(modelNorm)
   );
 
   if (modelFiltered.length > 0) {
@@ -816,14 +817,19 @@ if (params.vehicleModel) {
 
     if (!filtered.length) return null;
 
-    // 4️⃣ Build context (deduplicated by article)
+    // 4️⃣ Build context (prefer top chunks; dedupe consecutive duplicates)
     const usedArticleIds = new Set<string>();
     const contextParts: string[] = [];
 
     for (const row of filtered) {
-      if (usedArticleIds.has(row.article_id)) continue;
-      usedArticleIds.add(row.article_id);
-      if (row.content) contextParts.push(row.content);
+      if (row?.article_id) usedArticleIds.add(String(row.article_id));
+
+      const title = (row?.article_title ? String(row.article_title) : "KB").trim();
+      const chunk = (row?.chunk ? String(row.chunk) : "").trim();
+      if (!chunk) continue;
+
+      // Keep chunk context compact + traceable
+      contextParts.push(`### ${title}\n${chunk}`);
     }
 
     const MAX_KB_CHARS = 6000;

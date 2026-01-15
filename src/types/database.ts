@@ -163,7 +163,9 @@ export type KnowledgeArticle = {
 
 export type KnowledgeChunk = {
   id: UUID;
+  organization_id?: UUID;
   article_id: UUID;
+  chunk_index?: number;
   chunk: string;
   embedding: number[];
   created_at?: string;

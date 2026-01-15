@@ -5,6 +5,23 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
+/* ------------------------------------------------------------------
+   CORS
+------------------------------------------------------------------ */
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function json(status: number, payload: Record<string, unknown>) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
@@ -16,16 +33,31 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
 });
 
 serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { status: 200, headers: corsHeaders });
+  }
+
   try {
     const {
       bucket,
       path,
       organization_id,
       article_id,
+      mime_type,
     } = await req.json();
 
-    if (!bucket || !path || !organization_id) {
-      return new Response("Missing params", { status: 400 });
+    if (!bucket || !path || !organization_id || !article_id) {
+      return json(400, {
+        error: "Missing params: bucket, path, organization_id, article_id are required",
+      });
+    }
+
+    // This function is ONLY for PDFs. Excel/CSV should use ai-generate-kb.
+    if (mime_type && String(mime_type) !== "application/pdf") {
+      return json(400, {
+        error:
+          "pdf-to-text only supports application/pdf. For Excel/CSV, call ai-generate-kb.",
+      });
     }
 
     /* --------------------------------------------------
@@ -36,7 +68,7 @@ serve(async (req) => {
       .download(path);
 
     if (error || !data) {
-      return new Response("Failed to download PDF", { status: 500 });
+      return json(500, { error: "Failed to download PDF" });
     }
 
     const pdfBytes = new Uint8Array(await data.arrayBuffer());
@@ -69,13 +101,13 @@ serve(async (req) => {
       response.output_text?.trim() ?? "";
 
     if (!text) {
-      return new Response("No text extracted", { status: 422 });
+      return json(422, { error: "No text extracted" });
     }
 
     /* --------------------------------------------------
        3️⃣ Save extracted text
     -------------------------------------------------- */
-    await supabase
+    const { error: updateErr } = await supabase
       .from("knowledge_articles")
       .update({
         content: text,
@@ -84,12 +116,13 @@ serve(async (req) => {
       .eq("id", article_id)
       .eq("organization_id", organization_id);
 
-    return new Response(
-      JSON.stringify({ success: true }),
-      { headers: { "Content-Type": "application/json" } }
-    );
+    if (updateErr) {
+      return json(500, { error: "Failed to update knowledge_articles" });
+    }
+
+    return json(200, { success: true, text });
   } catch (err) {
     console.error("[pdf-to-text] fatal", err);
-    return new Response("Internal error", { status: 500 });
+    return json(500, { error: "Internal error" });
   }
 });

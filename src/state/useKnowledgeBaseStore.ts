@@ -225,30 +225,68 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
 
       if (insertError || !article) throw insertError;
 
-      // 3️⃣ Extract text from PDF / Excel
-      const { data: extractData, error: extractError } =
-        await supabase.functions.invoke("pdf-to-text", {
-          body: {
-            bucket,
-            path,
-            mime_type: file.type,
-          },
+      // 3️⃣ Route by file type:
+      // - PDFs: extract text -> embed
+      // - Excel/CSV: use ai-generate-kb (it creates model-wise KB + chunks)
+      const isPdf = file.type === "application/pdf";
+      const isSpreadsheet =
+        file.type === "application/vnd.ms-excel" ||
+        file.type ===
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+        file.type === "text/csv";
+
+      if (isSpreadsheet) {
+        const { error: genErr } = await supabase.functions.invoke(
+          "ai-generate-kb",
+          {
+            body: {
+              organization_id: activeOrganization.id,
+              source_type: "file",
+              title: title || file.name,
+              status: status ?? "draft",
+              keywords: Array.isArray(keywords) ? keywords : [],
+              file_bucket: bucket,
+              file_path: path,
+              mime_type: file.type,
+              original_filename: file.name,
+              // Replace mode not used here (new upload)
+            },
+          }
+        );
+
+        if (genErr) throw genErr;
+      } else if (isPdf) {
+        const { data: extractData, error: extractError } =
+          await supabase.functions.invoke("pdf-to-text", {
+            body: {
+              bucket,
+              path,
+              mime_type: file.type,
+              organization_id: activeOrganization.id,
+              article_id: article.id,
+            },
+          });
+
+        if (extractError) throw extractError;
+
+        const extractedText = extractData?.text ?? "";
+
+        // Optional: store extracted text (pdf-to-text already updates it)
+        if (extractedText) {
+          await supabase
+            .from("knowledge_articles")
+            .update({ content: extractedText })
+            .eq("id", article.id);
+        }
+
+        await supabase.functions.invoke("embed-article", {
+          body: { article_id: article.id },
         });
-
-      if (extractError) throw extractError;
-
-      const extractedText = extractData?.text ?? "";
-
-      // 4️⃣ Save extracted text
-      await supabase
-        .from("knowledge_articles")
-        .update({ content: extractedText })
-        .eq("id", article.id);
-
-      // 5️⃣ Embed article (🔥 REQUIRED)
-      await supabase.functions.invoke("embed-article", {
-        body: { article_id: article.id },
-      });
+      } else {
+        throw new Error(
+          "Unsupported file type. Upload PDF, Excel (.xls/.xlsx), or CSV."
+        );
+      }
 
       await get().fetchArticles();
       set({ uploading: false });
@@ -284,28 +322,71 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         upsert: false,
       });
 
-      const { data: extractData } = await supabase.functions.invoke(
-        "pdf-to-text",
-        {
-          body: { bucket, path, mime_type: file.type },
-        }
-      );
 
-      await supabase
-        .from("knowledge_articles")
-        .update({
-          file_bucket: bucket,
-          file_path: path,
-          content: extractData?.text ?? "",
-          keywords: Array.isArray(keywords)
-            ? keywords
-            : article.keywords ?? [],
-        })
-        .eq("id", article.id);
+      const isPdf = file.type === "application/pdf";
+      const isSpreadsheet =
+        file.type === "application/vnd.ms-excel" ||
+        file.type ===
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+        file.type === "text/csv";
 
-      await supabase.functions.invoke("embed-article", {
-        body: { article_id: article.id },
-      });
+      if (isSpreadsheet) {
+        // Replace mode: ai-generate-kb will overwrite the container article
+        const { error: genErr } = await supabase.functions.invoke(
+          "ai-generate-kb",
+          {
+            body: {
+              organization_id: activeOrganization.id,
+              source_type: "file",
+              article_id: article.id,
+              title: article.title || file.name,
+              status: article.status ?? "draft",
+              keywords: Array.isArray(keywords)
+                ? keywords
+                : article.keywords ?? [],
+              file_bucket: bucket,
+              file_path: path,
+              mime_type: file.type,
+              original_filename: file.name,
+            },
+          }
+        );
+
+        if (genErr) throw genErr;
+      } else if (isPdf) {
+        const { data: extractData, error: extractError } =
+          await supabase.functions.invoke("pdf-to-text", {
+            body: {
+              bucket,
+              path,
+              mime_type: file.type,
+              organization_id: activeOrganization.id,
+              article_id: article.id,
+            },
+          });
+
+        if (extractError) throw extractError;
+
+        await supabase
+          .from("knowledge_articles")
+          .update({
+            file_bucket: bucket,
+            file_path: path,
+            content: extractData?.text ?? "",
+            keywords: Array.isArray(keywords)
+              ? keywords
+              : article.keywords ?? [],
+          })
+          .eq("id", article.id);
+
+        await supabase.functions.invoke("embed-article", {
+          body: { article_id: article.id },
+        });
+      } else {
+        throw new Error(
+          "Unsupported file type. Upload PDF, Excel (.xls/.xlsx), or CSV."
+        );
+      }
 
       await get().fetchArticles();
       set({ uploading: false });

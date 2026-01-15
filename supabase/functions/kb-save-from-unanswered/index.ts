@@ -320,7 +320,9 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     const records = chunks.map((c, i) => ({
+      organization_id,
       article_id: article.id,
+      chunk_index: i,
       chunk: c,
       embedding: vectors[i],
     }));

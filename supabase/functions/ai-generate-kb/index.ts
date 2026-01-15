@@ -788,7 +788,9 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
     created_article_ids.push(articleId);
 
     const records = chunks.map((chunk, i) => ({
+      organization_id: orgId,
       article_id: articleId,
+      chunk_index: i,
       chunk,
       embedding: vectors[i],
     }));
@@ -838,7 +840,9 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
     const containerVectors = await embedChunks(logger, containerChunks);
     if (containerVectors && containerVectors.length === containerChunks.length) {
       const containerRecords = containerChunks.map((chunk, i) => ({
+        organization_id: orgId,
         article_id: replaceArticleId,
+        chunk_index: i,
         chunk,
         embedding: containerVectors[i],
       }));
@@ -878,7 +882,9 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
       const containerVectors = await embedChunks(logger, containerChunks);
       if (containerVectors && containerVectors.length === containerChunks.length) {
         const containerRecords = containerChunks.map((chunk, i) => ({
+          organization_id: orgId,
           article_id: container.id,
+          chunk_index: i,
           chunk,
           embedding: containerVectors[i],
         }));
@@ -1128,7 +1134,9 @@ if (!text) {
        INSERT CHUNKS + EMBEDDINGS
     ============================================ */
     const records = chunks.map((chunk, i) => ({
+      organization_id: orgId,
       article_id: articleId,
+      chunk_index: i,
       chunk,
       embedding: vectors[i],
     }));
