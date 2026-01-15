@@ -791,11 +791,11 @@ async function resolveKnowledgeContextSemantic(params: {
     // 2️⃣ Match KB chunks
     const { data, error } = await supabase.rpc("match_knowledge_chunks", {
       query_embedding: embedding,
-      match_threshold: 0.60,
-      match_count: 8,
+      match_threshold: 0.35, // 🔥 LOWERED
+      match_count: 6,        // 🔥 FEWER chunks
       p_organization_id: organizationId,
       p_only_published: true,
-    });
+    });    
 
     if (error || !data?.length) return null;
 
@@ -821,7 +821,7 @@ if (params.vehicleModel) {
     const usedArticleIds = new Set<string>();
     const contextParts: string[] = [];
 
-    for (const row of filtered) {
+    for (const row of filtered.slice(0, 4)) {
       if (row?.article_id) usedArticleIds.add(String(row.article_id));
 
       const title = (row?.article_title ? String(row.article_title) : "KB").trim();
@@ -842,10 +842,12 @@ if (context.length > MAX_KB_CHARS) {
 }
 
 
-    logger.info("[kb] semantic match", {
-      chunks: filtered.length,
-      articles: [...usedArticleIds],
-    });
+logger.info("[kb] semantic injected", {
+  chars: context.length,
+  articles: [...usedArticleIds],
+});
+
+
 
     return {
       context,
@@ -2229,7 +2231,7 @@ FORMATTING & STYLE
 ------------------------
 - Always answer the latest customer message.
 - Keep WhatsApp replies short & simple (1–3 sentences max).
-- If the knowledge context above does not contain the answer, say exactly: "${fallbackMessage}".
+- You MUST NOT use the fallback message if Knowledge Context is non-empty.
 
 Respond now to the customer's latest message only.
 `.trim();

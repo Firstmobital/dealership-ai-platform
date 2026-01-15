@@ -155,6 +155,14 @@ export type KnowledgeArticle = {
   original_filename?: string | null;
   mime_type?: string | null;
 
+  processing_status:
+    | "extracting_text"
+    | "ocr_fallback"
+    | "saving"
+    | "completed"
+    | "failed"
+    | null;
+
   created_at: string;
   updated_at?: string | null;
   last_processed_at?: string | null;

@@ -78,6 +78,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   selectedArticle: null,
   searchTerm: "",
 
+  /* -----------------------------------------------------------
+     STATE HELPERS
+  ----------------------------------------------------------- */
   reset: () =>
     set({
       articles: [],
@@ -92,7 +95,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSearchTerm: (term) => set({ searchTerm: term }),
 
   /* -----------------------------------------------------------
-     FETCH ARTICLES
+     FETCH ARTICLES (includes processing_status)
   ----------------------------------------------------------- */
   fetchArticles: async () => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -137,7 +140,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM TEXT (✅ EMBED AFTER CREATE)
+     CREATE FROM TEXT (IMMEDIATE EMBED)
   ----------------------------------------------------------- */
   createArticleFromText: async ({ title, content, keywords, status }) => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -155,13 +158,13 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           content,
           keywords: Array.isArray(keywords) ? keywords : [],
           status: status ?? "draft",
+          processing_status: "completed",
         })
         .select("id")
         .single();
 
       if (error || !data) throw error;
 
-      // 🔥 CRITICAL: Embed article so AI can search it
       await supabase.functions.invoke("embed-article", {
         body: { article_id: data.id },
       });
@@ -177,7 +180,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM FILE (PDF / Excel → TEXT → EMBED)
+     CREATE FROM FILE (PDF / Excel)
   ----------------------------------------------------------- */
   createArticleFromFile: async ({ file, title, keywords, status }) => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -195,97 +198,55 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const safeName = file.name.replace(/\s+/g, "_");
       const path = `kb/${activeOrganization.id}/${Date.now()}-${safeName}`;
 
-      // 1️⃣ Upload file
-      const { error: uploadError } = await supabase.storage
-        .from(bucket)
-        .upload(path, file, {
-          contentType: file.type,
-          upsert: false,
-        });
+      // Upload file
+      await supabase.storage.from(bucket).upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
 
-      if (uploadError) throw uploadError;
-
-      // 2️⃣ Create article row
-      const { data: article, error: insertError } = await supabase
+      // Create article placeholder
+      const { data: article, error } = await supabase
         .from("knowledge_articles")
         .insert({
           organization_id: activeOrganization.id,
           source_type: "file",
           title: title || file.name,
-          content: "", // will be filled after extraction
+          content: "",
           status: status ?? "draft",
           keywords: Array.isArray(keywords) ? keywords : [],
           file_bucket: bucket,
           file_path: path,
           mime_type: file.type,
           original_filename: file.name,
+          processing_status: "extracting_text",
         })
         .select("id")
         .single();
 
-      if (insertError || !article) throw insertError;
+      if (error || !article) throw error;
 
-      // 3️⃣ Route by file type:
-      // - PDFs: extract text -> embed
-      // - Excel/CSV: use ai-generate-kb (it creates model-wise KB + chunks)
-      const isPdf = file.type === "application/pdf";
-      const isSpreadsheet =
-        file.type === "application/vnd.ms-excel" ||
-        file.type ===
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-        file.type === "text/csv";
-
-      if (isSpreadsheet) {
-        const { error: genErr } = await supabase.functions.invoke(
-          "ai-generate-kb",
-          {
-            body: {
-              organization_id: activeOrganization.id,
-              source_type: "file",
-              title: title || file.name,
-              status: status ?? "draft",
-              keywords: Array.isArray(keywords) ? keywords : [],
-              file_bucket: bucket,
-              file_path: path,
-              mime_type: file.type,
-              original_filename: file.name,
-              // Replace mode not used here (new upload)
-            },
-          }
-        );
-
-        if (genErr) throw genErr;
-      } else if (isPdf) {
-        const { data: extractData, error: extractError } =
-          await supabase.functions.invoke("pdf-to-text", {
-            body: {
-              bucket,
-              path,
-              mime_type: file.type,
-              organization_id: activeOrganization.id,
-              article_id: article.id,
-            },
-          });
-
-        if (extractError) throw extractError;
-
-        const extractedText = extractData?.text ?? "";
-
-        // Optional: store extracted text (pdf-to-text already updates it)
-        if (extractedText) {
-          await supabase
-            .from("knowledge_articles")
-            .update({ content: extractedText })
-            .eq("id", article.id);
-        }
-
-        await supabase.functions.invoke("embed-article", {
-          body: { article_id: article.id },
+      // Route processing
+      if (file.type === "application/pdf") {
+        await supabase.functions.invoke("pdf-to-text", {
+          body: {
+            bucket,
+            path,
+            organization_id: activeOrganization.id,
+            article_id: article.id,
+            mime_type: file.type,
+          },
         });
       } else {
-        throw new Error(
-          "Unsupported file type. Upload PDF, Excel (.xls/.xlsx), or CSV."
-        );
+        await supabase.functions.invoke("ai-generate-kb", {
+          body: {
+            organization_id: activeOrganization.id,
+            article_id: article.id,
+            file_bucket: bucket,
+            file_path: path,
+            mime_type: file.type,
+            original_filename: file.name,
+          },
+        });
       }
 
       await get().fetchArticles();
@@ -299,7 +260,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     REPLACE FILE FOR ARTICLE (RE-EXTRACT + RE-EMBED)
+     REPLACE FILE (REPROCESS + RE-EMBED)
   ----------------------------------------------------------- */
   replaceFileForArticle: async ({ article, file, keywords }) => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -322,70 +283,41 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         upsert: false,
       });
 
+      await supabase
+        .from("knowledge_articles")
+        .update({
+          file_bucket: bucket,
+          file_path: path,
+          mime_type: file.type,
+          original_filename: file.name,
+          keywords: Array.isArray(keywords)
+            ? keywords
+            : article.keywords ?? [],
+          processing_status: "extracting_text",
+        })
+        .eq("id", article.id);
 
-      const isPdf = file.type === "application/pdf";
-      const isSpreadsheet =
-        file.type === "application/vnd.ms-excel" ||
-        file.type ===
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-        file.type === "text/csv";
-
-      if (isSpreadsheet) {
-        // Replace mode: ai-generate-kb will overwrite the container article
-        const { error: genErr } = await supabase.functions.invoke(
-          "ai-generate-kb",
-          {
-            body: {
-              organization_id: activeOrganization.id,
-              source_type: "file",
-              article_id: article.id,
-              title: article.title || file.name,
-              status: article.status ?? "draft",
-              keywords: Array.isArray(keywords)
-                ? keywords
-                : article.keywords ?? [],
-              file_bucket: bucket,
-              file_path: path,
-              mime_type: file.type,
-              original_filename: file.name,
-            },
-          }
-        );
-
-        if (genErr) throw genErr;
-      } else if (isPdf) {
-        const { data: extractData, error: extractError } =
-          await supabase.functions.invoke("pdf-to-text", {
-            body: {
-              bucket,
-              path,
-              mime_type: file.type,
-              organization_id: activeOrganization.id,
-              article_id: article.id,
-            },
-          });
-
-        if (extractError) throw extractError;
-
-        await supabase
-          .from("knowledge_articles")
-          .update({
-            file_bucket: bucket,
-            file_path: path,
-            content: extractData?.text ?? "",
-            keywords: Array.isArray(keywords)
-              ? keywords
-              : article.keywords ?? [],
-          })
-          .eq("id", article.id);
-
-        await supabase.functions.invoke("embed-article", {
-          body: { article_id: article.id },
+      if (file.type === "application/pdf") {
+        await supabase.functions.invoke("pdf-to-text", {
+          body: {
+            bucket,
+            path,
+            organization_id: activeOrganization.id,
+            article_id: article.id,
+            mime_type: file.type,
+          },
         });
       } else {
-        throw new Error(
-          "Unsupported file type. Upload PDF, Excel (.xls/.xlsx), or CSV."
-        );
+        await supabase.functions.invoke("ai-generate-kb", {
+          body: {
+            organization_id: activeOrganization.id,
+            article_id: article.id,
+            file_bucket: bucket,
+            file_path: path,
+            mime_type: file.type,
+            original_filename: file.name,
+          },
+        });
       }
 
       await get().fetchArticles();
@@ -407,19 +339,16 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       return;
     }
 
-    try {
-      const { data, error } = await supabase.storage
-        .from(article.file_bucket)
-        .createSignedUrl(article.file_path, 60);
+    const { data, error } = await supabase.storage
+      .from(article.file_bucket)
+      .createSignedUrl(article.file_path, 60);
 
-      if (error || !data?.signedUrl) throw error;
-
-      window.open(data.signedUrl, "_blank");
-    } catch (err: any) {
-      set({
-        error: err?.message ?? "Failed to download file",
-      });
+    if (error || !data?.signedUrl) {
+      set({ error: "Failed to download file" });
+      return;
     }
+
+    window.open(data.signedUrl, "_blank");
   },
 
   /* -----------------------------------------------------------
@@ -446,15 +375,12 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       if (status) payload.status = status;
       if (published_at !== undefined) payload.published_at = published_at;
 
-      const { error } = await supabase
+      await supabase
         .from("knowledge_articles")
         .update(payload)
         .eq("id", id)
         .eq("organization_id", activeOrganization.id);
 
-      if (error) throw error;
-
-      // 🔥 Re-embed if content changed
       if (content !== undefined) {
         await supabase.functions.invoke("embed-article", {
           body: { article_id: id },
@@ -481,13 +407,11 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     set({ loading: true, error: null });
 
     try {
-      const { error } = await supabase
+      await supabase
         .from("knowledge_articles")
         .delete()
         .eq("id", articleId)
         .eq("organization_id", activeOrganization.id);
-
-      if (error) throw error;
 
       await get().fetchArticles();
       set({ loading: false, selectedArticle: null });

@@ -1,8 +1,8 @@
 // src/modules/knowledge-base/KnowledgeBaseModule.tsx
 // FULL + FINAL — Tier 4 + Phase 1 Governance
-// Draft / Publish / Archive + AI-safe KB
+// Draft / Publish / Archive + AI-safe KB + File OCR Progress
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FileText,
   Loader2,
@@ -27,6 +27,26 @@ import type { KnowledgeArticle } from "../../types/database";
  * TYPES
  * -----------------------------------------------------------*/
 type ArticleStatus = "draft" | "published" | "archived";
+
+/* -----------------------------------------------------------
+ * HELPERS
+ * -----------------------------------------------------------*/
+function getProcessingLabel(article: KnowledgeArticle) {
+  switch (article.processing_status) {
+    case "extracting_text":
+      return { text: "Extracting text…", color: "text-orange-600" };
+    case "ocr_fallback":
+      return { text: "Running OCR on scanned PDF…", color: "text-orange-600" };
+    case "saving":
+      return { text: "Saving content…", color: "text-orange-600" };
+    case "failed":
+      return { text: "Processing failed", color: "text-red-600" };
+    case "completed":
+      return { text: "Ready", color: "text-green-600" };
+    default:
+      return null;
+  }
+}
 
 /* -----------------------------------------------------------
  * AddNewArticleDropdown
@@ -110,25 +130,32 @@ export function KnowledgeBaseModule() {
   const [manualTitle, setManualTitle] = useState("");
   const [manualContent, setManualContent] = useState("");
   const [editMode, setEditMode] = useState(false);
-
   const [confirmReplaceOpen, setConfirmReplaceOpen] = useState(false);
 
   /* -----------------------------------------------------------
-   * Load on org / sub-org change
+   * Load articles + poll while processing
    * -----------------------------------------------------------*/
   useEffect(() => {
     if (!activeOrganization) return;
+
     fetchArticles();
     setSelectedArticle(null);
-  }, [activeOrganization?.id]);
+
+    const interval = setInterval(() => {
+      const hasProcessing = articles.some(
+        (a) =>
+          a.processing_status &&
+          a.processing_status !== "completed" &&
+          a.processing_status !== "failed"
+      );
+      if (hasProcessing) fetchArticles();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [activeOrganization?.id, articles.length]);
 
   /* -----------------------------------------------------------
-   * ORDER — DIVISION FIRST
-   * -----------------------------------------------------------*/
-  
-
-  /* -----------------------------------------------------------
-   * Manual Create / Update (DRAFT BY DEFAULT)
+   * Manual Create / Update
    * -----------------------------------------------------------*/
   async function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -189,24 +216,11 @@ export function KnowledgeBaseModule() {
    * -----------------------------------------------------------*/
   function handleEdit(article: KnowledgeArticle) {
     if (article.source_type !== "text") return;
-
     setManualTitle(article.title);
     setManualContent(article.content);
     setEditMode(true);
     setShowManualForm(true);
     setSelectedArticle(article);
-  }
-
-  /* -----------------------------------------------------------
-   * Helpers
-   * -----------------------------------------------------------*/
-  function formatDateTime(d?: string | null) {
-    if (!d) return null;
-    try {
-      return new Date(d).toLocaleString();
-    } catch {
-      return d;
-    }
   }
 
   /* -----------------------------------------------------------
@@ -275,7 +289,7 @@ export function KnowledgeBaseModule() {
 
       {/* MAIN */}
       <div className="flex h-full gap-4 overflow-hidden">
-        {/* LEFT — ARTICLES */}
+        {/* LEFT */}
         <div className="w-[35%] overflow-y-auto rounded-lg border border-slate-200 bg-white p-4">
           <h2 className="mb-3 text-sm font-semibold">
             Articles ({articles.length})
@@ -288,37 +302,40 @@ export function KnowledgeBaseModule() {
             </div>
           ) : (
             <ul className="space-y-2">
-              {articles.map((a) => (
-                <li
-                  key={a.id}
-                  onClick={() => setSelectedArticle(a)}
-                  className="cursor-pointer rounded-md border border-slate-200 bg-slate-50 px-3 py-2 hover:bg-slate-100"
-                >
-                  <p className="font-medium">{a.title}</p>
-                  <div className="mt-1 flex gap-2 flex-wrap text-[10px]">
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5">
-                      {a.source_type === "file" ? "PDF / Excel" : "Text"}
-                    </span>
+              {articles.map((a) => {
+                const status = getProcessingLabel(a);
 
-                    <span
-                      className={`rounded-full px-2 py-0.5 ${
-                        a.status === "published"
-                          ? "bg-green-50 text-green-700"
-                          : a.status === "draft"
-                          ? "bg-yellow-50 text-yellow-700"
-                          : "bg-slate-100 text-slate-500"
-                      }`}
-                    >
-                      {a.status}
-                    </span>
-                  </div>
-                </li>
-              ))}
+                return (
+                  <li
+                    key={a.id}
+                    onClick={() => setSelectedArticle(a)}
+                    className="cursor-pointer rounded-md border border-slate-200 bg-slate-50 px-3 py-2 hover:bg-slate-100"
+                  >
+                    <p className="font-medium">{a.title}</p>
+
+                    <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5">
+                        {a.source_type === "file" ? "PDF / Excel" : "Text"}
+                      </span>
+
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5">
+                        {a.status}
+                      </span>
+
+                      {status && (
+                        <span className={`font-medium ${status.color}`}>
+                          {status.text}
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
 
-        {/* RIGHT — CONTENT */}
+        {/* RIGHT */}
         <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
           {!selectedArticle && !showManualForm && (
             <div className="flex flex-1 items-center justify-center text-slate-500">
@@ -326,7 +343,6 @@ export function KnowledgeBaseModule() {
             </div>
           )}
 
-          {/* VIEW */}
           {selectedArticle && !showManualForm && (
             <div className="flex h-full flex-col overflow-hidden">
               <div className="border-b border-slate-200 bg-white px-6 py-4 flex justify-between">
@@ -334,14 +350,13 @@ export function KnowledgeBaseModule() {
                   {selectedArticle.title}
                 </h2>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex gap-2 flex-wrap">
                   {selectedArticle.source_type === "text" && (
                     <button
                       onClick={() => handleEdit(selectedArticle)}
-                      className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      className="flex items-center gap-1 rounded-md border px-3 py-1 text-xs"
                     >
-                      <Pencil size={14} />
-                      Edit
+                      <Pencil size={14} /> Edit
                     </button>
                   )}
 
@@ -349,29 +364,27 @@ export function KnowledgeBaseModule() {
                     <>
                       <button
                         onClick={() => downloadOriginalFile(selectedArticle)}
-                        className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                        className="flex items-center gap-1 rounded-md border px-3 py-1 text-xs"
                       >
-                        <Download size={14} />
-                        Download
+                        <Download size={14} /> Download
                       </button>
 
                       <button
                         onClick={() => setConfirmReplaceOpen(true)}
-                        className="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                        className="flex items-center gap-1 rounded-md border px-3 py-1 text-xs"
                       >
-                        <RefreshCcw size={14} />
-                        Replace file
+                        <RefreshCcw size={14} /> Replace
                       </button>
                     </>
                   )}
 
                   <button
                     onClick={() => handleDelete(selectedArticle)}
-                    className="flex items-center gap-1 rounded-md border border-red-200 bg-white px-3 py-1 text-xs text-red-600 hover:bg-red-50"
+                    className="flex items-center gap-1 rounded-md border border-red-200 px-3 py-1 text-xs text-red-600"
                   >
-                    <Trash2 size={14} />
-                    Delete
+                    <Trash2 size={14} /> Delete
                   </button>
+
                   {selectedArticle.status !== "published" && (
                     <button
                       onClick={() =>
@@ -383,8 +396,7 @@ export function KnowledgeBaseModule() {
                       }
                       className="flex items-center gap-1 rounded-md bg-green-600 px-3 py-1 text-xs text-white"
                     >
-                      <CheckCircle size={14} />
-                      Publish
+                      <CheckCircle size={14} /> Publish
                     </button>
                   )}
 
@@ -398,8 +410,7 @@ export function KnowledgeBaseModule() {
                       }
                       className="flex items-center gap-1 rounded-md bg-slate-600 px-3 py-1 text-xs text-white"
                     >
-                      <Archive size={14} />
-                      Archive
+                      <Archive size={14} /> Archive
                     </button>
                   )}
                 </div>
@@ -411,90 +422,35 @@ export function KnowledgeBaseModule() {
             </div>
           )}
 
-          {/* CREATE / EDIT */}
           {showManualForm && (
-            <div className="flex h-full flex-col">
-              <form
-                onSubmit={handleManualSubmit}
-                className="flex-1 space-y-4 px-6 py-4"
-              >
-                <input
-                  type="text"
-                  placeholder="Article title"
-                  value={manualTitle}
-                  onChange={(e) => setManualTitle(e.target.value)}
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                />
-
-                <textarea
-                  placeholder="Enter content..."
-                  value={manualContent}
-                  onChange={(e) => setManualContent(e.target.value)}
-                  rows={12}
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                />
-
-                <button
-                  type="submit"
-                  className="rounded-md bg-blue-600 px-6 py-2 text-sm text-white"
-                >
-                  {editMode ? "Update Draft" : "Save Draft"}
-                </button>
-              </form>
-            </div>
+            <form
+              onSubmit={handleManualSubmit}
+              className="flex flex-1 flex-col gap-4 px-6 py-4"
+            >
+              <input
+                value={manualTitle}
+                onChange={(e) => setManualTitle(e.target.value)}
+                placeholder="Article title"
+                className="rounded-md border px-3 py-2 text-sm"
+              />
+              <textarea
+                value={manualContent}
+                onChange={(e) => setManualContent(e.target.value)}
+                rows={12}
+                placeholder="Enter content..."
+                className="rounded-md border px-3 py-2 text-sm"
+              />
+              <button className="self-start rounded-md bg-blue-600 px-6 py-2 text-sm text-white">
+                {editMode ? "Update Draft" : "Save Draft"}
+              </button>
+            </form>
           )}
         </div>
       </div>
 
-      {/* Replace File Confirm */}
-      {confirmReplaceOpen && selectedArticle && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-              <div>
-                <div className="text-sm font-semibold text-slate-900">Replace file</div>
-                <div className="text-xs text-slate-500">This will upload a new PDF/Excel and re-process the content for AI.</div>
-              </div>
-              <button
-                onClick={() => setConfirmReplaceOpen(false)}
-                className="rounded-md p-1 text-slate-500 hover:bg-slate-100"
-                aria-label="Close"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4">
-              <div className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
-                <AlertTriangle size={16} className="mt-0.5" />
-                <div>
-                  The old file stays in history, but the article content will be updated from the new file.
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-              <button
-                onClick={() => setConfirmReplaceOpen(false)}
-                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setConfirmReplaceOpen(false);
-                  replaceFileInputRef.current?.click();
-                }}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-              >
-                Choose file
-              </button>
-            </div>
-          </div>
-        </div>
+      {error && (
+        <p className="mt-4 text-sm text-red-600">Error: {error}</p>
       )}
-
-      {error && <p className="mt-4 text-sm text-red-600">Error: {error}</p>}
     </div>
   );
 }
