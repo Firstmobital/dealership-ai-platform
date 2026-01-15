@@ -92,7 +92,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSearchTerm: (term) => set({ searchTerm: term }),
 
   /* -----------------------------------------------------------
-     FETCH ARTICLES (ORG ONLY)
+     FETCH ARTICLES
   ----------------------------------------------------------- */
   fetchArticles: async () => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -137,7 +137,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM TEXT
+     CREATE FROM TEXT (✅ EMBED AFTER CREATE)
   ----------------------------------------------------------- */
   createArticleFromText: async ({ title, content, keywords, status }) => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -146,18 +146,25 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     set({ uploading: true, error: null });
 
     try {
-      const { error } = await supabase.functions.invoke("ai-generate-kb", {
-        body: {
+      const { data, error } = await supabase
+        .from("knowledge_articles")
+        .insert({
           organization_id: activeOrganization.id,
           source_type: "text",
           title,
           content,
-          status: status ?? "draft",
           keywords: Array.isArray(keywords) ? keywords : [],
-        },
-      });
+          status: status ?? "draft",
+        })
+        .select("id")
+        .single();
 
-      if (error) throw error;
+      if (error || !data) throw error;
+
+      // 🔥 CRITICAL: Embed article so AI can search it
+      await supabase.functions.invoke("embed-article", {
+        body: { article_id: data.id },
+      });
 
       await get().fetchArticles();
       set({ uploading: false });
@@ -170,7 +177,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     CREATE FROM FILE
+     CREATE FROM FILE (PDF / Excel → TEXT → EMBED)
   ----------------------------------------------------------- */
   createArticleFromFile: async ({ file, title, keywords, status }) => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -188,6 +195,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const safeName = file.name.replace(/\s+/g, "_");
       const path = `kb/${activeOrganization.id}/${Date.now()}-${safeName}`;
 
+      // 1️⃣ Upload file
       const { error: uploadError } = await supabase.storage
         .from(bucket)
         .upload(path, file, {
@@ -197,24 +205,50 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
 
       if (uploadError) throw uploadError;
 
-      const { error: invokeError } = await supabase.functions.invoke(
-        "ai-generate-kb",
-        {
-          body: {
-            organization_id: activeOrganization.id,
-            source_type: "file",
-            title: title || file.name,
-            status: status ?? "draft",
-            file_bucket: bucket,
-            file_path: path,
-            mime_type: file.type,
-            original_filename: file.name,
-            keywords: Array.isArray(keywords) ? keywords : [],
-          },
-        }
-      );
+      // 2️⃣ Create article row
+      const { data: article, error: insertError } = await supabase
+        .from("knowledge_articles")
+        .insert({
+          organization_id: activeOrganization.id,
+          source_type: "file",
+          title: title || file.name,
+          content: "", // will be filled after extraction
+          status: status ?? "draft",
+          keywords: Array.isArray(keywords) ? keywords : [],
+          file_bucket: bucket,
+          file_path: path,
+          mime_type: file.type,
+          original_filename: file.name,
+        })
+        .select("id")
+        .single();
 
-      if (invokeError) throw invokeError;
+      if (insertError || !article) throw insertError;
+
+      // 3️⃣ Extract text from PDF / Excel
+      const { data: extractData, error: extractError } =
+        await supabase.functions.invoke("pdf-to-text", {
+          body: {
+            bucket,
+            path,
+            mime_type: file.type,
+          },
+        });
+
+      if (extractError) throw extractError;
+
+      const extractedText = extractData?.text ?? "";
+
+      // 4️⃣ Save extracted text
+      await supabase
+        .from("knowledge_articles")
+        .update({ content: extractedText })
+        .eq("id", article.id);
+
+      // 5️⃣ Embed article (🔥 REQUIRED)
+      await supabase.functions.invoke("embed-article", {
+        body: { article_id: article.id },
+      });
 
       await get().fetchArticles();
       set({ uploading: false });
@@ -227,7 +261,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     REPLACE FILE FOR ARTICLE
+     REPLACE FILE FOR ARTICLE (RE-EXTRACT + RE-EMBED)
   ----------------------------------------------------------- */
   replaceFileForArticle: async ({ article, file, keywords }) => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -245,35 +279,33 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const safeName = file.name.replace(/\s+/g, "_");
       const path = `kb/${activeOrganization.id}/${Date.now()}-${safeName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from(bucket)
-        .upload(path, file, {
-          contentType: file.type,
-          upsert: false,
-        });
+      await supabase.storage.from(bucket).upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
 
-      if (uploadError) throw uploadError;
-
-      const { error: invokeError } = await supabase.functions.invoke(
-        "ai-generate-kb",
+      const { data: extractData } = await supabase.functions.invoke(
+        "pdf-to-text",
         {
-          body: {
-            organization_id: activeOrganization.id,
-            article_id: article.id,
-            source_type: "file",
-            title: article.title,
-            file_bucket: bucket,
-            file_path: path,
-            mime_type: file.type,
-            original_filename: file.name,
-            keywords: Array.isArray(keywords)
-              ? keywords
-              : article.keywords ?? [],
-          },
+          body: { bucket, path, mime_type: file.type },
         }
       );
 
-      if (invokeError) throw invokeError;
+      await supabase
+        .from("knowledge_articles")
+        .update({
+          file_bucket: bucket,
+          file_path: path,
+          content: extractData?.text ?? "",
+          keywords: Array.isArray(keywords)
+            ? keywords
+            : article.keywords ?? [],
+        })
+        .eq("id", article.id);
+
+      await supabase.functions.invoke("embed-article", {
+        body: { article_id: article.id },
+      });
 
       await get().fetchArticles();
       set({ uploading: false });
@@ -310,7 +342,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   },
 
   /* -----------------------------------------------------------
-     UPDATE ARTICLE
+     UPDATE ARTICLE (RE-EMBED ON CONTENT CHANGE)
   ----------------------------------------------------------- */
   updateArticle: async ({
     id,
@@ -340,6 +372,13 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         .eq("organization_id", activeOrganization.id);
 
       if (error) throw error;
+
+      // 🔥 Re-embed if content changed
+      if (content !== undefined) {
+        await supabase.functions.invoke("embed-article", {
+          body: { article_id: id },
+        });
+      }
 
       await get().fetchArticles();
       set({ loading: false });

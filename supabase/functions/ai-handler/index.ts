@@ -763,6 +763,94 @@ function titleMatchesMessage(message: string, title: string): boolean {
   return tokens.every((t) => containsPhrase(msg, t));
 }
 
+/* ============================================================================
+   SEMANTIC KB RESOLVER (EMBEDDINGS-BASED)
+============================================================================ */
+
+async function resolveKnowledgeContextSemantic(params: {
+  userMessage: string;
+  organizationId: string;
+  logger: ReturnType<typeof createLogger>;
+  vehicleModel?: string | null;
+}): Promise<{
+  context: string;
+  article_ids: string[];
+} | null> {
+  const { userMessage, organizationId, logger } = params;
+
+  try {
+    // 1️⃣ Create embedding for user query
+    const embeddingResp = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: userMessage,
+    });
+
+    const embedding = embeddingResp.data?.[0]?.embedding;
+    if (!embedding) return null;
+
+    // 2️⃣ Match KB chunks
+    const { data, error } = await supabase.rpc("match_knowledge_chunks", {
+      query_embedding: embedding,
+      match_threshold: 0.78,
+      match_count: 6,
+      p_organization_id: organizationId
+    });    
+
+    if (error || !data?.length) return null;
+
+    let filtered = data as any[];
+
+// 🔒 Respect locked vehicle model (CRITICAL)
+if (params.vehicleModel) {
+  const modelNorm = normalizeForMatch(params.vehicleModel);
+
+  const modelFiltered = filtered.filter((row: any) =>
+    normalizeForMatch(row.title).includes(modelNorm)
+  );
+
+  if (modelFiltered.length > 0) {
+    filtered = modelFiltered;
+  }
+}
+
+
+    if (!filtered.length) return null;
+
+    // 4️⃣ Build context (deduplicated by article)
+    const usedArticleIds = new Set<string>();
+    const contextParts: string[] = [];
+
+    for (const row of filtered) {
+      if (usedArticleIds.has(row.article_id)) continue;
+      usedArticleIds.add(row.article_id);
+      if (row.content) contextParts.push(row.content);
+    }
+
+    const MAX_KB_CHARS = 6000;
+
+let context = contextParts.join("\n\n").trim();
+if (!context) return null;
+
+if (context.length > MAX_KB_CHARS) {
+  context = context.slice(0, MAX_KB_CHARS);
+}
+
+
+    logger.info("[kb] semantic match", {
+      chunks: filtered.length,
+      articles: [...usedArticleIds],
+    });
+
+    return {
+      context,
+      article_ids: [...usedArticleIds],
+    };
+  } catch (err) {
+    logger.error("[kb] semantic resolver failed", { error: err });
+    return null;
+  }
+}
+
 async function resolveKnowledgeContext(params: {
   userMessage: string;
   organizationId: string;
@@ -1194,7 +1282,7 @@ async function logUnansweredQuestion(params: {
       p_organization_id: params.organization_id,
       p_conversation_id: params.conversation_id,
       p_channel: params.channel,
-      p_question: params.question,
+      p_user_message: params.question,
       p_ai_response: params.ai_response ?? "NO_RESPONSE",
     });
 
@@ -1873,38 +1961,55 @@ ${personality.donts || "- None specified."}
     let kbAttempted = false;
     let kbFound = false;
 
-    // 10) Phase 6 — Deterministic KB (no vectors)
-    let contextText = "";
-    let kbMatchMeta: {
-      match_type: "title" | "keyword";
-      article_id: string;
-      title: string;
-    } | null = null;
+    // 10) Phase 6 — Knowledge Base Resolution (Semantic → Deterministic)
+let contextText = "";
+let kbMatchMeta: any = null;
 
-    kbAttempted = true;
-    const resolvedKB = await resolveKnowledgeContext({
-      userMessage: user_message,
-      organizationId,
-      logger,
-      vehicleModel:
-  aiExtract.vehicle_model ??
-  (conv.ai_last_entities?.model ?? null),
+kbAttempted = true;
 
+// 10A) Semantic KB (preferred)
+const semanticKB = await resolveKnowledgeContextSemantic({
+  userMessage: user_message,
+  organizationId,
+  logger,
+  vehicleModel:
+    aiExtract.vehicle_model ??
+    (conv.ai_last_entities?.model ?? null),
+});
+
+
+if (semanticKB?.context) {
+  contextText = semanticKB.context;
+  kbFound = true;
+  kbMatchMeta = {
+    match_type: "semantic",
+    article_ids: semanticKB.article_ids,
+  };
+} else {
+  // 10B) Deterministic fallback (KEEP EXISTING LOGIC)
+  const resolvedKB = await resolveKnowledgeContext({
+    userMessage: user_message,
+    organizationId,
+    logger,
+    vehicleModel:
+      aiExtract.vehicle_model ??
+      (conv.ai_last_entities?.model ?? null),
+  });
+
+  if (resolvedKB?.context) {
+    contextText = resolvedKB.context;
+    kbFound = true;
+    kbMatchMeta = {
+      match_type: resolvedKB.match_type,
+      article_id: resolvedKB.article_id,
+      title: resolvedKB.title,
+    };
+  } else {
+    logger.warn("[kb] attempted but NO match", {
+      user_message: user_message.slice(0, 120),
     });
-    if (resolvedKB?.context) {
-      contextText = resolvedKB.context;
-      kbFound = true;
-      kbMatchMeta = {
-        match_type: resolvedKB.match_type,
-        article_id: resolvedKB.article_id,
-        title: resolvedKB.title,
-      };
-    } else {
-      logger.warn("[kb] attempted but NO match", {
-        user_message: user_message.slice(0, 120),
-      });
-    }
-
+  }
+}
     // 🧠 Intent-aware soft handling (Issue 3 - Option B)
     // If user intent is pricing/features but KB has no match,
     // allow AI to ask ONE clarifying question instead of fallback.
