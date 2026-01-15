@@ -12,10 +12,7 @@ const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 
 if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
-  console.error(
-    "[embed-article] Missing PROJECT_URL or SERVICE_ROLE_KEY",
-    { hasProjectUrl: !!PROJECT_URL, hasServiceRoleKey: !!SERVICE_ROLE_KEY },
-  );
+  console.error("[embed-article] Missing PROJECT_URL or SERVICE_ROLE_KEY");
 }
 
 const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
@@ -31,27 +28,30 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const cors = (res: Response) => {
+function cors(res: Response) {
   Object.entries(CORS_HEADERS).forEach(([k, v]) => res.headers.set(k, v));
   return res;
-};
+}
 
 /* =====================================================================================
    LOGGING
 ===================================================================================== */
 function createLogger(request_id: string, org_id?: string | null) {
   return {
-    info(msg: string, extra = {}) {
-      console.log(JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }));
+    info(msg: string, extra: Record<string, any> = {}) {
+      console.log(
+        JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }),
+      );
     },
-    warn(msg: string, extra = {}) {
-      console.warn(JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }));
+    warn(msg: string, extra: Record<string, any> = {}) {
+      console.warn(
+        JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }),
+      );
     },
-    error(msg: string, extra = {}) {
-      console.error(JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }));
-    },
-    debug(msg: string, extra = {}) {
-      console.log(JSON.stringify({ level: "debug", request_id, org_id, msg, ...extra }));
+    error(msg: string, extra: Record<string, any> = {}) {
+      console.error(
+        JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }),
+      );
     },
   };
 }
@@ -59,7 +59,6 @@ function createLogger(request_id: string, org_id?: string | null) {
 /* =====================================================================================
    SAFE HELPERS
 ===================================================================================== */
-
 async function safeSupabase<T>(
   logger: ReturnType<typeof createLogger>,
   label: string,
@@ -73,27 +72,32 @@ async function safeSupabase<T>(
     }
     return data;
   } catch (err) {
-    logger.error(`[supabase] ${label} fatal`, { error: err });
+    logger.error(`[supabase] ${label} fatal`, { error: String(err) });
     return null;
   }
+}
+
+function isValidVector(v: any): v is number[] {
+  return Array.isArray(v) && v.length === 1536 && v.every((x) => typeof x === "number");
 }
 
 async function safeEmbeddingsBatch(
   logger: ReturnType<typeof createLogger>,
   inputs: string[],
 ): Promise<number[][] | null> {
-  const apiKey = OPENAI_API_KEY;
-  if (!apiKey) {
+  if (!OPENAI_API_KEY) {
     logger.error("OPENAI_API_KEY missing");
     return null;
   }
+
+  if (!inputs.length) return [];
 
   try {
     const resp = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
         model: "text-embedding-3-small",
@@ -101,14 +105,28 @@ async function safeEmbeddingsBatch(
       }),
     });
 
-    const json = await resp.json().catch(() => null);
+    const rawText = await resp.text();
 
-    if (!resp.ok || !json?.data?.length) {
-      logger.error("OPENAI_EMBEDDINGS_ERROR", { status: resp.status, body: json });
+    let json: any;
+    try {
+      json = JSON.parse(rawText);
+    } catch {
+      logger.error("OPENAI_NON_JSON_RESPONSE", {
+        status: resp.status,
+        body: rawText.slice(0, 500),
+      });
       return null;
     }
 
-    const vectors = json.data.map((d: any) => d?.embedding).filter(Boolean);
+    if (!resp.ok || !json?.data?.length) {
+      logger.error("OPENAI_EMBEDDINGS_ERROR", {
+        status: resp.status,
+        body: json,
+      });
+      return null;
+    }
+
+    const vectors: any[] = json.data.map((d: any) => d?.embedding);
 
     if (vectors.length !== inputs.length) {
       logger.error("EMBEDDINGS_COUNT_MISMATCH", {
@@ -118,18 +136,25 @@ async function safeEmbeddingsBatch(
       return null;
     }
 
-    return vectors;
+    for (const v of vectors) {
+      if (!isValidVector(v)) {
+        logger.error("BAD_EMBEDDING_DIMENSION", {
+          length: Array.isArray(v) ? v.length : null,
+        });
+        return null;
+      }
+    }
+
+    return vectors as number[][];
   } catch (err) {
-    logger.error("OPENAI_EMBEDDINGS_FATAL", { error: err });
+    logger.error("OPENAI_EMBEDDINGS_FATAL", { error: String(err) });
     return null;
   }
 }
 
-
 /* =====================================================================================
    CHUNKING
 ===================================================================================== */
-
 function chunkText(text: string, maxWords = 180, overlapWords = 30): string[] {
   const words = (text || "").split(/\s+/).filter(Boolean);
   const chunks: string[] = [];
@@ -140,9 +165,10 @@ function chunkText(text: string, maxWords = 180, overlapWords = 30): string[] {
     const chunk = words.slice(start, end).join(" ").trim();
     if (chunk) chunks.push(chunk);
 
-    // overlap
-    start = end - overlapWords;
-    if (start < 0) start = 0;
+    // ✅ Prevent repeating last chunk forever
+    if (end === words.length) break;
+
+    start = Math.max(0, end - overlapWords);
 
     // hard safety cap
     if (chunks.length >= 200) break;
@@ -150,7 +176,6 @@ function chunkText(text: string, maxWords = 180, overlapWords = 30): string[] {
 
   return chunks;
 }
-
 
 /* =====================================================================================
    MAIN HANDLER
@@ -165,32 +190,42 @@ serve(async (req: Request): Promise<Response> => {
 
   if (req.method !== "POST") {
     return cors(
-      new Response(JSON.stringify({ error: "Method not allowed", request_id }), {
-        status: 405,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ error: "Method not allowed", request_id }),
+        { status: 405, headers: { "Content-Type": "application/json" } },
+      ),
     );
   }
 
   try {
-    const body = await req.json().catch(() => null);
-
-    if (!body?.article_id) {
+    // Safe body parsing (handles empty/invalid JSON)
+    let body: any = null;
+    try {
+      const raw = await req.text();
+      body = raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      logger.error("INVALID_JSON_BODY", { error: String(err) });
       return cors(
-        new Response(JSON.stringify({ error: "article_id required", request_id }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ error: "Invalid JSON body", request_id }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
       );
     }
 
-    const articleId = body.article_id;
+    const articleId = body?.article_id;
+    if (!articleId) {
+      return cors(
+        new Response(
+          JSON.stringify({ error: "article_id required", request_id }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
 
     logger.info("Embed article request", { articleId });
 
-    /* ------------------------------------------------------------------
-       FETCH ARTICLE
-    ------------------------------------------------------------------ */
+    // Fetch article
     const article = await safeSupabase<any>(
       logger,
       "knowledge_articles.by_id",
@@ -202,75 +237,69 @@ serve(async (req: Request): Promise<Response> => {
           .maybeSingle(),
     );
 
-    if (!article) {
+    if (!article || !article.content?.trim()) {
       return cors(
-        new Response(JSON.stringify({ error: "Article not found", request_id }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ error: "Article not found or empty", request_id }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
       );
     }
 
-    const orgLogger = createLogger(request_id, article.organization_id);
+    const orgId = article.organization_id as string;
+    const orgLogger = createLogger(request_id, orgId);
 
-    if (!article.content?.trim()) {
-      return cors(
-        new Response(JSON.stringify({ error: "Article content empty", request_id }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    }
-
-    /* ------------------------------------------------------------------
-       CREATE CHUNKS
-    ------------------------------------------------------------------ */
-    const chunks = chunkText(article.content);
-
+    // Chunk
+    const chunks = chunkText(article.content, 180, 30);
     if (!chunks.length) {
       return cors(
-        new Response(JSON.stringify({ error: "Chunking failed", request_id }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ error: "Chunking failed", request_id }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
       );
     }
 
     orgLogger.info("Chunking completed", { chunks: chunks.length });
 
-    /* ------------------------------------------------------------------
-       EMBEDDINGS
-    ------------------------------------------------------------------ */
+    // Embed
     const vectors = await safeEmbeddingsBatch(orgLogger, chunks);
+    if (!vectors) {
+      return cors(
+        new Response(
+          JSON.stringify({ error: "Embedding failed", request_id }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
 
-if (!vectors) {
-  return cors(
-    new Response(
-      JSON.stringify({ error: "Embedding generation failed", request_id }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    ),
-  );
-}
+    // Delete old chunks (scoped)
+    const deleted = await safeSupabase<any>(
+      orgLogger,
+      "knowledge_chunks.delete_old",
+      () =>
+        supabase
+          .from("knowledge_chunks")
+          .delete()
+          .eq("article_id", articleId)
+          .eq("organization_id", orgId),
+    );
 
-const records = vectors.map((vector, i) => ({
-  organization_id: article.organization_id,
-  article_id: articleId,
-  chunk_index: i,
-  embedding: vector,
-}));
+    // (deleted can be null if RLS blocks; service role should pass)
+    orgLogger.info("Old chunks deleted", {
+      articleId,
+      deleted_ok: deleted !== null,
+    });
 
+    // Insert new
+    const records = chunks.map((chunk, i) => ({
+      organization_id: orgId,
+      article_id: articleId,
+      chunk_index: i, // keep if your table has it; if not, remove this line
+      chunk,          // ✅ required for deterministic + debug + audit
+      embedding: vectors[i],
+    }));
 
-// Delete old chunks for this article first
-await supabase
-  .from("knowledge_chunks")
-  .delete()
-  .eq("article_id", articleId)
-  .eq("organization_id", article.organization_id);
-
-
-    /* ------------------------------------------------------------------
-       INSERT CHUNKS
-    ------------------------------------------------------------------ */
     const inserted = await safeSupabase<any>(
       orgLogger,
       "knowledge_chunks.insert",
@@ -279,37 +308,28 @@ await supabase
 
     if (!inserted) {
       return cors(
-        new Response(JSON.stringify({ error: "Failed to insert chunks", request_id }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ error: "Insert failed", request_id }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        ),
       );
     }
 
     orgLogger.info("Embedding completed", { chunks: records.length });
 
-    /* ------------------------------------------------------------------
-       SUCCESS
-    ------------------------------------------------------------------ */
     return cors(
       new Response(
-        JSON.stringify({
-          success: true,
-          chunks: records.length,
-          request_id,
-        }),
+        JSON.stringify({ success: true, chunks: records.length, request_id }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
   } catch (err) {
     logger.error("FATAL", { error: String(err) });
-
     return cors(
-      new Response(JSON.stringify({ error: "Internal Server Error", request_id }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ error: "Internal Server Error", request_id }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      ),
     );
   }
 });
-

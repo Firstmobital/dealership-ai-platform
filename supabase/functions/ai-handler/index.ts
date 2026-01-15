@@ -791,7 +791,7 @@ async function resolveKnowledgeContextSemantic(params: {
     // 2️⃣ Match KB chunks
     const { data, error } = await supabase.rpc("match_knowledge_chunks", {
       query_embedding: embedding,
-      match_threshold: 0.78,
+      match_threshold: 0.60,
       match_count: 6,
       p_organization_id: organizationId
     });    
