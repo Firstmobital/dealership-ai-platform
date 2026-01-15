@@ -78,14 +78,14 @@ async function safeSupabase<T>(
   }
 }
 
-async function safeEmbedding(
+async function safeEmbeddingsBatch(
   logger: ReturnType<typeof createLogger>,
-  text: string,
-): Promise<number[] | null> {
+  inputs: string[],
+): Promise<number[][] | null> {
   const apiKey = OPENAI_API_KEY;
   if (!apiKey) {
-    logger.error("OPENAI_API_KEY missing — returning zero vector");
-    return Array(1536).fill(0);
+    logger.error("OPENAI_API_KEY missing");
+    return null;
   }
 
   try {
@@ -97,55 +97,60 @@ async function safeEmbedding(
       },
       body: JSON.stringify({
         model: "text-embedding-3-small",
-        input: text,
+        input: inputs,
       }),
     });
 
     const json = await resp.json().catch(() => null);
 
-    if (!resp.ok || !json?.data?.[0]?.embedding) {
-      logger.error("OPENAI_EMBEDDING_ERROR", {
-        status: resp.status,
-        body: json,
+    if (!resp.ok || !json?.data?.length) {
+      logger.error("OPENAI_EMBEDDINGS_ERROR", { status: resp.status, body: json });
+      return null;
+    }
+
+    const vectors = json.data.map((d: any) => d?.embedding).filter(Boolean);
+
+    if (vectors.length !== inputs.length) {
+      logger.error("EMBEDDINGS_COUNT_MISMATCH", {
+        expected: inputs.length,
+        got: vectors.length,
       });
       return null;
     }
 
-    const vector = json.data[0].embedding;
-    if (!Array.isArray(vector) || vector.length !== 1536) {
-      logger.error("BAD_EMBEDDING_DIMENSION", { length: vector.length });
-      return null;
-    }
-
-    return vector;
+    return vectors;
   } catch (err) {
-    logger.error("OPENAI_EMBEDDING_FATAL", { error: err });
+    logger.error("OPENAI_EMBEDDINGS_FATAL", { error: err });
     return null;
   }
 }
+
 
 /* =====================================================================================
    CHUNKING
 ===================================================================================== */
 
-function chunkText(text: string, maxWords = 120): string[] {
-  const words = text.split(/\s+/);
+function chunkText(text: string, maxWords = 180, overlapWords = 30): string[] {
+  const words = (text || "").split(/\s+/).filter(Boolean);
   const chunks: string[] = [];
-  let current: string[] = [];
 
-  for (const word of words) {
-    current.push(word);
-    if (current.join(" ").length > maxWords) {
-      chunks.push(current.join(" "));
-      current = [];
-    }
+  let start = 0;
+  while (start < words.length) {
+    const end = Math.min(start + maxWords, words.length);
+    const chunk = words.slice(start, end).join(" ").trim();
+    if (chunk) chunks.push(chunk);
+
+    // overlap
+    start = end - overlapWords;
+    if (start < 0) start = 0;
+
+    // hard safety cap
+    if (chunks.length >= 200) break;
   }
 
-  if (current.length) chunks.push(current.join(" "));
-
-  // prevent runaway memory if article is huge
-  return chunks.slice(0, 200);
+  return chunks;
 }
+
 
 /* =====================================================================================
    MAIN HANDLER
@@ -220,7 +225,7 @@ serve(async (req: Request): Promise<Response> => {
     /* ------------------------------------------------------------------
        CREATE CHUNKS
     ------------------------------------------------------------------ */
-    const chunks = chunkText(article.content, 120);
+    const chunks = chunkText(article.content);
 
     if (!chunks.length) {
       return cors(
@@ -236,25 +241,32 @@ serve(async (req: Request): Promise<Response> => {
     /* ------------------------------------------------------------------
        EMBEDDINGS
     ------------------------------------------------------------------ */
-    const records: any[] = [];
+    const vectors = await safeEmbeddingsBatch(orgLogger, chunks);
 
-    for (const chunk of chunks) {
-      const vector = await safeEmbedding(orgLogger, chunk);
-      if (!vector) {
-        return cors(
-          new Response(
-            JSON.stringify({ error: "Embedding generation failed", request_id }),
-            { status: 500, headers: { "Content-Type": "application/json" } },
-          ),
-        );
-      }
+if (!vectors) {
+  return cors(
+    new Response(
+      JSON.stringify({ error: "Embedding generation failed", request_id }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    ),
+  );
+}
 
-      records.push({
-        article_id: articleId,
-        chunk,
-        embedding: vector,
-      });
-    }
+const records = vectors.map((vector, i) => ({
+  organization_id: article.organization_id,
+  article_id: articleId,
+  chunk_index: i,
+  embedding: vector,
+}));
+
+
+// Delete old chunks for this article first
+await supabase
+  .from("knowledge_chunks")
+  .delete()
+  .eq("article_id", articleId)
+  .eq("organization_id", article.organization_id);
+
 
     /* ------------------------------------------------------------------
        INSERT CHUNKS
