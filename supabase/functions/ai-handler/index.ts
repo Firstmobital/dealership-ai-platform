@@ -194,7 +194,13 @@ function mergeEntities(
   prev: Record<string, any> | null,
   next: Record<string, any> | null
 ) {
-  return { ...(prev ?? {}), ...(next ?? {}) };
+  const out: Record<string, any> = { ...(prev ?? {}) };
+  for (const [k, v] of Object.entries(next ?? {})) {
+    // Phase 2: do not allow weak/empty extraction to wipe existing locks
+    if (v === undefined || v === null) continue;
+    out[k] = v;
+  }
+  return out;
 }
 
 function buildRollingSummary(params: {
@@ -419,6 +425,58 @@ function isGreetingMessage(input: string): boolean {
 
   return false;
 }
+
+function isShortFollowupMessage(msg: string): boolean {
+  const t = (msg || '').trim().toLowerCase();
+  if (!t) return false;
+  // Keep conservative: only short generic follow-ups
+  const phrases = [
+    'tell me more',
+    'more',
+    'details',
+    'detail',
+    'ok',
+    'okay',
+    'yes',
+    'y',
+    'haan',
+    'ha',
+    'sure',
+    'continue',
+    'next',
+    'k',
+    'pls',
+    'please',
+  ];
+  if (phrases.includes(t)) return true;
+  if (t.length <= 12 && /^[a-z\s]+$/.test(t)) return true;
+  return false;
+}
+
+function isExplicitTopicChange(msg: string): boolean {
+  const t = (msg || '').toLowerCase();
+  // Explicit switches only. If present, do NOT force continuity.
+  const patterns = [
+    /different/,
+    /another/,
+    /change/,
+    /other/,
+    /variant/,
+    /model/,
+    /harrier/,
+    /nexon/,
+    /safari/,
+    /tiago/,
+    /tigor/,
+    /altroz/,
+    /punch/,
+    /service/,
+    /booking/,
+    /test drive/,
+  ];
+  return patterns.some((p) => p.test(t));
+}
+
 
 async function safeChatCompletion(
   logger: ReturnType<typeof createLogger>,
@@ -1915,20 +1973,44 @@ ${personality.donts || "- None specified."}
     let aiExtract: AiExtractedIntent = {
       vehicle_model: null,
       fuel_type: null,
-      intent: "other",
+      intent: 'other',
     };
 
-    // Only extract intent if KB may be used
-    if (!isGreetingMessage(user_message) && aiMode !== "suggest") {
+    // Phase 2: Continuity lock for short follow-ups
+    const locked = conv.ai_last_entities ?? {};
+    const lockedTopic = locked?.topic ?? null;
+    const lockedIntent = locked?.intent ?? null;
+    const lockedModel = locked?.model ?? null;
+    const lockedFuel = locked?.fuel_type ?? null;
+
+    const shouldContinue =
+      lockedTopic &&
+      isShortFollowupMessage(user_message) &&
+      !isExplicitTopicChange(user_message);
+
+    if (shouldContinue) {
+      aiExtract = {
+        vehicle_model: lockedModel,
+        fuel_type: lockedFuel,
+        intent:
+          (lockedIntent as any) ??
+          (lockedTopic === 'offer_pricing' ? 'pricing' : 'other'),
+      };
+      logger.info('[ai-handler] follow-up continuity lock applied', {
+        locked_topic: lockedTopic,
+        locked_intent: aiExtract.intent,
+        locked_model: lockedModel,
+      });
+    } else if (!isGreetingMessage(user_message) && aiMode !== 'suggest') {
+      // Only extract intent if KB may be used
       aiExtract = await extractUserIntentWithAI({
         userMessage: user_message,
         logger,
       });
-
-      logger.info("[ai-extract] result", aiExtract);
+      logger.info('[ai-extract] result', aiExtract);
     }
 
-    /* ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
 --------------------------------------------------------------------------- */
 
@@ -1936,10 +2018,12 @@ ${personality.donts || "- None specified."}
     const nextEntities = mergeEntities(conv.ai_last_entities, {
       model: aiExtract.vehicle_model ?? undefined,
       fuel_type: aiExtract.fuel_type ?? undefined,
+      // Phase 2: keep intent/topic sticky; do not wipe on weak turns
+      intent: aiExtract.intent && aiExtract.intent !== 'other' ? aiExtract.intent : undefined,
       topic:
-        aiExtract.intent === "pricing" || aiExtract.intent === "offer"
-          ? "offer_pricing"
-          : conv.ai_last_entities?.topic,
+        aiExtract.intent === 'pricing' || aiExtract.intent === 'offer'
+          ? 'offer_pricing'
+          : undefined,
     });
     
 

@@ -213,6 +213,46 @@ function buildTemplateHeaderComponents(template: WhatsappTemplate) {
 /* ============================================================
    TEMPLATE TEXT RENDER (best-effort for UI)
 ============================================================ */
+
+/* ============================================================
+   PHASE 2 — CONVERSATION TOPIC / ENTITY SEEDING (CAMPAIGNS)
+============================================================ */
+function isLikelyOfferOrPricing(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  return (
+    t.includes("discount") ||
+    t.includes("offer") ||
+    t.includes("on-road") ||
+    t.includes("on road") ||
+    t.includes("price") ||
+    t.includes("emi") ||
+    t.includes("exchange") ||
+    t.includes("booking")
+  );
+}
+
+function inferVehicleModelFromRow(raw: Record<string, any> | null): string | null {
+  if (!raw) return null;
+  const keys = Object.keys(raw);
+  // common column names
+  const candidates = ["model","vehicle_model","car_model","vehicle","car","variant"];
+  for (const c of candidates) {
+    const k = keys.find((kk) => kk.toLowerCase() === c);
+    if (k) {
+      const v = (raw as any)[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  // fuzzy match: any key containing 'model'
+  for (const k of keys) {
+    if (k.toLowerCase().includes("model")) {
+      const v = (raw as any)[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return null;
+}
+
 function resolveTemplateText(
   templateBody: string,
   rawRow: Record<string, any> | null,
@@ -641,6 +681,7 @@ async function linkMessageToConversationAndPsf(params: {
   contactId: string;
   campaign: Campaign;
   phoneDigits: string;
+  renderedText: string;
 }) {
   const conversationId = await ensureConversationForContact({
     organizationId: params.msg.organization_id,
@@ -692,6 +733,32 @@ async function linkMessageToConversationAndPsf(params: {
   }
 
   // Save to conversation
+  // Phase 2: seed a stable topic/model lock so short replies ("tell me more") continue the campaign thread.
+  const existingConv = await supabaseAdmin
+    .from("conversations")
+    .select("ai_last_entities")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  const seededModel =
+    inferVehicleModelFromRow(params.msg.raw_row ?? null) ||
+    (await supabaseAdmin
+      .from("contacts")
+      .select("model")
+      .eq("id", params.contactId)
+      .maybeSingle()
+      .then((r) => (r.data as any)?.model ?? null)
+      .catch(() => null));
+
+  const seedTopic = isLikelyOfferOrPricing(params.renderedText) ? "offer_pricing" : null;
+
+  const prevEntities = (existingConv as any)?.data?.ai_last_entities ?? null;
+  const nextEntities = {
+    ...(prevEntities ?? {}),
+    ...(seededModel ? { model: seededModel } : {}),
+    ...(seedTopic ? { topic: seedTopic, intent: "offer" } : {}),
+  };
+
   await supabaseAdmin
     .from("conversations")
     .update({
@@ -699,6 +766,7 @@ async function linkMessageToConversationAndPsf(params: {
       workflow_id: matchedWorkflowId,
       campaign_context: campaignContext,
       campaign_reply_sheet_tab: params.campaign.reply_sheet_tab ?? null,
+      ai_last_entities: nextEntities,
     })
     .eq("id", conversationId);
 
@@ -893,6 +961,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         contactId,
         campaign,
         phoneDigits,
+        renderedText,
       });
 
       sentGlobal++;
@@ -1143,12 +1212,7 @@ serve(async (req: Request) => {
 
           await markSent(msg.id, waId);
           // ✅ PSF ADDITION: link conversation + psf case
-          await linkMessageToConversationAndPsf({
-            msg,
-            contactId,
-            campaign,
-            phoneDigits,
-          });
+          await linkMessageToConversationAndPsf({ msg, contactId, campaign, phoneDigits, renderedText });
 
           globalSent++;
           sentPerOrg[msg.organization_id] = orgCount + 1;
