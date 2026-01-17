@@ -2299,6 +2299,38 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
       }
     }
 
+    // ------------------------------------------------------------------
+    // PHASE 3 — WORKFLOW ↔ KB RECONCILIATION (DETERMINISTIC PRECEDENCE)
+    // ------------------------------------------------------------------
+    // Rule: If KB/Campaign already provides a sufficient answer for the current intent,
+    // workflow guidance must NOT cause redundant questions or override facts.
+
+    const kbSufficientForIntent = Boolean(contextText?.trim()) && (
+      requiresAuthoritativeKB ? (kbHasPricingSignals || campaignHasPricingSignals) : true
+    );
+
+    const workflowRequiresKB = (workflowInstructionText || "").toLowerCase().includes("knowledge base") ||
+      (workflowInstructionText || "").toLowerCase().includes("kb");
+
+    let workflowRequiresKBButMissing = false;
+
+    if (kbSufficientForIntent && workflowInstructionText?.trim()) {
+      logger.info("[workflow] suppressed (KB sufficient)", {
+        intent: aiExtract.intent,
+        has_kb: kbFound,
+      });
+      workflowInstructionText = "";
+    }
+
+    if (!kbFound && workflowRequiresKB && workflowInstructionText?.trim()) {
+      // Workflow text is indicating KB usage, but KB retrieval returned nothing.
+      // Do not continue blindly; let the system prompt ask ONE clarifying question / escalate.
+      workflowRequiresKBButMissing = true;
+      logger.warn("[workflow] KB required by workflow but missing", {
+        intent: aiExtract.intent,
+      });
+    }
+
     if (workflowInstructionText?.trim()) {
       logger.info("[decision] workflow_guidance_active", {
         has_workflow: true,
@@ -2369,6 +2401,11 @@ WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
 ------------------------
 ${workflowInstructionText || "No active workflow guidance."}
 
+WORKFLOW PRECEDENCE (PHASE 3 — CRITICAL):
+- Knowledge Context and Campaign Context ALWAYS override workflow guidance.
+- If the answer is already present in Knowledge/Campaign context, DO NOT ask workflow questions.
+- Never ask for details that are already known (Known Facts / Locked Entities / KB).
+
 IMPORTANT:
 - The workflow step is a GOAL, not a sentence to repeat.
 - Respond naturally in your own words.
@@ -2376,12 +2413,20 @@ EACH TIME.
 - Do NOT mention workflows, steps, or instructions.
 - Ask at most ONE relevant question if needed.
 
+WORKFLOW ↔ KB PRECEDENCE (PHASE 3 — CRITICAL)
+- Knowledge Context and Campaign Context ALWAYS override workflow guidance.
+- If the answer is present in Knowledge/Campaign context, DO NOT ask workflow questions.
+- If workflow guidance conflicts with Knowledge/Campaign facts, ignore the workflow guidance for this turn.
+- If workflow requires KB and KB is missing, ask ONE clarifying question or offer to connect to a human (do not guess).
+
 These rules OVERRIDE default AI behavior.
 
 ------------------------
 KNOWLEDGE CONTEXT (MOST IMPORTANT)
 ------------------------
 ${contextText}
+
+${workflowRequiresKBButMissing ? "WORKFLOW GUARD: Workflow requires Knowledge Base to proceed, but KB context is missing. Ask ONE short clarifying question or connect to a human advisor. Do NOT guess." : ""}
 
 ------------------------
 KNOWLEDGE USAGE RULES (CRITICAL)
