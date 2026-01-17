@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
+import { logAuditEvent } from "../_shared/audit.ts";
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -228,6 +229,14 @@ serve(async (req: Request): Promise<Response> => {
   }
 
   const orgId = article.organization_id as string;
+
+  await logAuditEvent(supabase, {
+    organization_id: orgId,
+    action: "kb_embed_started",
+    entity_type: "knowledge_article",
+    entity_id: articleId,
+    metadata: { request_id },
+  });
   const orgLogger = createLogger(request_id, orgId);
 
   const content = (article.content || "").trim();
@@ -275,11 +284,30 @@ serve(async (req: Request): Promise<Response> => {
 
     if (error) {
       logSbError(orgLogger, "SB_INSERT_CHUNKS_ERROR", error);
+      try {
+        await logAuditEvent(supabase, {
+          organization_id: orgId,
+          action: "kb_embed_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleId,
+          metadata: { request_id, error: "Failed to insert chunks" },
+        });
+      } catch (_) {
+        // ignore
+      }
       return json(500, { error: "Failed to insert chunks", request_id });
     }
   }
 
   orgLogger.info("Embedding completed", { chunks: records.length });
+
+  await logAuditEvent(supabase, {
+    organization_id: orgId,
+    action: "kb_embed_completed",
+    entity_type: "knowledge_article",
+    entity_id: articleId,
+    metadata: { request_id, chunks: records.length },
+  });
 
   return json(200, { success: true, chunks: records.length, request_id });
 });

@@ -4,6 +4,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import { logAuditEvent } from "../_shared/audit.ts";
 
 /* --------------------------------------------------
    CORS
@@ -39,6 +40,7 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
    HANDLER
 -------------------------------------------------- */
 serve(async (req) => {
+  const request_id = crypto.randomUUID();
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200, headers: corsHeaders });
   }
@@ -53,8 +55,8 @@ serve(async (req) => {
 
     if (!bucket || !path || !organization_id || !article_id) {
       return json(400, {
-        error:
-          "bucket, path, organization_id, article_id are required",
+        error: "bucket, path, organization_id, article_id are required",
+        request_id,
       });
     }
 
@@ -64,6 +66,15 @@ serve(async (req) => {
       .update({ processing_status: "processing", processing_error: null })
       .eq("id", article_id)
       .eq("organization_id", organization_id);
+
+    // Phase 5: audit start
+    logAuditEvent(supabase, {
+      organization_id,
+      action: "kb_extract_started",
+      entity_type: "knowledge_article",
+      entity_id: article_id,
+      metadata: { request_id, bucket, path, mime_type: "application/pdf" },
+    });
 
     /* --------------------------------------------------
        1️⃣ Download PDF from Supabase Storage
@@ -111,6 +122,7 @@ serve(async (req) => {
     });
 
     let text = extractResp.output_text?.trim() ?? "";
+    let used_ocr = false;
 
     /* --------------------------------------------------
        4️⃣ OCR FALLBACK (SCANNED PDFs ONLY)
@@ -119,6 +131,7 @@ serve(async (req) => {
     -------------------------------------------------- */
     if (text.length < 200) {
       console.warn("[pdf-to-text] Low text detected → OCR fallback");
+      used_ocr = true;
 
       const ocrResp = await openai.responses.create({
         model: "gpt-4o-mini",
@@ -163,9 +176,18 @@ serve(async (req) => {
       throw updateErr;
     }
 
+    logAuditEvent(supabase, {
+      organization_id,
+      action: "kb_extract_completed",
+      entity_type: "knowledge_article",
+      entity_id: article_id,
+      metadata: { request_id, extracted_chars: text.length, used_ocr },
+    });
+
     return json(200, {
       success: true,
       extracted_chars: text.length,
+      request_id,
     });
   } catch (err: any) {
     // Phase 1: persist processing failure (best-effort)
@@ -184,6 +206,14 @@ serve(async (req) => {
     } catch (_) {
       // ignore
     }
+
+    logAuditEvent(supabase, {
+      organization_id: organization_id ?? "unknown",
+      action: "kb_extract_failed",
+      entity_type: "knowledge_article",
+      entity_id: article_id,
+      metadata: { request_id, error: String(err?.message ?? err) },
+    });
 
     console.error("[pdf-to-text] fatal", err);
 

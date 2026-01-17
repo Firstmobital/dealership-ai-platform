@@ -5,6 +5,7 @@ import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
+import { logAuditEvent } from "../_shared/audit.ts";
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -125,7 +126,6 @@ async function setProcessingError(
     await supabase
       .from("knowledge_articles")
       .update({
-        processing_status: "error",
         processing_status: "error",
         processing_error: message,
         last_processed_at: new Date().toISOString(),
@@ -604,6 +604,14 @@ serve(async (req: Request): Promise<Response> => {
 
     const orgId = String(body.organization_id).trim();
 
+    await logAuditEvent(supabase, {
+      organization_id: orgId,
+      action: "kb_generate_started",
+      entity_type: "knowledge_article",
+      entity_id: body.article_id ? String(body.article_id).trim() : null,
+      metadata: { request_id, sourceType: body.source_type ?? "text" },
+    });
+
     const sourceType = (body.source_type ?? "text") as string;
     const incomingTitle = body.title?.trim?.() || "Untitled article";
 
@@ -758,6 +766,20 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
     if (!vectors || vectors.length !== chunks.length) {
       const msg = `Embedding generation failed for model: ${model}`;
       await setProcessingError(logger, articleIdForError, msg);
+
+    try {
+      if (body?.organization_id) {
+        await logAuditEvent(supabase, {
+          organization_id: String(body.organization_id).trim(),
+          action: "kb_generate_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleIdForError,
+          metadata: { request_id, error: msg },
+        });
+      }
+    } catch (_) {
+      // ignore
+    }
       return cors(
         new Response(JSON.stringify({ error: msg, request_id }), {
           status: 500,
@@ -784,7 +806,6 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
 
       raw_content: content,
       last_processed_at: nowIso,
-      processing_status: "completed",
       processing_status: "completed",
       processing_error: null,
     };
@@ -968,6 +989,20 @@ logger.info("EXCEL_SPLIT_DONE", {
 if (!text) {
         const msg = "Text extraction failed";
         await setProcessingError(logger, articleIdForError, msg);
+
+    try {
+      if (body?.organization_id) {
+        await logAuditEvent(supabase, {
+          organization_id: String(body.organization_id).trim(),
+          action: "kb_generate_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleIdForError,
+          metadata: { request_id, error: msg },
+        });
+      }
+    } catch (_) {
+      // ignore
+    }
         return cors(
           new Response(JSON.stringify({ error: msg, request_id }), {
             status: 500,
@@ -989,6 +1024,20 @@ if (!text) {
     if (!fullText.trim()) {
       const msg = "Empty content";
       await setProcessingError(logger, articleIdForError, msg);
+
+    try {
+      if (body?.organization_id) {
+        await logAuditEvent(supabase, {
+          organization_id: String(body.organization_id).trim(),
+          action: "kb_generate_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleIdForError,
+          metadata: { request_id, error: msg },
+        });
+      }
+    } catch (_) {
+      // ignore
+    }
       return cors(
         new Response(JSON.stringify({ error: msg, request_id }), {
           status: 400,
@@ -1004,6 +1053,20 @@ if (!text) {
     if (chunks.length === 0) {
       const msg = "Chunking failed";
       await setProcessingError(logger, articleIdForError, msg);
+
+    try {
+      if (body?.organization_id) {
+        await logAuditEvent(supabase, {
+          organization_id: String(body.organization_id).trim(),
+          action: "kb_generate_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleIdForError,
+          metadata: { request_id, error: msg },
+        });
+      }
+    } catch (_) {
+      // ignore
+    }
       return cors(
         new Response(JSON.stringify({ error: msg, request_id }), {
           status: 400,
@@ -1019,6 +1082,20 @@ if (!text) {
     if (!vectors || vectors.length !== chunks.length) {
       const msg = "Embedding generation failed";
       await setProcessingError(logger, articleIdForError, msg);
+
+    try {
+      if (body?.organization_id) {
+        await logAuditEvent(supabase, {
+          organization_id: String(body.organization_id).trim(),
+          action: "kb_generate_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleIdForError,
+          metadata: { request_id, error: msg },
+        });
+      }
+    } catch (_) {
+      // ignore
+    }
       return cors(
         new Response(JSON.stringify({ error: msg, request_id }), {
           status: 500,
@@ -1232,6 +1309,14 @@ if (!text) {
       replace: !!replaceArticleId,
     });
 
+    await logAuditEvent(supabase, {
+      organization_id: orgId,
+      action: "kb_generate_completed",
+      entity_type: "knowledge_article",
+      entity_id: articleId,
+      metadata: { request_id, chunks: records.length, replaced: !!replaceArticleId },
+    });
+
     return cors(
       new Response(
         JSON.stringify({
@@ -1249,6 +1334,20 @@ if (!text) {
     const msg = String(err);
     logger.error("FATAL", { error: msg });
     await setProcessingError(logger, articleIdForError, msg);
+
+    try {
+      if (body?.organization_id) {
+        await logAuditEvent(supabase, {
+          organization_id: String(body.organization_id).trim(),
+          action: "kb_generate_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleIdForError,
+          metadata: { request_id, error: msg },
+        });
+      }
+    } catch (_) {
+      // ignore
+    }
 
     return cors(
       new Response(JSON.stringify({ error: "Internal Server Error", request_id }), {

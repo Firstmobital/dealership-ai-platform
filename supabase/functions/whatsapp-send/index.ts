@@ -4,6 +4,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
+import { logAuditEvent } from "../_shared/audit.ts";
 /* ===========================================================================
    ENV
 =========================================================================== */
@@ -280,6 +281,7 @@ function buildWhatsappPayload(body: SendBody) {
 =========================================================================== */
 
 serve(async (req: Request) => {
+  const request_id = crypto.randomUUID();
   try {
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -337,6 +339,17 @@ serve(async (req: Request) => {
           { status: 400 }
         );
       }
+
+      // Phase 5: audit send attempt (non-blocking)
+      logAuditEvent(supabase, {
+        organization_id: conv.organization_id,
+        action: "whatsapp_send_attempt",
+        entity_type: "conversation",
+        entity_id: conv.id,
+        actor_user_id: authedUserId,
+        metadata: { request_id, message_type: msgType },
+      });
+
 
       // Membership check
       const { data: membership } = await supabase
@@ -460,6 +473,16 @@ try {
       console.log("[whatsapp-send][system] META RESPONSE:", metaResponse);
 
       if (!waRes.ok) {
+        // Phase 5: audit send failure (non-blocking)
+        logAuditEvent(supabase, {
+          organization_id: conv.organization_id,
+          action: "whatsapp_send_failed",
+          entity_type: "conversation",
+          entity_id: conv.id,
+          actor_user_id: authedUserId,
+          metadata: { request_id, message_type: msgType, metaResponse },
+        });
+
         return new Response(
           JSON.stringify({ error: "Meta send failed", metaResponse }),
           { status: 500 }
@@ -467,6 +490,18 @@ try {
       }
 
       const waMessageId = metaResponse?.messages?.[0]?.id ?? null;
+
+      // Phase 5: audit send success (non-blocking)
+      if (waMessageId) {
+        logAuditEvent(supabase, {
+          organization_id: conv.organization_id,
+          action: "whatsapp_send_success",
+          entity_type: "conversation",
+          entity_id: conv.id,
+          actor_user_id: authedUserId,
+          metadata: { request_id, message_type: msgType, whatsapp_message_id: waMessageId },
+        });
+      }
 
       if (!waMessageId) {
         await persistVariableMismatch({
@@ -714,6 +749,18 @@ if (!waPayload) {
     }
 
     const waMessageId = metaResponse?.messages?.[0]?.id ?? null;
+
+      // Phase 5: audit send success (non-blocking)
+      if (waMessageId) {
+        logAuditEvent(supabase, {
+          organization_id: conv.organization_id,
+          action: "whatsapp_send_success",
+          entity_type: "conversation",
+          entity_id: conv.id,
+          actor_user_id: authedUserId,
+          metadata: { request_id, message_type: msgType, whatsapp_message_id: waMessageId },
+        });
+      }
 
     if (!waMessageId) {
       await persistVariableMismatch({

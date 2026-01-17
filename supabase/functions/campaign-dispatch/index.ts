@@ -2,6 +2,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+import { logAuditEvent } from "../_shared/audit.ts";
 /* ============================================================
    ENV
 ============================================================ */
@@ -401,6 +402,15 @@ async function sendWhatsappTemplate(params: {
   mimeType?: string | null;
   messageType?: "template" | "image" | "document";
 }) {
+  // Phase 5: audit campaign send attempt (non-blocking)
+  logAuditEvent(supabaseAdmin, {
+    organization_id: params.organizationId,
+    action: "campaign_whatsapp_send_attempt",
+    entity_type: "campaign_message",
+    entity_id: params.campaign_message_id,
+    metadata: { campaign_id: params.campaign_id, template: params.templateName }
+  });
+
   const res = await fetch(`${PROJECT_URL}/functions/v1/whatsapp-send`, {
     method: "POST",
     headers: {
@@ -438,15 +448,34 @@ async function sendWhatsappTemplate(params: {
   });
 
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(JSON.stringify(body));
+  if (!res.ok) {
+    logAuditEvent(supabaseAdmin, {
+      organization_id: params.organizationId,
+      action: "campaign_whatsapp_send_failed",
+      entity_type: "campaign_message",
+      entity_id: params.campaign_message_id,
+      metadata: { campaign_id: params.campaign_id, template: params.templateName, error: body }
+    });
+    throw new Error(JSON.stringify(body));
+  }
 
-  return (
+  const waId = (
     body?.meta_response?.messages?.[0]?.id ??
     body?.meta_response?.message_id ??
     body?.messages?.[0]?.id ??
     body?.message_id ??
     null
   );
+
+  logAuditEvent(supabaseAdmin, {
+    organization_id: params.organizationId,
+    action: "campaign_whatsapp_send_success",
+    entity_type: "campaign_message",
+    entity_id: params.campaign_message_id,
+    metadata: { campaign_id: params.campaign_id, template: params.templateName, whatsapp_message_id: waId }
+  });
+
+  return waId;
 }
 
 /* ============================================================
@@ -986,6 +1015,7 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
    MAIN
 ============================================================ */
 serve(async (req: Request) => {
+  const request_id = crypto.randomUUID();
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

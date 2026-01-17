@@ -5,6 +5,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 
+import { logAuditEvent } from "../_shared/audit.ts";
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -588,6 +589,15 @@ async function processInboundMessage(
     metadata: replySheetTab ? { reply_sheet_tab: replySheetTab } : null,
   });
 
+  // Phase 5: audit inbound received (non-blocking)
+  logAuditEvent(supabase, {
+    organization_id: orgId,
+    action: "whatsapp_inbound_received",
+    entity_type: "conversation",
+    entity_id: conversationId,
+    metadata: { request_id: baseLogger.base.request_id, whatsapp_message_id: msg.id, message_type: msg.type ?? "text" },
+  });
+
   if (insertErr) {
     convLogger.error("MESSAGE_INSERT_FAILED", {
       error: insertErr,
@@ -641,6 +651,24 @@ if (text && replySheetTab) {
       conversationId,
       userMessage: safeText,
       logger: convLogger,
+    });
+
+    // Phase 5: audit AI trigger (non-blocking)
+    logAuditEvent(supabase, {
+      organization_id: orgId,
+      action: "ai_handler_triggered",
+      entity_type: "conversation",
+      entity_id: conversationId,
+      metadata: { request_id: baseLogger.base.request_id, trigger: "whatsapp_inbound" },
+    });
+
+    // Phase 5: audit AI trigger (non-blocking)
+    logAuditEvent(supabase, {
+      organization_id: orgId,
+      action: "ai_triggered",
+      entity_type: "conversation",
+      entity_id: conversationId,
+      metadata: { request_id: baseLogger.base.request_id, channel: "whatsapp" },
     });
 
     const intent = await classifyIntent(safeText);
