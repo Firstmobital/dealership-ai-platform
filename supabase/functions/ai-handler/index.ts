@@ -2180,13 +2180,13 @@ ${personality.donts || "- None specified."}
 
     // 8) Load conversation history
     const recentMessages = await safeSupabase<
-      { sender: string; text: string | null; created_at: string }[]
+      { sender: string; text: string | null; order_at: string | null }[]
     >("load_recent_messages", logger, () =>
       supabase
         .from("messages")
-        .select("sender, text, created_at")
+        .select("sender, text, order_at")
         .eq("conversation_id", conversation_id)
-        .order("created_at", { ascending: true })
+        .order("order_at", { ascending: true })
         .limit(20)
     );
 

@@ -34,6 +34,10 @@ const MAX_MESSAGES_PER_CAMPAIGN_PER_RUN = 50;
 const ORG_RATE_LIMIT_PER_RUN = 30;
 const MAX_CAMPAIGNS_PER_RUN = 20;
 
+// Phase 3 — bounded retries + DLQ
+const MAX_SEND_ATTEMPTS = 3;
+const BASE_RETRY_DELAY_SECONDS = 60;
+
 /* ============================================================
    TYPES
 ============================================================ */
@@ -79,6 +83,11 @@ type CampaignMessage = {
   raw_row: Record<string, any> | null;
   variables: Record<string, unknown> | null; // legacy
   status: CampaignMessageStatus;
+  send_attempts?: number;
+  next_retry_at?: string | null;
+  locked_at?: string | null;
+  locked_by?: string | null;
+  last_attempt_at?: string | null;
 };
 
 type WhatsappTemplate = {
@@ -518,16 +527,18 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
    FETCH PENDING MESSAGES
 ============================================================ */
 async function fetchMessages(campaignId: string): Promise<CampaignMessage[]> {
-  const { data, error } = await supabaseAdmin
-    .from("campaign_messages")
-    .select(
-      "id, organization_id, campaign_id, contact_id, phone, raw_row, variables, status"
-    )
-    .eq("campaign_id", campaignId)
-    .in("status", ["pending", "queued"])
-    .limit(MAX_MESSAGES_PER_CAMPAIGN_PER_RUN);
+  // Phase 3: atomic claim via RPC (prevents duplicates across concurrent runs)
+  const workerId = `campaign-dispatch:${campaignId}`;
+
+  const { data, error } = await supabaseAdmin.rpc("claim_campaign_messages", {
+    p_campaign_id: campaignId,
+    p_limit: MAX_MESSAGES_PER_CAMPAIGN_PER_RUN,
+    p_worker_id: workerId,
+    p_lock_ttl_seconds: 300,
+  });
 
   if (error) throw error;
+
   return (data ?? []) as CampaignMessage[];
 }
 
@@ -598,6 +609,9 @@ async function markSent(id: string, waId: string | null) {
       status: "sent",
       whatsapp_message_id: waId,
       dispatched_at: new Date().toISOString(),
+      locked_at: null,
+      locked_by: null,
+      next_retry_at: null,
     })
     .eq("id", id);
 }
@@ -609,8 +623,42 @@ async function markFailed(id: string, err: string) {
       status: "failed",
       error: err.slice(0, 1000),
       dispatched_at: new Date().toISOString(),
+      locked_at: null,
+      locked_by: null,
     })
     .eq("id", id);
+}
+
+async function scheduleRetry(id: string, err: string, attempt: number) {
+  const delay = Math.min(BASE_RETRY_DELAY_SECONDS * Math.pow(2, Math.max(attempt - 1, 0)), 60 * 60);
+  const next = new Date(Date.now() + delay * 1000).toISOString();
+
+  await supabaseAdmin
+    .from("campaign_messages")
+    .update({
+      status: "queued",
+      error: err.slice(0, 1000),
+      next_retry_at: next,
+      locked_at: null,
+      locked_by: null,
+    })
+    .eq("id", id);
+}
+
+async function writeDlq(params: {
+  organizationId: string;
+  entityId: string;
+  reason: string;
+  payload: Record<string, any>;
+}) {
+  await supabaseAdmin.from("message_delivery_dlq").insert({
+    organization_id: params.organizationId,
+    source: "campaign-dispatch",
+    entity_type: "campaign_message",
+    entity_id: params.entityId,
+    reason: params.reason.slice(0, 500),
+    payload: params.payload,
+  });
 }
 
 async function setRenderedText(id: string, renderedText: string) {
@@ -1000,7 +1048,20 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
       sentPerOrg[msg.organization_id] = orgCount + 1;
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
-      await markFailed(msg.id, err);
+      const attempt = Math.max(Number(msg.send_attempts ?? 1), 1);
+
+      // Phase 3: bounded retries + DLQ
+      if (attempt >= MAX_SEND_ATTEMPTS) {
+        await markFailed(msg.id, err);
+        await writeDlq({
+          organizationId: msg.organization_id,
+          entityId: msg.id,
+          reason: `max_attempts_exceeded:${attempt}`,
+          payload: { error: err, attempt },
+        });
+      } else {
+        await scheduleRetry(msg.id, err, attempt);
+      }
     }
   }
 
@@ -1259,7 +1320,19 @@ serve(async (req: Request) => {
           sentPerOrg[msg.organization_id] = orgCount + 1;
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
-          await markFailed(msg.id, err);
+          const attempt = Math.max(Number(msg.send_attempts ?? 1), 1);
+
+          if (attempt >= MAX_SEND_ATTEMPTS) {
+            await markFailed(msg.id, err);
+            await writeDlq({
+              organizationId: msg.organization_id,
+              entityId: msg.id,
+              reason: `max_attempts_exceeded:${attempt}`,
+              payload: { error: err, attempt },
+            });
+          } else {
+            await scheduleRetry(msg.id, err, attempt);
+          }
         }
       }
 

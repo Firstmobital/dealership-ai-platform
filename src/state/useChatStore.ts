@@ -235,7 +235,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       .from("messages")
       .select("*")
       .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true });
+      // Phase 3: canonical ordering key (messages.order_at)
+      .order("order_at", { ascending: true });
 
     if (error) {
       console.error("[useChatStore] fetchMessages error", error);
