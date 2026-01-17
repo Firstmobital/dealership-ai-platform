@@ -5,7 +5,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
-import { logAuditEvent } from "../ _shared/audit.ts";
+import { logAuditEvent } from "../_shared/audit.ts";
 
 /* ============================================================================
    ENV
