@@ -585,6 +585,7 @@ serve(async (req: Request): Promise<Response> => {
   }
 
   let articleIdForError: string | null = null;
+  let orgIdForError: string | null = null;
 
   // Track old file in replace mode (for auto-delete)
   let oldFileBucket: string | null = null;
@@ -603,6 +604,8 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     const orgId = String(body.organization_id).trim();
+    orgIdForError = orgId;
+
 
     await logAuditEvent(supabase, {
       organization_id: orgId,
@@ -1336,9 +1339,9 @@ if (!text) {
     await setProcessingError(logger, articleIdForError, msg);
 
     try {
-      if (body?.organization_id) {
+      if (orgIdForError) {
         await logAuditEvent(supabase, {
-          organization_id: String(body.organization_id).trim(),
+          organization_id: orgIdForError,
           action: "kb_generate_failed",
           entity_type: "knowledge_article",
           entity_id: articleIdForError,

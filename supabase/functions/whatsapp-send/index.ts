@@ -750,17 +750,21 @@ if (!waPayload) {
 
     const waMessageId = metaResponse?.messages?.[0]?.id ?? null;
 
-      // Phase 5: audit send success (non-blocking)
-      if (waMessageId) {
-        logAuditEvent(supabase, {
-          organization_id: conv.organization_id,
-          action: "whatsapp_send_success",
-          entity_type: "conversation",
-          entity_id: conv.id,
-          actor_user_id: authedUserId,
-          metadata: { request_id, message_type: msgType, whatsapp_message_id: waMessageId },
-        });
-      }
+    if (waMessageId) {
+      logAuditEvent(supabase, {
+        organization_id: orgId,
+        action: "whatsapp_send_success",
+        entity_type: conversationId ? "conversation" : "organization",
+        entity_id: conversationId ?? null,
+        metadata: {
+          request_id,
+          message_type: body.type,
+          whatsapp_message_id: waMessageId,
+          legacy: true,
+        },
+      });
+    }
+    
 
     if (!waMessageId) {
       await persistVariableMismatch({

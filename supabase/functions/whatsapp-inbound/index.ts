@@ -450,6 +450,7 @@ async function processInboundMessage(
   msg: any,
   value: any,
   baseLogger: ReturnType<typeof createLogger>,
+  request_id: string,
 ) {
   const phoneNumberId = value?.metadata?.phone_number_id;
   if (!phoneNumberId) return;
@@ -595,7 +596,7 @@ async function processInboundMessage(
     action: "whatsapp_inbound_received",
     entity_type: "conversation",
     entity_id: conversationId,
-    metadata: { request_id: baseLogger.base.request_id, whatsapp_message_id: msg.id, message_type: msg.type ?? "text" },
+    metadata: { request_id, whatsapp_message_id: msg.id, message_type: msg.type ?? "text" },
   });
 
   if (insertErr) {
@@ -659,7 +660,7 @@ if (text && replySheetTab) {
       action: "ai_handler_triggered",
       entity_type: "conversation",
       entity_id: conversationId,
-      metadata: { request_id: baseLogger.base.request_id, trigger: "whatsapp_inbound" },
+      metadata: { request_id, trigger: "whatsapp_inbound" },
     });
 
     // Phase 5: audit AI trigger (non-blocking)
@@ -668,7 +669,7 @@ if (text && replySheetTab) {
       action: "ai_triggered",
       entity_type: "conversation",
       entity_id: conversationId,
-      metadata: { request_id: baseLogger.base.request_id, channel: "whatsapp" },
+      metadata: { request_id, channel: "whatsapp" },
     });
 
     const intent = await classifyIntent(safeText);
@@ -726,7 +727,7 @@ serve(async (req) => {
           await processStatusReceipt(st, change.value, logger);
         }
         for (const msg of change.value?.messages ?? []) {
-          await processInboundMessage(msg, change.value, logger);
+          await processInboundMessage(msg, change.value, logger,request_id);
         }
       }
     }
