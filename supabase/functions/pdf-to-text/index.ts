@@ -5,6 +5,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import { logAuditEvent } from "../_shared/audit.ts";
+import { getRequestId, requireOrgMembership, requireUser } from "../_shared/auth.ts";
 
 /* --------------------------------------------------
    CORS
@@ -40,7 +41,7 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
    HANDLER
 -------------------------------------------------- */
 serve(async (req) => {
-  const request_id = crypto.randomUUID();
+  const request_id = getRequestId(req as Request);
   if (req.method === "OPTIONS") {
     return new Response("ok", { status: 200, headers: corsHeaders });
   }
@@ -58,6 +59,14 @@ serve(async (req) => {
         error: "bucket, path, organization_id, article_id are required",
         request_id,
       });
+    }
+
+    // PHASE 1 AUTHZ: user must belong to organization
+    try {
+      const u = await requireUser(req as Request);
+      await requireOrgMembership({ supabaseAdmin: supabase, userId: u.id, organizationId: organization_id });
+    } catch {
+      return json(403, { error: 'Forbidden', request_id });
     }
 
     // Phase 1: mark processing started

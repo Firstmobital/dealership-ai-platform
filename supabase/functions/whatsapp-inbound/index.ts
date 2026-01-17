@@ -12,6 +12,7 @@ import { logAuditEvent } from "../_shared/audit.ts";
 
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY") || "";
 const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN");
 // Optional but strongly recommended: validate X-Hub-Signature-256 on POST
 // Set this to your Meta App Secret.
@@ -240,6 +241,7 @@ async function triggerAIHandler(params: {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        ...(INTERNAL_API_KEY ? { "x-internal-api-key": INTERNAL_API_KEY } : {}),
       },
       body: JSON.stringify({
         conversation_id: params.conversationId,
@@ -625,6 +627,7 @@ if (text && replySheetTab) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        ...(INTERNAL_API_KEY ? { "x-internal-api-key": INTERNAL_API_KEY } : {}),
       },
       body: JSON.stringify({
         spreadsheet_id: org.google_sheet_id,

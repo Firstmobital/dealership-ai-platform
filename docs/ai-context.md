@@ -48,5 +48,3 @@ All major entities include an `organization_id` foreign key, enabling multi-ente
 - Web chat widget integration.
 - Live typing indicators.
 - Sales analytics dashboards.
-
-

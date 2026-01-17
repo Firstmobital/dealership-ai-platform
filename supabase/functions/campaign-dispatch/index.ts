@@ -3,11 +3,13 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { logAuditEvent } from "../_shared/audit.ts";
+import { isInternalRequest, getRequestId } from "../_shared/auth.ts";
 /* ============================================================
    ENV
 ============================================================ */
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY") || "";
 
 if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
   throw new Error("Missing PROJECT_URL or SERVICE_ROLE_KEY");
@@ -416,6 +418,7 @@ async function sendWhatsappTemplate(params: {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      ...(INTERNAL_API_KEY ? { "x-internal-api-key": INTERNAL_API_KEY } : {}),
     },
     body: JSON.stringify({
       organization_id: params.organizationId,
@@ -1015,9 +1018,17 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
    MAIN
 ============================================================ */
 serve(async (req: Request) => {
-  const request_id = crypto.randomUUID();
+  const request_id = getRequestId(req);
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  // PHASE 1 AUTHZ: internal-only worker endpoint
+  if (!isInternalRequest(req)) {
+    return new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   try {

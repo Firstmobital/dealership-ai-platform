@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
 import { logAuditEvent } from "../_shared/audit.ts";
+import { getRequestId, requireOrgMembership, requireUser } from "../_shared/auth.ts";
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -572,7 +573,7 @@ async function embedChunks(
 serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return cors(new Response("ok", { status: 200 }));
 
-  const request_id = crypto.randomUUID();
+  const request_id = getRequestId(req);
   const logger = createLogger(request_id);
 
   if (req.method !== "POST") {
@@ -605,6 +606,14 @@ serve(async (req: Request): Promise<Response> => {
 
     const orgId = String(body.organization_id).trim();
     orgIdForError = orgId;
+
+    // PHASE 1 AUTHZ: user must belong to organization
+    try {
+      const u = await requireUser(req);
+      await requireOrgMembership({ supabaseAdmin: supabase, userId: u.id, organizationId: orgId });
+    } catch {
+      return cors(new Response(JSON.stringify({ error: "Forbidden", request_id }), { status: 403, headers: { "Content-Type": "application/json" } }));
+    }
 
 
     await logAuditEvent(supabase, {

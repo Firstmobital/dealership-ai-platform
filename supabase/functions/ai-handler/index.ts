@@ -5,7 +5,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
-import { logAuditEvent } from "../_shared/audit.ts";
+import { logAuditEvent } from "../ _shared/audit.ts";
 
 /* ============================================================================
    ENV
@@ -14,6 +14,7 @@ const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY") || "";
 const AI_NO_REPLY_TOKEN = "<NO_REPLY>";
 
 if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
@@ -108,6 +109,7 @@ async function safeWhatsAppSend(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+        ...(INTERNAL_API_KEY ? { "x-internal-api-key": INTERNAL_API_KEY } : {}),
       },
       body: JSON.stringify(payload),
     });
@@ -1462,7 +1464,7 @@ serve(async (req: Request): Promise<Response> => {
     return new Response("ok", { status: 200 });
   }
 
-  const request_id = crypto.randomUUID();
+  const request_id = getRequestId(req);
   const baseLogger = createLogger({ request_id });
 
   try {
@@ -1562,6 +1564,27 @@ serve(async (req: Request): Promise<Response> => {
     );
 
     if (!conv) return new Response("Conversation not found", { status: 404 });
+
+    // PHASE 1 AUTHZ: enforce tenant boundary (service_role bypasses RLS)
+    const isInternal = isInternalRequest(req);
+    let actor_user_id: string | null = null;
+    let actor_email: string | null = null;
+
+    if (!isInternal) {
+      try {
+        const u = await requireUser(req);
+        actor_user_id = u.id;
+        actor_email = u.email;
+        await requireOrgMembership({
+          supabaseAdmin: supabase,
+          userId: u.id,
+          organizationId: conv.organization_id,
+        });
+      } catch {
+        return new Response("Forbidden", { status: 403 });
+      }
+    }
+
     if (conv.ai_enabled === false)
       return new Response("AI disabled", { status: 200 });
 

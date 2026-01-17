@@ -5,6 +5,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
 import { logAuditEvent } from "../_shared/audit.ts";
+import { isInternalRequest } from "../_shared/auth.ts";
 /* ===========================================================================
    ENV
 =========================================================================== */
@@ -298,6 +299,7 @@ serve(async (req: Request) => {
     const userClient = createUserClient(req);
     const { data: authData } = await userClient.auth.getUser();
     const authedUserId = authData?.user?.id ?? null;
+    const isInternal = isInternalRequest(req);
 
     // ==========================================================
     // INBOX AGENT SEND (conversation_id)
@@ -594,6 +596,10 @@ try {
     // LEGACY OR SYSTEM SEND (orgId + to)
     // - used by ai-handler / campaign-dispatch / PSF
     // ==========================================================
+
+    if (!isInternal) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+    }
 
     const orgId = body.organization_id?.trim();
     const contactId = body.contact_id ?? null;

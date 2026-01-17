@@ -6,6 +6,7 @@ import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
 import { logAuditEvent } from "../_shared/audit.ts";
+import { getRequestId, requireOrgMembership, requireUser } from "../_shared/auth.ts";
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -180,7 +181,7 @@ serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return cors(new Response("ok", { status: 200 }));
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
-  const request_id = crypto.randomUUID();
+  const request_id = getRequestId(req);
   const logger = createLogger(request_id);
 
   // ---- Safe JSON parse
@@ -229,6 +230,14 @@ serve(async (req: Request): Promise<Response> => {
   }
 
   const orgId = article.organization_id as string;
+
+  // PHASE 1 AUTHZ: user must belong to org to embed KB
+  try {
+    const u = await requireUser(req);
+    await requireOrgMembership({ supabaseAdmin: supabase, userId: u.id, organizationId: orgId });
+  } catch {
+    return json(403, { error: "Forbidden", request_id });
+  }
 
   await logAuditEvent(supabase, {
     organization_id: orgId,
