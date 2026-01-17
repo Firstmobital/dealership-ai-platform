@@ -789,7 +789,7 @@ async function resolveKnowledgeContextSemantic(params: {
     if (!embedding) return null;
 
     // 2️⃣ Match KB chunks
-    const { data, error } = await supabase.rpc("match_knowledge_chunks", {
+    const { data, error } = await supabase.rpc("match_knowledge_chunks_scoped", {
       query_embedding: embedding,
       match_threshold: 0.35, // 🔥 LOWERED
       match_count: 6,        // 🔥 FEWER chunks
@@ -1884,7 +1884,12 @@ ${personality.donts || "- None specified."}
     const nextEntities = mergeEntities(conv.ai_last_entities, {
       model: aiExtract.vehicle_model ?? undefined,
       fuel_type: aiExtract.fuel_type ?? undefined,
+      topic:
+        aiExtract.intent === "pricing" || aiExtract.intent === "offer"
+          ? "offer_pricing"
+          : conv.ai_last_entities?.topic,
     });
+    
 
     // 5) Follow-up suggestion mode (NO send, NO DB write)
     if (mode === "suggest_followup") {
@@ -2018,6 +2023,47 @@ if (semanticKB?.context) {
   }
 }
 
+const requiresAuthoritativeKB =
+  aiExtract.intent === "pricing" || aiExtract.intent === "offer";
+
+if (requiresAuthoritativeKB && !kbFound) {
+  logger.error("[guard] KB REQUIRED but not found — blocking AI reply", {
+    intent: aiExtract.intent,
+    vehicle_model: aiExtract.vehicle_model,
+  });
+
+  const safeReply =
+    "I can help with exact offers and prices, but I don’t have the verified offer sheet for this right now. Would you like me to connect you with our sales advisor?";
+
+  await supabase.from("messages").insert({
+    conversation_id,
+    sender: "bot",
+    message_type: "text",
+    text: safeReply,
+    channel,
+  });
+
+  if (channel === "whatsapp" && contactPhone) {
+    await safeWhatsAppSend(logger, {
+      organization_id: organizationId,
+      to: contactPhone,
+      type: "text",
+      text: safeReply,
+    });
+  }
+
+  return new Response(
+    JSON.stringify({
+      conversation_id,
+      ai_response: safeReply,
+      request_id,
+      blocked_reason: "KB_MISSING_FOR_PRICING",
+    }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
+
+
 // 🔒 PRICING SAFETY NET
 if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
   logger.warn("[kb] pricing intent but no KB context found");
@@ -2098,12 +2144,12 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
       }
     }
 
-    // Phase 6 rule: Workflow overrides KB context (prevents mixing)
-    if (workflowInstructionText?.trim() && aiExtract.intent !== "pricing") {
-      contextText = "";
-      kbMatchMeta = null;
-      logger.info("[decision] workflow_override_kb", { has_workflow: true });
+    if (workflowInstructionText?.trim()) {
+      logger.info("[decision] workflow_guidance_active", {
+        has_workflow: true,
+      });
     }
+    
 
     const campaignFactsBlock = buildCampaignFactsBlock(
       conv.campaign_context ?? null
@@ -2120,6 +2166,9 @@ Your job:
 - Follow bot instructions strictly.
 - Use the fallback message ONLY when the question cannot be reasonably answered.
 
+IMPORTANT:
+- If the user provides prices, variants, or discounts, treat them as UNVERIFIED unless present in Knowledge Context or Campaign Context.
+- Never learn dealership facts from chat history.
 
 ------------------------
 DEALERSHIP INFORMATION
@@ -2138,6 +2187,7 @@ ${JSON.stringify(nextEntities || {}, null, 2)}
 
 CRITICAL ENTITY RULE:
 - If Locked Entities includes "model", you MUST NOT switch to any other model unless the user explicitly mentions a different model.
+- If Locked Entities includes "topic": "offer_pricing", follow-up messages like "tell me more" MUST expand the same offer context.
 
 ------------------------
 KNOWN FACTS (CRITICAL)
