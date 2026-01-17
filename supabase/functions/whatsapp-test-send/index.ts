@@ -2,6 +2,7 @@
 // deno-lint-ignore-file no-explicit-any
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { isInternalRequest } from "../_shared/auth.ts";
 
 /* ============================================================
    ENV
@@ -54,6 +55,11 @@ type TestSendBody =
    MAIN
 ============================================================ */
 serve(async (req: Request) => {
+  // PHASE 1 — Internal-only test endpoint
+  if (!isInternalRequest(req)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
   try {
     if (req.method !== "POST") {
       return new Response(

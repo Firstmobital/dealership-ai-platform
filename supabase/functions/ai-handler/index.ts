@@ -898,11 +898,24 @@ async function resolveKnowledgeContextSemantic(params: {
 }): Promise<{
   context: string;
   article_ids: string[];
+  debug: {
+    used: { id: string; article_id: string; similarity: number; title: string }[];
+    rejected: { id: string; article_id: string; similarity: number; title: string; reason: string }[];
+    thresholds: { hardMin: number; softMin: number; initial: number; fallback: number };
+  };
 } | null> {
   const { userMessage, organizationId, logger } = params;
 
+  // Phase 2: Keep KB *strict* to reduce hallucinations.
+  // - First pass: higher threshold.
+  // - Fallback: slightly lower, but still requires a hard minimum similarity.
+  const INITIAL_THRESHOLD = 0.58;
+  const FALLBACK_THRESHOLD = 0.50;
+  const HARD_MIN_SIMILARITY = 0.48; // anything below this is treated as noise
+  const SOFT_MIN_SIMILARITY = 0.55; // below this we avoid presenting as authoritative
+
   try {
-    // 1️⃣ Create embedding for user query
+    // 1) Create embedding for user query
     const embeddingResp = await openai.embeddings.create({
       model: "text-embedding-3-small",
       input: userMessage,
@@ -911,70 +924,129 @@ async function resolveKnowledgeContextSemantic(params: {
     const embedding = embeddingResp.data?.[0]?.embedding;
     if (!embedding) return null;
 
-    // 2️⃣ Match KB chunks
-    const { data, error } = await supabase.rpc("match_knowledge_chunks_scoped", {
-      query_embedding: embedding,
-      match_threshold: 0.35, // 🔥 LOWERED
-      match_count: 6,        // 🔥 FEWER chunks
-      p_organization_id: organizationId,
-      p_only_published: true,
-    });    
+    const runMatch = async (threshold: number) => {
+      return await supabase.rpc("match_knowledge_chunks_scoped", {
+        query_embedding: embedding,
+        match_threshold: threshold,
+        match_count: 12,
+        p_organization_id: organizationId,
+        p_only_published: true,
+      });
+    };
+
+    // 2) Match KB chunks (strict → fallback)
+    let { data, error } = await runMatch(INITIAL_THRESHOLD);
+    if ((error || !data?.length) && FALLBACK_THRESHOLD < INITIAL_THRESHOLD) {
+      ({ data, error } = await runMatch(FALLBACK_THRESHOLD));
+    }
 
     if (error || !data?.length) return null;
 
-    let filtered = data as any[];
+    const rows = (data as any[]).map((r) => ({
+      id: String(r.id),
+      article_id: String(r.article_id),
+      title: String(r.article_title || "KB"),
+      chunk: String(r.chunk || ""),
+      similarity: Number(r.similarity ?? 0),
+    }));
 
-// 🔒 Respect locked vehicle model (CRITICAL)
-if (params.vehicleModel) {
-  const modelNorm = normalizeForMatch(params.vehicleModel);
+    // 3) Post-filter + ranking
+    const model = (params.vehicleModel || "").trim();
+    const modelNorm = model ? normalizeForMatch(model) : "";
 
-  const modelFiltered = filtered.filter((row: any) =>
-    normalizeForMatch(row.article_title || "").includes(modelNorm)
-  );
+    const used: any[] = [];
+    const rejected: any[] = [];
 
-  if (modelFiltered.length > 0) {
-    filtered = modelFiltered;
-  }
-}
-
-
-    if (!filtered.length) return null;
-
-    // 4️⃣ Build context (prefer top chunks; dedupe consecutive duplicates)
-    const usedArticleIds = new Set<string>();
-    const contextParts: string[] = [];
-
-    for (const row of filtered.slice(0, 4)) {
-      if (row?.article_id) usedArticleIds.add(String(row.article_id));
-
-      const title = (row?.article_title ? String(row.article_title) : "KB").trim();
-      const chunk = (row?.chunk ? String(row.chunk) : "").trim();
-      if (!chunk) continue;
-
-      // Keep chunk context compact + traceable
-      contextParts.push(`### ${title}\n${chunk}`);
+    // Helper: boost if model string appears in title/chunk (never hard-drop)
+    function boostScore(row: any): number {
+      let score = row.similarity;
+      if (modelNorm) {
+        const t = normalizeForMatch(row.title);
+        const c = normalizeForMatch(row.chunk);
+        if (t.includes(modelNorm)) score += 0.05;
+        // word-boundary-ish presence
+        if (containsPhrase(c, modelNorm)) score += 0.03;
+      }
+      return score;
     }
 
-    const MAX_KB_CHARS = 6000;
+    // Reject obvious noise
+    const viable = [];
+    for (const r of rows) {
+      if (!r.chunk.trim()) {
+        rejected.push({ ...r, reason: "empty_chunk" });
+        continue;
+      }
+      if (r.similarity < HARD_MIN_SIMILARITY) {
+        rejected.push({ id: r.id, article_id: r.article_id, similarity: r.similarity, title: r.title, reason: "below_hard_min" });
+        continue;
+      }
+      viable.push({ ...r, score: boostScore(r) });
+    }
 
-let context = contextParts.join("\n\n").trim();
-if (!context) return null;
+    if (!viable.length) return null;
 
-if (context.length > MAX_KB_CHARS) {
-  context = context.slice(0, MAX_KB_CHARS);
-}
+    // Sort by boosted score desc (tie-break by similarity)
+    viable.sort((a, b) => (b.score - a.score) || (b.similarity - a.similarity));
 
+    // Require at least one strong-enough chunk to inject as KB
+    const best = viable[0];
+    const hasStrong = best.similarity >= SOFT_MIN_SIMILARITY;
+    if (!hasStrong) {
+      // We have some weak semantic matches; do NOT inject as authoritative KB.
+      logger.warn("[kb] semantic match too weak; not injecting", {
+        best_similarity: best.similarity,
+        best_title: best.title,
+        vehicle_model: model || null,
+      });
+      return null;
+    }
 
-logger.info("[kb] semantic injected", {
-  chars: context.length,
-  articles: [...usedArticleIds],
-});
+    // 4) Build compact context from top rows with dedupe
+    const usedArticleIds = new Set<string>();
+    const contextParts: string[] = [];
+    const seenChunkHashes = new Set<string>();
 
+    for (const r of viable.slice(0, 6)) {
+      usedArticleIds.add(r.article_id);
 
+      // De-dupe chunks by normalized prefix hash
+      const key = normalizeForMatch(r.chunk).slice(0, 280);
+      if (seenChunkHashes.has(key)) continue;
+      seenChunkHashes.add(key);
+
+      contextParts.push(`### ${r.title} (sim=${r.similarity.toFixed(3)})
+${r.chunk.trim()}`);
+      used.push({ id: r.id, article_id: r.article_id, similarity: r.similarity, title: r.title });
+      if (contextParts.length >= 4) break; // keep context small
+    }
+
+    let context = contextParts.join("\n\n").trim();
+    if (!context) return null;
+
+    const MAX_KB_CHARS = 6500;
+    if (context.length > MAX_KB_CHARS) context = context.slice(0, MAX_KB_CHARS);
+
+    logger.info("[kb] semantic injected", {
+      chars: context.length,
+      vehicle_model: model || null,
+      articles: [...usedArticleIds],
+      used: used.map((u) => ({ title: u.title, similarity: u.similarity })),
+    });
 
     return {
       context,
       article_ids: [...usedArticleIds],
+      debug: {
+        used,
+        rejected,
+        thresholds: {
+          hardMin: HARD_MIN_SIMILARITY,
+          softMin: SOFT_MIN_SIMILARITY,
+          initial: INITIAL_THRESHOLD,
+          fallback: FALLBACK_THRESHOLD,
+        },
+      },
     };
   } catch (err) {
     logger.error("[kb] semantic resolver failed", { error: err });

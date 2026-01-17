@@ -3,6 +3,7 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import { requireUser, requireOrgMembership, requireOrgRole } from "../_shared/auth.ts";
 
 /* ============================================================
    ENV
@@ -83,6 +84,11 @@ serve(async (req) => {
     if (!organization_id || !Array.isArray(rows)) {
       return new Response("Invalid payload", { status: 400 });
     }
+
+    // PHASE 1 — Auth: user must be org admin/owner
+    const user = await requireUser(req);
+    await requireOrgMembership({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id });
+    await requireOrgRole({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id, allowedRoles: ["owner","admin"] });
 
     let inserted = 0;
     let updated = 0;

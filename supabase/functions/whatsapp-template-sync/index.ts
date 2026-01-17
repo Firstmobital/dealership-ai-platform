@@ -3,6 +3,7 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireUser, requireOrgMembership, requireOrgRole } from "../_shared/auth.ts";
 
 /* ------------------------------------------------------------------
    CORS
@@ -131,7 +132,13 @@ serve(async (req) => {
     const organization_id = body?.organization_id as string;
 
     if (!organization_id) {
-      return jsonResponse(400, { error: "organization_id required" });
+      return jsonResponse(400, { error: "organization_id required" }
+
+    // PHASE 1 — Auth: user must be org admin/owner
+    const user = await requireUser(req);
+    await requireOrgMembership({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id });
+    await requireOrgRole({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id, allowedRoles: ["owner","admin"] });
+);
     }
 
     /* ---------------------------------------------------------

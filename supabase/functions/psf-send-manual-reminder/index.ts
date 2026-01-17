@@ -4,6 +4,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import { requireUser, requireOrgMembership } from "../_shared/auth.ts";
 
 /* ============================================================
    ENV
@@ -63,6 +64,16 @@ serve(async (req) => {
     if (psfError || !psf) {
       return new Response("PSF case not found", { status: 404 });
     }
+
+    // PHASE 1 — Auth: user must be org member (agent/admin/owner)
+    const user = await requireUser(req);
+    try {
+      await requireOrgMembership({ supabaseAdmin: supabase, userId: user.id, organizationId: psf.organization_id });
+    } catch {
+      // prevent cross-tenant id probing
+      return new Response("PSF case not found", { status: 404 });
+    }
+
 
     /* --------------------------------------------------------
        2) Safety checks

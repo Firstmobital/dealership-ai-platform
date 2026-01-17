@@ -5,6 +5,7 @@ import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { logAuditEvent } from "../_shared/audit.ts";
+import { requireUser, requireOrgMembership, requireOrgRole } from "../_shared/auth.ts";
 
 /* =====================================================================================
    ENV
@@ -225,7 +226,13 @@ serve(async (req: Request): Promise<Response> => {
           { status: 400, headers: { "Content-Type": "application/json" } }
         )
       );
-    }
+    
+
+    // PHASE 1 — Auth: org admin/owner
+    const user = await requireUser(req);
+    await requireOrgMembership({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id });
+    await requireOrgRole({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id, allowedRoles: ["owner","admin"] });
+}
 
     logger.info("Processing KB save for unanswered question", { question_id });
 
@@ -410,3 +417,4 @@ serve(async (req: Request): Promise<Response> => {
     );
   }
 });
+
