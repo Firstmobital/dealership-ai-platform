@@ -43,8 +43,13 @@ serve(async (req) => {
     return new Response("ok", { status: 200, headers: corsHeaders });
   }
 
+  let bucket: string | null = null;
+  let path: string | null = null;
+  let organization_id: string | null = null;
+  let article_id: string | null = null;
+
   try {
-    const { bucket, path, organization_id, article_id } = await req.json();
+    ({ bucket, path, organization_id, article_id } = await req.json());
 
     if (!bucket || !path || !organization_id || !article_id) {
       return json(400, {
@@ -52,6 +57,13 @@ serve(async (req) => {
           "bucket, path, organization_id, article_id are required",
       });
     }
+
+    // Phase 1: mark processing started
+    await supabase
+      .from("knowledge_articles")
+      .update({ processing_status: "processing", processing_error: null })
+      .eq("id", article_id)
+      .eq("organization_id", organization_id);
 
     /* --------------------------------------------------
        1️⃣ Download PDF from Supabase Storage
@@ -140,6 +152,8 @@ serve(async (req) => {
       .update({
         content: text,
         source_type: "file",
+        processing_status: "completed",
+        processing_error: null,
         last_processed_at: new Date().toISOString(),
       })
       .eq("id", article_id)
@@ -154,6 +168,23 @@ serve(async (req) => {
       extracted_chars: text.length,
     });
   } catch (err: any) {
+    // Phase 1: persist processing failure (best-effort)
+    try {
+      if (organization_id && article_id) {
+        await supabase
+          .from("knowledge_articles")
+          .update({
+            processing_status: "error",
+            processing_error: String(err?.message ?? err),
+            last_processed_at: new Date().toISOString(),
+          })
+          .eq("id", article_id)
+          .eq("organization_id", organization_id);
+      }
+    } catch (_) {
+      // ignore
+    }
+
     console.error("[pdf-to-text] fatal", err);
 
     return json(500, {

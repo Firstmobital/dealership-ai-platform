@@ -134,6 +134,58 @@ function safeText(v: any): string {
 }
 
 /* ============================================================================
+   PHASE 0 — PRICING SAFETY HELPERS (HARD BLOCKS)
+============================================================================ */
+
+function looksLikePricingOrOfferContext(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  if (!t.trim()) return false;
+
+  const keywords = [
+    "₹",
+    " rs",
+    "inr",
+    "price",
+    "pricing",
+    "on-road",
+    "on road",
+    "ex-showroom",
+    "ex showroom",
+    "discount",
+    "offer",
+    "emi",
+    "down payment",
+    "rto",
+    "insurance",
+    "booking",
+    "finance"
+  ];
+
+  if (keywords.some((k) => t.includes(k))) return true;
+
+  // Numeric patterns that often indicate price/discount (₹ 12,34,567 / 123456 / 40k etc.)
+  const hasLargeNumber = /\\b\d{2,}(?:[\d,\.]*\d)?\\b/.test(t);
+  const hasKNotation = /\\b\d{1,3}\s?(k|lac|lakh|cr|crore)\\b/.test(t);
+  return hasLargeNumber || hasKNotation;
+}
+
+function redactUserProvidedPricing(text: string): string {
+  // Hard redact numeric claims to avoid chat-history contamination for pricing intent.
+  // Keep the sentence structure so the model retains conversational flow without using numbers as facts.
+  let t = text || "";
+
+  // Redact currency-like fragments
+  t = t.replace(/₹\s*[0-9][0-9,\.\s]*/gi, "₹[REDACTED]");
+  t = t.replace(/\\b(rs\.?|inr)\s*[0-9][0-9,\.\s]*/gi, "$1 [REDACTED]");
+
+  // Redact large numbers and common pricing shorthand
+  t = t.replace(/\\b\d{2,}(?:[\d,\.]*\d)?\\b/g, "[REDACTED_NUMBER]");
+  t = t.replace(/\\b\d{1,3}\s?(k|lac|lakh|cr|crore)\\b/gi, "[REDACTED_AMOUNT]");
+
+  return t;
+}
+
+/* ============================================================================
    PHASE 1 — AI MODE + HUMAN OVERRIDE + ENTITY LOCK + SUMMARY CACHE
 ============================================================================ */
 type AiMode = "auto" | "suggest" | "off";
@@ -1953,6 +2005,16 @@ ${personality.donts || "- None specified."}
       user_message
     );
 
+    // PHASE 0: Prevent chat-history contamination for pricing/offers
+    // If the user mentioned prices/discounts earlier, treat those numbers as unverified and redact them
+    // so the model cannot repeat them as facts.
+    const historyMessagesSafe =
+      aiExtract.intent === "pricing" || aiExtract.intent === "offer"
+        ? historyMessages.map((m) =>
+            m.role === "user" ? { ...m, content: redactUserProvidedPricing(m.content) } : m
+          )
+        : historyMessages;
+
     // 9) Campaign context (best-effort; fixed schema)
     let campaignContextText = "";
     if (contactId) {
@@ -2026,14 +2088,23 @@ if (semanticKB?.context) {
 const requiresAuthoritativeKB =
   aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-if (requiresAuthoritativeKB && !kbFound) {
-  logger.error("[guard] KB REQUIRED but not found — blocking AI reply", {
+// PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
+// This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
+const kbHasPricingSignals = looksLikePricingOrOfferContext(contextText);
+const campaignHasPricingSignals = looksLikePricingOrOfferContext(campaignContextText) ||
+  looksLikePricingOrOfferContext(JSON.stringify(conv.campaign_context ?? {}));
+
+if (requiresAuthoritativeKB && !(kbHasPricingSignals || campaignHasPricingSignals)) {
+  logger.error("[guard] VERIFIED PRICING REQUIRED but not found — blocking AI reply", {
     intent: aiExtract.intent,
     vehicle_model: aiExtract.vehicle_model,
+    kb_found: kbFound,
+    kb_has_pricing_signals: kbHasPricingSignals,
+    campaign_has_pricing_signals: campaignHasPricingSignals,
   });
 
   const safeReply =
-    "I can help with exact offers and prices, but I don’t have the verified offer sheet for this right now. Would you like me to connect you with our sales advisor?";
+    "I can share exact on-road price and current offers, but I don’t have the verified offer sheet for this right now. Which model/variant are you checking, and your city? I’ll connect you with our sales advisor for the exact quote.";
 
   await supabase.from("messages").insert({
     conversation_id,
@@ -2057,7 +2128,7 @@ if (requiresAuthoritativeKB && !kbFound) {
       conversation_id,
       ai_response: safeReply,
       request_id,
-      blocked_reason: "KB_MISSING_FOR_PRICING",
+      blocked_reason: "VERIFIED_PRICING_MISSING",
     }),
     { headers: { "Content-Type": "application/json" } }
   );
@@ -2204,10 +2275,10 @@ BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ${personaBlock}
 PRICING / DISCOUNT POLICY (IMPORTANT):
 - NEVER invent prices or offers.
-- If pricing is present in Knowledge Context, you MUST answer using it.
-- You may add a soft disclaimer (e.g. "may vary slightly by insurer").
-- Only use fallback if pricing is NOT present in Knowledge Context.
-- You are a SALES assistant, not a compliance bot. Never refuse valid business information.
+- NEVER invent prices or offers.
+- For pricing/offers, answer ONLY when verified numbers/offers exist in Knowledge Context or Campaign Context.
+- If KB context exists but does NOT contain pricing/offer signals, ask ONE short clarifying question (variant/city) or connect to sales advisor.
+- You may add a soft disclaimer (e.g. "may vary by city/variant") but do not guess.
 
 ------------------------
 WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
@@ -2253,10 +2324,9 @@ ${campaignContextText || "No prior campaign history available."}
 
 ENTITY SAFETY RULE (CRITICAL)
 ------------------------
-- If a vehicle model is locked OR present in Knowledge Context, you MAY assume it for pricing and offers.
-- Variant-level precision is NOT required unless explicitly asked.
-- If pricing or discount exists at model level, answer confidently with qualification language.
-- Do NOT refuse pricing due to variant ambiguity.
+- If a vehicle model is locked, keep using it.
+- For pricing/offers, do NOT assume numbers. Require verified pricing/offer signals in KB or Campaign Context.
+- If variant/city changes the quote and is not known, ask ONE short clarifying question.
 - If intent is unclear, ask ONE clarifying question.
 - Do NOT invent prices or discounts.
 
@@ -2291,7 +2361,7 @@ FORMATTING & STYLE
 ------------------------
 - Always answer the latest customer message.
 - Keep WhatsApp replies short & simple (1–3 sentences max).
-- You MUST NOT use the fallback message if Knowledge Context is non-empty.
+- You MAY use the fallback/sales-advisor handoff when verified pricing/offers are missing, even if KB context is non-empty but irrelevant.
 
 Respond now to the customer's latest message only.
 `.trim();
@@ -2315,7 +2385,7 @@ Respond now to the customer's latest message only.
       provider: aiSettings.provider,
       model: aiSettings.model,
       systemPrompt,
-      historyMessages,
+      historyMessages: historyMessagesSafe,
       logger,
     });
 

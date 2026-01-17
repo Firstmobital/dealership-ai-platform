@@ -125,6 +125,8 @@ async function setProcessingError(
     await supabase
       .from("knowledge_articles")
       .update({
+        processing_status: "error",
+        processing_status: "error",
         processing_error: message,
         last_processed_at: new Date().toISOString(),
       })
@@ -637,6 +639,20 @@ const published_at =
       published_at,
     });
 
+    // Phase 1: mark processing started for the placeholder article (best-effort)
+    if (replaceArticleId) {
+      try {
+        await supabase
+          .from("knowledge_articles")
+          .update({ processing_status: "processing", processing_error: null })
+          .eq("id", replaceArticleId)
+          .eq("organization_id", orgId);
+      } catch (_) {
+        // ignore
+      }
+    }
+
+
     /* ============================================
        REPLACE MODE: validate article belongs to org
     ============================================ */
@@ -675,7 +691,7 @@ const published_at =
       // Clear previous error state early
       await supabase
         .from("knowledge_articles")
-        .update({ processing_error: null })
+        .update({ processing_status: "processing", processing_error: null })
         .eq("id", replaceArticleId);
     }
 
@@ -768,6 +784,8 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
 
       raw_content: content,
       last_processed_at: nowIso,
+      processing_status: "completed",
+      processing_status: "completed",
       processing_error: null,
     };
 
@@ -831,7 +849,8 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
         original_filename,
         raw_content: containerNote,
         last_processed_at: nowIso,
-        processing_error: null,
+        processing_status: "completed",
+      processing_error: null,
       })
       .eq("id", replaceArticleId);
 
@@ -871,7 +890,8 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
             original_filename,
             raw_content: containerNote,
             last_processed_at: nowIso,
-            processing_error: null,
+            processing_status: "completed",
+      processing_error: null,
           })
           .select("id")
           .single()
@@ -1051,7 +1071,8 @@ if (!text) {
 
         raw_content: fullText,
         last_processed_at: nowIso,
-        processing_error: null,
+        processing_status: "completed",
+      processing_error: null,
       };
 
       const updated = await safeSupabase<{ id: string }>(
@@ -1102,7 +1123,8 @@ if (!text) {
 
         raw_content: fullText,
         last_processed_at: nowIso,
-        processing_error: null,
+        processing_status: "completed",
+      processing_error: null,
       };
 
       const created = await safeSupabase<{ id: string }>(
@@ -1191,6 +1213,16 @@ if (!text) {
           });
         }
       }
+    }
+
+    // Phase 1: finalize processing status (best effort)
+    try {
+      await supabase
+        .from("knowledge_articles")
+        .update({ processing_status: "completed", processing_error: null, last_processed_at: new Date().toISOString() })
+        .eq("id", articleId);
+    } catch (_) {
+      // ignore
     }
 
     logger.info("KB article processed", {

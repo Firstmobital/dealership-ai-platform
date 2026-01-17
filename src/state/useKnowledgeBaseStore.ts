@@ -95,7 +95,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   setSearchTerm: (term) => set({ searchTerm: term }),
 
   /* -----------------------------------------------------------
-     FETCH ARTICLES (includes processing_status)
+     FETCH ARTICLES
   ----------------------------------------------------------- */
   fetchArticles: async () => {
     const { activeOrganization } = useOrganizationStore.getState();
@@ -149,6 +149,12 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     set({ uploading: true, error: null });
 
     try {
+      const resolvedStatus: ArticleStatus = status ?? "published";
+      const publishedAt =
+        resolvedStatus === "published"
+          ? new Date().toISOString()
+          : null;
+
       const { data, error } = await supabase
         .from("knowledge_articles")
         .insert({
@@ -157,7 +163,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           title,
           content,
           keywords: Array.isArray(keywords) ? keywords : [],
-          status: status ?? "draft",
+          status: resolvedStatus,
+          published_at: publishedAt,
           processing_status: "completed",
         })
         .select("id")
@@ -198,13 +205,17 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       const safeName = file.name.replace(/\s+/g, "_");
       const path = `kb/${activeOrganization.id}/${Date.now()}-${safeName}`;
 
-      // Upload file
+      const resolvedStatus: ArticleStatus = status ?? "published";
+      const publishedAt =
+        resolvedStatus === "published"
+          ? new Date().toISOString()
+          : null;
+
       await supabase.storage.from(bucket).upload(path, file, {
         contentType: file.type,
         upsert: false,
       });
 
-      // Create article placeholder
       const { data: article, error } = await supabase
         .from("knowledge_articles")
         .insert({
@@ -212,7 +223,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           source_type: "file",
           title: title || file.name,
           content: "",
-          status: status ?? "draft",
+          status: resolvedStatus,
+          published_at: publishedAt,
           keywords: Array.isArray(keywords) ? keywords : [],
           file_bucket: bucket,
           file_path: path,
@@ -225,7 +237,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
 
       if (error || !article) throw error;
 
-      // Route processing
       if (file.type === "application/pdf") {
         await supabase.functions.invoke("pdf-to-text", {
           body: {
@@ -248,6 +259,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           },
         });
       }
+
+      await supabase.functions.invoke("embed-article", {
+        body: { article_id: article.id },
+      });
 
       await get().fetchArticles();
       set({ uploading: false });
@@ -319,6 +334,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           },
         });
       }
+
+      await supabase.functions.invoke("embed-article", {
+        body: { article_id: article.id },
+      });
 
       await get().fetchArticles();
       set({ uploading: false });
