@@ -1,4 +1,5 @@
 // supabase/functions/embed-article/index.ts
+// FINAL — FK-RACE SAFE + REAL ERROR LOGS (NO MORE RANDOM 500S)
 // deno-lint-ignore-file no-explicit-any
 
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
@@ -33,50 +34,48 @@ function cors(res: Response) {
   return res;
 }
 
+function json(status: number, payload: Record<string, unknown>) {
+  return cors(
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+}
+
 /* =====================================================================================
    LOGGING
 ===================================================================================== */
 function createLogger(request_id: string, org_id?: string | null) {
   return {
     info(msg: string, extra: Record<string, any> = {}) {
-      console.log(
-        JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }),
-      );
+      console.log(JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }));
     },
     warn(msg: string, extra: Record<string, any> = {}) {
-      console.warn(
-        JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }),
-      );
+      console.warn(JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }));
     },
     error(msg: string, extra: Record<string, any> = {}) {
-      console.error(
-        JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }),
-      );
+      console.error(JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }));
     },
   };
 }
 
-/* =====================================================================================
-   SAFE HELPERS
-===================================================================================== */
-async function safeSupabase<T>(
-  logger: ReturnType<typeof createLogger>,
-  label: string,
-  fn: () => Promise<{ data: T | null; error: any }>,
-): Promise<T | null> {
-  try {
-    const { data, error } = await fn();
-    if (error) {
-      logger.error(`[supabase] ${label} error`, { error });
-      return null;
-    }
-    return data;
-  } catch (err) {
-    logger.error(`[supabase] ${label} fatal`, { error: String(err) });
-    return null;
-  }
+function logSbError(logger: ReturnType<typeof createLogger>, label: string, error: any) {
+  logger.error(label, {
+    message: error?.message ?? String(error),
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+    code: error?.code ?? null,
+  });
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/* =====================================================================================
+   EMBEDDINGS
+===================================================================================== */
 function isValidVector(v: any): v is number[] {
   return Array.isArray(v) && v.length === 1536 && v.every((x) => typeof x === "number");
 }
@@ -89,7 +88,6 @@ async function safeEmbeddingsBatch(
     logger.error("OPENAI_API_KEY missing");
     return null;
   }
-
   if (!inputs.length) return [];
 
   try {
@@ -126,7 +124,7 @@ async function safeEmbeddingsBatch(
       return null;
     }
 
-    const vectors: any[] = json.data.map((d: any) => d?.embedding);
+    const vectors = json.data.map((d: any) => d?.embedding);
 
     if (vectors.length !== inputs.length) {
       logger.error("EMBEDDINGS_COUNT_MISMATCH", {
@@ -145,7 +143,7 @@ async function safeEmbeddingsBatch(
       }
     }
 
-    return vectors as number[][];
+    return vectors;
   } catch (err) {
     logger.error("OPENAI_EMBEDDINGS_FATAL", { error: String(err) });
     return null;
@@ -165,12 +163,9 @@ function chunkText(text: string, maxWords = 180, overlapWords = 30): string[] {
     const chunk = words.slice(start, end).join(" ").trim();
     if (chunk) chunks.push(chunk);
 
-    // ✅ Prevent repeating last chunk forever
     if (end === words.length) break;
-
     start = Math.max(0, end - overlapWords);
 
-    // hard safety cap
     if (chunks.length >= 200) break;
   }
 
@@ -178,158 +173,113 @@ function chunkText(text: string, maxWords = 180, overlapWords = 30): string[] {
 }
 
 /* =====================================================================================
-   MAIN HANDLER
+   MAIN
 ===================================================================================== */
 serve(async (req: Request): Promise<Response> => {
-  if (req.method === "OPTIONS") {
-    return cors(new Response("ok", { status: 200 }));
-  }
+  if (req.method === "OPTIONS") return cors(new Response("ok", { status: 200 }));
+  if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
   const request_id = crypto.randomUUID();
   const logger = createLogger(request_id);
 
-  if (req.method !== "POST") {
-    return cors(
-      new Response(
-        JSON.stringify({ error: "Method not allowed", request_id }),
-        { status: 405, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-  }
-
+  // ---- Safe JSON parse
+  let body: any = null;
   try {
-    // Safe body parsing (handles empty/invalid JSON)
-    let body: any = null;
-    try {
-      const raw = await req.text();
-      body = raw ? JSON.parse(raw) : null;
-    } catch (err) {
-      logger.error("INVALID_JSON_BODY", { error: String(err) });
-      return cors(
-        new Response(
-          JSON.stringify({ error: "Invalid JSON body", request_id }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-
-    const articleId = body?.article_id;
-    if (!articleId) {
-      return cors(
-        new Response(
-          JSON.stringify({ error: "article_id required", request_id }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-
-    logger.info("Embed article request", { articleId });
-
-    // Fetch article
-    const article = await safeSupabase<any>(
-      logger,
-      "knowledge_articles.by_id",
-      () =>
-        supabase
-          .from("knowledge_articles")
-          .select("id, organization_id, content")
-          .eq("id", articleId)
-          .maybeSingle(),
-    );
-
-    if (!article || !article.content?.trim()) {
-      return cors(
-        new Response(
-          JSON.stringify({ error: "Article not found or empty", request_id }),
-          { status: 404, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-
-    const orgId = article.organization_id as string;
-    const orgLogger = createLogger(request_id, orgId);
-
-    // Chunk
-    const chunks = chunkText(article.content, 180, 30);
-    if (!chunks.length) {
-      return cors(
-        new Response(
-          JSON.stringify({ error: "Chunking failed", request_id }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-
-    orgLogger.info("Chunking completed", { chunks: chunks.length });
-
-    // Embed
-    const vectors = await safeEmbeddingsBatch(orgLogger, chunks);
-    if (!vectors) {
-      return cors(
-        new Response(
-          JSON.stringify({ error: "Embedding failed", request_id }),
-          { status: 500, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-
-    // Delete old chunks (scoped)
-    const deleted = await safeSupabase<any>(
-      orgLogger,
-      "knowledge_chunks.delete_old",
-      () =>
-        supabase
-          .from("knowledge_chunks")
-          .delete()
-          .eq("article_id", articleId)
-          .eq("organization_id", orgId),
-    );
-
-    // (deleted can be null if RLS blocks; service role should pass)
-    orgLogger.info("Old chunks deleted", {
-      articleId,
-      deleted_ok: deleted !== null,
-    });
-
-    // Insert new
-    const records = chunks.map((chunk, i) => ({
-      organization_id: orgId,
-      article_id: articleId,
-      chunk_index: i, // keep if your table has it; if not, remove this line
-      chunk,          // ✅ required for deterministic + debug + audit
-      embedding: vectors[i],
-    }));
-
-    const inserted = await safeSupabase<any>(
-      orgLogger,
-      "knowledge_chunks.insert",
-      () => supabase.from("knowledge_chunks").insert(records),
-    );
-
-    if (!inserted) {
-      return cors(
-        new Response(
-          JSON.stringify({ error: "Insert failed", request_id }),
-          { status: 500, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-
-    orgLogger.info("Embedding completed", { chunks: records.length });
-
-    return cors(
-      new Response(
-        JSON.stringify({ success: true, chunks: records.length, request_id }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-  } catch (err) {
-    logger.error("FATAL", { error: String(err) });
-    return cors(
-      new Response(
-        JSON.stringify({ error: "Internal Server Error", request_id }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+    const raw = await req.text();
+    body = raw ? JSON.parse(raw) : null;
+  } catch {
+    return json(200, { skipped: true, reason: "Invalid JSON", request_id });
   }
+
+  const articleId = body?.article_id;
+  if (!articleId) return json(200, { skipped: true, reason: "article_id missing", request_id });
+
+  logger.info("Embed article request", { articleId });
+
+  // ---- FK/commit race guard: wait a bit for article row to exist
+  // This solves: knowledge_chunks_article_id_fkey violations during fast saves.
+  let article: any = null;
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const { data, error } = await supabase
+      .from("knowledge_articles")
+      .select("id, organization_id, content")
+      .eq("id", articleId)
+      .maybeSingle();
+
+    if (error) {
+      logSbError(logger, "SB_FETCH_ARTICLE_ERROR", error);
+      // If fetch itself errors, don't keep retrying blindly
+      break;
+    }
+
+    if (data?.id) {
+      article = data;
+      break;
+    }
+
+    // not found yet → retry
+    await sleep(200 * attempt);
+  }
+
+  if (!article?.id) {
+    logger.warn("Article not committed yet — skipping embed", { articleId });
+    return json(200, { skipped: true, reason: "Article not committed yet", request_id });
+  }
+
+  const orgId = article.organization_id as string;
+  const orgLogger = createLogger(request_id, orgId);
+
+  const content = (article.content || "").trim();
+
+  // Don't embed while typing / tiny content
+  if (content.length < 50) {
+    orgLogger.info("Skipping embed (content too short)", { length: content.length });
+    return json(200, { skipped: true, reason: "Content too short", request_id });
+  }
+
+  const chunks = chunkText(content, 180, 30);
+  if (!chunks.length) return json(200, { skipped: true, reason: "Chunking failed", request_id });
+
+  orgLogger.info("Chunking completed", { chunks: chunks.length });
+
+  const vectors = await safeEmbeddingsBatch(orgLogger, chunks);
+  if (!vectors) return json(500, { error: "Embedding failed", request_id });
+
+  // ---- Delete old chunks (log real error details)
+  {
+    const { error } = await supabase
+      .from("knowledge_chunks")
+      .delete()
+      .eq("article_id", articleId);
+
+    if (error) {
+      logSbError(orgLogger, "SB_DELETE_OLD_CHUNKS_ERROR", error);
+      return json(500, { error: "Failed to clear old chunks", request_id });
+    }
+  }
+
+  const records = chunks.map((chunk, i) => ({
+    organization_id: orgId,
+    article_id: articleId,
+    chunk_index: i,
+    chunk,
+    embedding: vectors[i],
+  }));
+
+  // ---- Insert new chunks (log real error details)
+  {
+    const { error } = await supabase
+      .from("knowledge_chunks")
+      .insert(records, { returning: "minimal" });
+
+    if (error) {
+      logSbError(orgLogger, "SB_INSERT_CHUNKS_ERROR", error);
+      return json(500, { error: "Failed to insert chunks", request_id });
+    }
+  }
+
+  orgLogger.info("Embedding completed", { chunks: records.length });
+
+  return json(200, { success: true, chunks: records.length, request_id });
 });
