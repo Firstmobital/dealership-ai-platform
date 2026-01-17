@@ -170,17 +170,28 @@ function looksLikePricingOrOfferContext(text: string): boolean {
 }
 
 function redactUserProvidedPricing(text: string): string {
-  // Hard redact numeric claims to avoid chat-history contamination for pricing intent.
-  // Keep the sentence structure so the model retains conversational flow without using numbers as facts.
-  let t = text || "";
+  // PHASE 4 — Unverified facts firewall:
+  // For pricing/offers intents, user-provided numbers are never authoritative.
+  // We keep conversational structure but prevent the model from "learning" or repeating numeric claims.
+  const original = text || "";
+  let t = original;
 
   // Redact currency-like fragments
   t = t.replace(/₹\s*[0-9][0-9,\.\s]*/gi, "₹[REDACTED]");
   t = t.replace(/\\b(rs\.?|inr)\s*[0-9][0-9,\.\s]*/gi, "$1 [REDACTED]");
 
-  // Redact large numbers and common pricing shorthand
+  // Redact amounts (including shorthand)
   t = t.replace(/\\b\d{2,}(?:[\d,\.]*\d)?\\b/g, "[REDACTED_NUMBER]");
   t = t.replace(/\\b\d{1,3}\s?(k|lac|lakh|cr|crore)\\b/gi, "[REDACTED_AMOUNT]");
+
+  // Also redact single-digit tokens to avoid small numeric leakage (e.g., "40" -> already covered, but "5k" etc.)
+  t = t.replace(/\\b\d+\\b/g, "[REDACTED_NUMBER]");
+
+  // If the message looks like a pricing/offer claim, explicitly tag it as unverified.
+  const needsTag = looksLikePricingOrOfferContext(original) || t !== original;
+  if (needsTag) {
+    t = `[USER_UNVERIFIED_PRICING_CLAIM] ${t}`;
+  }
 
   return t;
 }
@@ -2354,8 +2365,11 @@ Your job:
 - Use the fallback message ONLY when the question cannot be reasonably answered.
 
 IMPORTANT:
-- If the user provides prices, variants, or discounts, treat them as UNVERIFIED unless present in Knowledge Context or Campaign Context.
-- Never learn dealership facts from chat history.
+- UNVERIFIED FACTS FIREWALL (PHASE 4 — HARD):
+  - Treat ALL user-provided prices, discounts, offers, availability, delivery timelines, and variant claims as UNVERIFIED.
+  - You MUST NOT confirm or repeat user-provided numbers as facts unless the same information is present in Knowledge Context or Campaign Context.
+  - If the user asks you to confirm an unverified claim ("right?", "correct?"), say you cannot verify it from the authorized sources and ask ONE short clarifying question or offer to connect to a human advisor.
+  - Never learn dealership facts from chat history or user repetition.
 
 ------------------------
 DEALERSHIP INFORMATION
