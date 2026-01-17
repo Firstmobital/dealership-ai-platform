@@ -1321,7 +1321,6 @@ Your task:
 - Suggest ONE short follow-up message
 - Sound human and polite
 - Do NOT repeat previous messages
-- Do NOT include pricing unless explicitly allowed
 - Keep it WhatsApp-friendly (1–2 lines)
 
 PERSONALITY RULES:
@@ -2018,6 +2017,12 @@ if (semanticKB?.context) {
     });
   }
 }
+
+// 🔒 PRICING SAFETY NET
+if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
+  logger.warn("[kb] pricing intent but no KB context found");
+}
+
     // 🧠 Intent-aware soft handling (Issue 3 - Option B)
     // If user intent is pricing/features but KB has no match,
     // allow AI to ask ONE clarifying question instead of fallback.
@@ -2094,7 +2099,7 @@ if (semanticKB?.context) {
     }
 
     // Phase 6 rule: Workflow overrides KB context (prevents mixing)
-    if (workflowInstructionText?.trim()) {
+    if (workflowInstructionText?.trim() && aiExtract.intent !== "pricing") {
       contextText = "";
       kbMatchMeta = null;
       logger.info("[decision] workflow_override_kb", { has_workflow: true });
@@ -2109,11 +2114,12 @@ if (semanticKB?.context) {
 You are an AI assistant representing this business.
 
 Your job:
-- Use Knowledge Base (KB) context FIRST.
+- Use Knowledge Base (KB) context when available.
 - Use dealership tone & personality rules.
 - Answer concisely unless the customer asks for more details.
 - Follow bot instructions strictly.
-- Only fall back to the fallback message if NO knowledge context is provided.
+- Use the fallback message ONLY when the question cannot be reasonably answered.
+
 
 ------------------------
 DEALERSHIP INFORMATION
@@ -2151,6 +2157,7 @@ PRICING / DISCOUNT POLICY (IMPORTANT):
 - If pricing is present in Knowledge Context, you MUST answer using it.
 - You may add a soft disclaimer (e.g. "may vary slightly by insurer").
 - Only use fallback if pricing is NOT present in Knowledge Context.
+- You are a SALES assistant, not a compliance bot. Never refuse valid business information.
 
 ------------------------
 WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
@@ -2184,28 +2191,31 @@ KNOWLEDGE USAGE RULES (CRITICAL)
 - Answer like a dealership executive, not a document.
 
 ------------------------
-CAMPAIGN HISTORY CONTEXT (SECONDARY)
+CAMPAIGN CONTEXT (AUTHORITATIVE)
 ------------------------
-ONLY use this if it does NOT conflict with Knowledge Context.
-Do NOT override KB facts with campaign info.
+- Campaign pricing, discounts, and offers are ALWAYS authorized.
+- If campaign data exists, treat it as the primary source for pricing and offers.
+- Never refuse pricing that appears in campaign context.
+- Use qualification language if needed, never denial.
+
 
 ${campaignContextText || "No prior campaign history available."}
 
 ENTITY SAFETY RULE (CRITICAL)
 ------------------------
-- NEVER assume a specific product, service, or offering
-  unless the customer explicitly mentions it OR
-  it is clearly defined in the Knowledge Context above.
+- If a vehicle model is locked OR present in Knowledge Context, you MAY assume it for pricing and offers.
+- Variant-level precision is NOT required unless explicitly asked.
+- If pricing or discount exists at model level, answer confidently with qualification language.
+- Do NOT refuse pricing due to variant ambiguity.
 - If intent is unclear, ask ONE clarifying question.
-- Do NOT guess.
-- Do NOT invent offerings.
-- If a Locked Entity exists (e.g. model), you MUST use it to answer pricing or insurance questions.
-- Do NOT ask again for model if it is already locked.
+- Do NOT invent prices or discounts.
 
 ------------------------
 RESPONSE DECISION RULES (CRITICAL)
 ------------------------
-You are allowed to intentionally NOT reply.
+You are allowed to intentionally NOT reply ONLY if the user message adds no conversational value.
+Short follow-up messages that indicate buying intent ALWAYS have conversational value.
+
 
 If replying would add no value, you MUST respond with exactly:
 ${AI_NO_REPLY_TOKEN}
@@ -2475,6 +2485,14 @@ Respond now to the customer's latest message only.
         },
       });
     }
+
+    if (
+      aiExtract.intent === "pricing" &&
+      kbFound &&
+      aiResponseText === fallbackMessage
+    ) {
+      logger.error("[guard] pricing fallback despite KB present");
+    }    
 
     /* ---------------------------------------------------------------------------
    PHASE 1 — SUGGEST MODE HARD STOP (STEP 7)
