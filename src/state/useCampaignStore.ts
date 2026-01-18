@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
+import toast from "react-hot-toast";
 
 import type { Campaign, CampaignMessage } from "../types/database";
 import {
@@ -293,6 +294,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
 
     if (error) {
       console.error("[useCampaignStore] launchCampaign error", error);
+      toast.error("Failed to schedule campaign");
       throw error;
     }
 
@@ -303,6 +305,19 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
           : c,
       ),
     }));
+
+    // Phase 6: reconciliation read to ensure UI matches authoritative DB state.
+    const orgId = get().campaigns.find((c) => c.id === campaignId)?.organization_id;
+    if (orgId) {
+      try {
+        await get().fetchCampaigns(orgId);
+        await get().fetchCampaignMessages(campaignId);
+      } catch {
+        // ignore; optimistic state already applied
+      }
+    }
+
+    toast.success("Campaign scheduled");
   },
 
   /* ------------------------------------------------------
@@ -324,6 +339,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
 
     if (error) {
       console.error("[useCampaignStore] retryFailedMessages error", error);
+      toast.error("Failed to retry failed messages");
       throw error;
     }
 
@@ -335,5 +351,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       await get().fetchCampaigns(orgId);
       await get().fetchCampaignMessages(campaignId);
     }
+
+    toast.success("Retry queued");
   },
 }));

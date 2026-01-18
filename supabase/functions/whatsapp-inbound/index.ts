@@ -441,7 +441,7 @@ async function processStatusReceipt(
           for (const mid of allowedMsgIds) {
             await logDeliveryEvent({
               organization_id: orgId,
-              message_id: mid,
+              message_id: mid as string | null | undefined,
               event_type: String(messagePatch?.whatsapp_status ?? patch.status),
               source: 'whatsapp-inbound',
               payload: { whatsapp_message_id: waId, status: patch.status },

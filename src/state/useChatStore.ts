@@ -1,6 +1,7 @@
 // src/state/useChatStore.ts
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
+import toast from "react-hot-toast";
 
 import type { Conversation, Message } from "../types/database";
 
@@ -464,8 +465,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       if (error) {
         console.error("[useChatStore] whatsapp-send invoke error", error);
+        toast.error("WhatsApp send failed");
       } else if (data?.error) {
         console.error("[useChatStore] whatsapp-send failed", data);
+        toast.error("WhatsApp send failed");
+      } else {
+        // Reconcile authoritative state (delivery events / message row) after send.
+        void get().fetchMessages(conversationId);
       }
 
       return { noReply: false };
@@ -473,13 +479,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     if (!text) return { noReply: false };
 
-    await supabase.from("messages").insert({
+    // Optimistic UI: append a local pending message immediately.
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const optimistic: any = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender: payload.sender ?? "agent",
+      message_type: payload.message_type ?? "text",
+      text,
+      channel: payload.channel ?? "web",
+      created_at: new Date().toISOString(),
+      order_at: new Date().toISOString(),
+    };
+
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [conversationId]: [...(state.messages[conversationId] ?? []), optimistic],
+      },
+    }));
+
+    const { error: insertErr } = await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender: payload.sender ?? "agent",
       message_type: payload.message_type ?? "text",
       text,
       channel: payload.channel ?? "web",
     });
+
+    if (insertErr) {
+      console.error("[useChatStore] insert message error", insertErr);
+      toast.error("Failed to send message");
+      // Remove optimistic message on failure.
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [conversationId]: (state.messages[conversationId] ?? []).filter(
+            (m: any) => m.id !== tempId,
+          ),
+        },
+      }));
+      return { noReply: false };
+    }
+
+    // Reconcile authoritative state (realtime should insert the real row; ensure no temp residue).
+    void get().fetchMessages(conversationId);
 
     const aiEnabled = get().aiToggle[conversationId];
     if (!aiEnabled) return { noReply: false };

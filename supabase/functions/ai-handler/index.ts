@@ -6,6 +6,12 @@ import OpenAI from "https://esm.sh/openai@4.47.0";
 import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import { logAuditEvent } from "../_shared/audit.ts";
+import {
+  requireUser,
+  requireOrgMembership,
+  isInternalRequest,
+} from "../_shared/auth.ts";
+
 
 /* ============================================================================
    ENV
@@ -78,6 +84,15 @@ function createLogger(ctx: LogContext) {
   };
 }
 
+type KBScoredRow = {
+  id: string;
+  article_id: string;
+  title: string;
+  chunk: string;
+  similarity: number;
+  score: number;
+};
+
 /* ============================================================================
    SAFE HELPERS
 ============================================================================ */
@@ -133,6 +148,14 @@ async function safeWhatsAppSend(
 
 function safeText(v: any): string {
   return typeof v === "string" ? v : "";
+}
+
+function getRequestId(req: Request): string {
+  return (
+    req.headers.get("x-request-id") ??
+    req.headers.get("x-correlation-id") ??
+    crypto.randomUUID()
+  );
 }
 
 
@@ -1037,11 +1060,17 @@ async function resolveKnowledgeContextSemantic(params: {
     const model = (params.vehicleModel || "").trim();
     const modelNorm = model ? normalizeForMatch(model) : "";
 
-    const used: any[] = [];
-    const rejected: any[] = [];
+    const used: Pick<KBScoredRow, "id" | "article_id" | "title" | "similarity">[] = [];
+    const rejected: {
+      id: string;
+      article_id: string;
+      title: string;
+      similarity: number;
+      reason: string;
+    }[] = [];
 
     // Helper: boost if model string appears in title/chunk (never hard-drop)
-    function boostScore(row: any): number {
+    function boostScore(row: Omit<KBScoredRow, "score">): number {
       let score = row.similarity;
       if (modelNorm) {
         const t = normalizeForMatch(row.title);
@@ -1054,7 +1083,7 @@ async function resolveKnowledgeContextSemantic(params: {
     }
 
     // Reject obvious noise
-    const viable = [];
+    const viable: KBScoredRow[] = [];
     for (const r of rows) {
       if (!r.chunk.trim()) {
         rejected.push({ ...r, reason: "empty_chunk" });

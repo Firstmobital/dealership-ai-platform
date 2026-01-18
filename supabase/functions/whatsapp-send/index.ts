@@ -487,7 +487,13 @@ try {
       }
 
       // Send to Meta
-      await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'send_attempt', source: 'whatsapp-send', payload: { type: body.type ?? type, to: toWa, conversation_id: conversationId ?? null, campaign_id: body.campaign_id ?? null } });
+      await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'send_attempt', source: 'whatsapp-send', payload: {
+        type: body.type ?? body.message_type ?? null,
+        to,
+        conversation_id: conversationId ?? null,
+        campaign_id: body.campaign_id ?? null
+      }
+       });
 
     const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
       const waRes = await fetch(url, {
@@ -762,7 +768,13 @@ if (!waPayload) {
        SEND TO META
     ============================================================ */
 
-    await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'send_attempt', source: 'whatsapp-send', payload: { type: body.type ?? type, to: toWa, conversation_id: conversationId ?? null, campaign_id: body.campaign_id ?? null } });
+    await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'send_attempt', source: 'whatsapp-send', payload: {
+      type: body.type ?? body.message_type ?? null,
+      to: toNorm,
+      conversation_id: conversationId ?? null,
+      campaign_id: body.campaign_id ?? null
+    }
+     });
 
     const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
 
