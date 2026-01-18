@@ -961,14 +961,51 @@ async function resolveKnowledgeContextSemantic(params: {
   const SOFT_MIN_SIMILARITY = 0.55; // below this we avoid presenting as authoritative
 
   try {
-    // 1) Create embedding for user query
-    const embeddingResp = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: userMessage,
-    });
+    // 1) Create embedding for user query (Phase 5: cache by org+model+text_hash)
+    const EMBED_MODEL = "text-embedding-3-small";
+    const normalized = (userMessage || "").trim().replace(/\s+/g, " ");
+    const textHash = await sha256Hex(normalized.toLowerCase());
 
-    const embedding = embeddingResp.data?.[0]?.embedding;
-    if (!embedding) return null;
+    // Cache lookup (service-role table; never blocks if it fails)
+    let embedding: number[] | null = null;
+    try {
+      const { data: cached, error: cacheErr } = await supabase
+        .from("ai_embeddings_cache")
+        .select("embedding")
+        .eq("organization_id", organizationId)
+        .eq("model", EMBED_MODEL)
+        .eq("text_hash", textHash)
+        .maybeSingle();
+
+      if (!cacheErr && cached?.embedding) {
+        embedding = cached.embedding as unknown as number[];
+      }
+    } catch {
+      // ignore cache failures
+    }
+
+    if (!embedding) {
+      const embeddingResp = await openai.embeddings.create({
+        model: EMBED_MODEL,
+        input: normalized,
+      });
+
+      const e = embeddingResp.data?.[0]?.embedding;
+      if (!e) return null;
+      embedding = e as unknown as number[];
+
+      // Cache insert (best-effort)
+      try {
+        await supabase.from("ai_embeddings_cache").insert({
+          organization_id: organizationId,
+          model: EMBED_MODEL,
+          text_hash: textHash,
+          embedding,
+        });
+      } catch {
+        // ignore cache write failures
+      }
+    }
 
     const runMatch = async (threshold: number) => {
       return await supabase.rpc("match_knowledge_chunks_scoped", {
@@ -1936,6 +1973,41 @@ await traceInsertStart({
           }),
           { status: 402, headers: { "Content-Type": "application/json" } }
         );
+      }
+    }
+
+    // 2.5) Phase 5: Per-org AI rate limits (requests + tokens).
+    // Only enforced for non-greeting messages (greetings are free).
+    if (!isGreetingMessage(user_message)) {
+      const estimatedTokens = Math.max(
+        0,
+        Math.ceil((user_message || "").length / 4) + 800
+      );
+
+      try {
+        await supabase.rpc("consume_ai_quota", {
+          p_organization_id: organizationId,
+          p_estimated_tokens: estimatedTokens,
+        });
+      } catch (err: any) {
+        // Supabase will surface the raised exception as an error.
+        const msg = String(err?.message || err || "");
+        if (msg.toLowerCase().includes("ai_rate_limit_exceeded")) {
+          logger.warn("[rate-limit] exceeded", {
+            estimated_tokens: estimatedTokens,
+          });
+
+          return new Response(
+            JSON.stringify({
+              error: "rate_limit_exceeded",
+              request_id,
+            }),
+            { status: 429, headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        logger.error("[rate-limit] consume_ai_quota failed", { error: err });
+        // Fail-open for unexpected RPC failures to avoid production outages.
       }
     }
 
