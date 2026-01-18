@@ -137,3 +137,4 @@ using (auth.role() = 'service_role')
 with check (auth.role() = 'service_role');
 
 commit;
+
