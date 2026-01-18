@@ -31,6 +31,33 @@ function createUserClient(req: Request) {
   });
 }
 
+
+
+/* ==========================================================================
+   PHASE 4 - DELIVERY EVENT LOGGING (best-effort)
+=========================================================================== */
+async function logDeliveryEvent(params: {
+  organization_id: string;
+  event_type: string;
+  source: string;
+  message_id?: string | null;
+  campaign_message_id?: string | null;
+  payload?: Record<string, any>;
+}) {
+  try {
+    await supabase.from('message_delivery_events').insert({
+      organization_id: params.organization_id,
+      message_id: params.message_id ?? null,
+      campaign_message_id: params.campaign_message_id ?? null,
+      event_type: params.event_type,
+      source: params.source,
+      payload: params.payload ?? {},
+    });
+  } catch {
+    // never break send because of logging
+  }
+}
+
 /* ===========================================================================
    IDEMPOTENCY HELPERS (P1-A)
 =========================================================================== */
@@ -460,7 +487,9 @@ try {
       }
 
       // Send to Meta
-      const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
+      await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'send_attempt', source: 'whatsapp-send', payload: { type: body.type ?? type, to: toWa, conversation_id: conversationId ?? null, campaign_id: body.campaign_id ?? null } });
+
+    const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
       const waRes = await fetch(url, {
         method: "POST",
         headers: {
@@ -492,6 +521,7 @@ try {
       }
 
       const waMessageId = metaResponse?.messages?.[0]?.id ?? null;
+    await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'sent', source: 'whatsapp-send', payload: { whatsapp_message_id: waMessageId, metaResponse } });
 
       // Phase 5: audit send success (non-blocking)
       if (waMessageId) {
@@ -732,6 +762,8 @@ if (!waPayload) {
        SEND TO META
     ============================================================ */
 
+    await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'send_attempt', source: 'whatsapp-send', payload: { type: body.type ?? type, to: toWa, conversation_id: conversationId ?? null, campaign_id: body.campaign_id ?? null } });
+
     const url = `${WHATSAPP_API_BASE_URL}/${settings.whatsapp_phone_id}/messages`;
 
     const waRes = await fetch(url, {
@@ -748,13 +780,15 @@ if (!waPayload) {
     console.log("[whatsapp-send][inbox] META RESPONSE:", metaResponse);
 
     if (!waRes.ok) {
+      await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'failed', source: 'whatsapp-send', payload: { metaResponse } });
       return new Response(
-        JSON.stringify({ error: "Meta send failed", metaResponse }),
+        JSON.stringify({ error: 'Meta send failed', metaResponse }),
         { status: 500 }
       );
     }
 
     const waMessageId = metaResponse?.messages?.[0]?.id ?? null;
+    await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'sent', source: 'whatsapp-send', payload: { whatsapp_message_id: waMessageId, metaResponse } });
 
     if (waMessageId) {
       logAuditEvent(supabase, {
@@ -792,7 +826,9 @@ if (!waPayload) {
 
     if (conversationId) {
       const nowIso = new Date().toISOString();
-      await supabase.from("messages").insert({
+      const { data: insertedMsg, error: insErr } = await supabase
+        .from('messages')
+        .insert({
         conversation_id: conversationId,
         sender: body.sender ?? "bot",
         channel: "whatsapp",
@@ -805,7 +841,13 @@ if (!waPayload) {
         whatsapp_status: "sent",
         sent_at: nowIso,
         metadata: body.metadata ?? null,
-      });
+        })
+        .select('id')
+        .maybeSingle();
+
+      if (!insErr && insertedMsg?.id) {
+        await logDeliveryEvent({ organization_id: orgId, message_id: insertedMsg.id, campaign_message_id: body.campaign_message_id ?? null, event_type: 'sent', source: 'whatsapp-send', payload: { whatsapp_message_id: waMessageId } });
+      }
 
       await supabase
         .from("conversations")

@@ -30,6 +30,34 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+
+/* =====================================================================================
+   PHASE 4 - DELIVERY EVENT LOGGING (best-effort)
+===================================================================================== */
+async function logDeliveryEvent(params: {
+  organization_id: string;
+  event_type: string;
+  source: string;
+  message_id?: string | null;
+  campaign_message_id?: string | null;
+  payload?: Record<string, any>;
+  event_at?: string | null;
+}) {
+  try {
+    await supabase.from('message_delivery_events').insert({
+      organization_id: params.organization_id,
+      message_id: params.message_id ?? null,
+      campaign_message_id: params.campaign_message_id ?? null,
+      event_type: params.event_type,
+      source: params.source,
+      event_at: params.event_at ?? undefined,
+      payload: params.payload ?? {},
+    });
+  } catch {
+    // never break inbound because of logging
+  }
+}
+
 const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 /* =====================================================================================
@@ -348,6 +376,18 @@ async function processStatusReceipt(
       status: patch.status,
       updated: data.length,
     });
+    // PHASE 4: persist delivery event (campaign)
+    for (const r of (data ?? [])) {
+      await logDeliveryEvent({
+        organization_id: orgId,
+        campaign_message_id: r.id,
+        event_type: String(patch.status),
+        source: 'whatsapp-inbound',
+        payload: { whatsapp_message_id: waId, status: patch.status },
+        event_at: ts,
+      });
+    }
+
     // continue to also update messages table
   }
 
@@ -394,6 +434,20 @@ async function processStatusReceipt(
           logger.error("[inbox] receipt update failed", { error: mErr, waId });
         } else {
           updatedAny = true;
+          const allowedSet = new Set(allowedIds);
+          const allowedMsgIds = [
+            ...new Set((msgRows ?? []).filter((r: any) => allowedSet.has(r.conversation_id)).map((r: any) => r.id)),
+          ];
+          for (const mid of allowedMsgIds) {
+            await logDeliveryEvent({
+              organization_id: orgId,
+              message_id: mid,
+              event_type: String(messagePatch?.whatsapp_status ?? patch.status),
+              source: 'whatsapp-inbound',
+              payload: { whatsapp_message_id: waId, status: patch.status },
+              event_at: ts,
+            });
+          }
         }
       }
     }

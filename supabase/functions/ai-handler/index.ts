@@ -135,6 +135,52 @@ function safeText(v: any): string {
   return typeof v === "string" ? v : "";
 }
 
+
+/* ============================================================================
+   PHASE 4 — TRACE HELPERS (OBSERVABILITY)
+============================================================================ */
+async function traceInsertStart(params: {
+  trace_id: string;
+  organization_id: string;
+  conversation_id: string;
+  request_id: string;
+  channel: string;
+  caller_type: "internal" | "user";
+  user_text: string;
+}) {
+  try {
+    await supabase.from("ai_turn_traces").insert({
+      id: params.trace_id,
+      organization_id: params.organization_id,
+      conversation_id: params.conversation_id,
+      request_id: params.request_id,
+      channel: params.channel,
+      caller_type: params.caller_type,
+      user_text: params.user_text,
+      status: "started",
+      started_at: new Date().toISOString(),
+    });
+  } catch {
+    // never break ai-handler because of tracing
+  }
+}
+
+async function traceUpdate(trace_id: string, patch: Record<string, any>) {
+  try {
+    await supabase.from("ai_turn_traces").update(patch).eq("id", trace_id);
+  } catch {
+    // never break ai-handler because of tracing
+  }
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /* ============================================================================
    PHASE 0 — PRICING SAFETY HELPERS (HARD BLOCKS)
 ============================================================================ */
@@ -1537,6 +1583,7 @@ serve(async (req: Request): Promise<Response> => {
   }
 
   const request_id = getRequestId(req);
+  const trace_id = crypto.randomUUID();
   const baseLogger = createLogger({ request_id });
 
   try {
@@ -1679,6 +1726,18 @@ serve(async (req: Request): Promise<Response> => {
 
       return new Response("Organization inactive", { status: 403 });
     }
+
+
+// PHASE 4: start AI trace (best-effort, never blocks)
+await traceInsertStart({
+  trace_id,
+  organization_id: conv.organization_id,
+  conversation_id: conv.id,
+  request_id,
+  channel: conv.channel,
+  caller_type: isInternal ? "internal" : "user",
+  user_text: user_message,
+});
 
     /* ============================================================================
    4.1 AGENT TAKEOVER — HARD AI LOCK (SERVER ENFORCED)
@@ -2274,6 +2333,25 @@ if (semanticKB?.context) {
     });
   }
 }
+
+
+
+// PHASE 4: persist KB retrieval trace (best-effort)
+const kbTracePatch: Record<string, any> = {
+  kb_used: kbFound,
+  kb_reason: kbFound ? "matched" : "no_match",
+  kb_threshold: semanticKB?.debug?.thresholds?.initial ?? null,
+  kb_top_score: semanticKB?.debug?.used?.[0]?.similarity ?? null,
+  kb_chunks: semanticKB?.debug?.used ?? [],
+  decision: {
+    kb_attempted: kbAttempted,
+    kb_found: kbFound,
+    kb_match_meta: kbMatchMeta,
+    kb_thresholds: semanticKB?.debug?.thresholds ?? null,
+    kb_rejected: semanticKB?.debug?.rejected ?? [],
+  },
+};
+await traceUpdate(trace_id, kbTracePatch);
 
 const requiresAuthoritativeKB =
   aiExtract.intent === "pricing" || aiExtract.intent === "offer";
@@ -2902,6 +2980,12 @@ Respond now to the customer's latest message only.
       });
     }
 
+    // PHASE 4: finalize AI trace (best-effort)
+    await traceUpdate(trace_id, {
+      status: 'succeeded',
+      finished_at: new Date().toISOString(),
+    });
+
     return new Response(
       JSON.stringify({
         conversation_id,
@@ -2912,6 +2996,14 @@ Respond now to the customer's latest message only.
     );
   } catch (err: any) {
     console.error("[ai-handler] Fatal error", err);
+
+    // PHASE 4: mark trace failed (best-effort)
+    await traceUpdate(trace_id, {
+      status: 'failed',
+      finished_at: new Date().toISOString(),
+      error_stage: 'fatal',
+      error: { message: String(err?.message ?? err) },
+    });
 
     return new Response(
       JSON.stringify({
