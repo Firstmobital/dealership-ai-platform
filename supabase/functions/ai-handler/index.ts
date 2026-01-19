@@ -567,6 +567,42 @@ function isExplicitTopicChange(msg: string): boolean {
   return patterns.some((p) => p.test(t));
 }
 
+/* ============================================================================
+   SEMANTIC QUERY REWRITE (FOLLOW-UP AWARE)
+============================================================================ */
+function buildSemanticQueryText(params: {
+  userMessage: string;
+  isFollowUp: boolean;
+  lockedEntities: Record<string, any> | null;
+  extracted: { vehicle_model: string | null; intent: string; fuel_type: string | null };
+  campaignContextText: string;
+}): string {
+  const raw = (params.userMessage || "").trim().replace(/\s+/g, " ");
+  if (!raw) return raw;
+  if (!params.isFollowUp) return raw;
+
+  const locked = params.lockedEntities || {};
+  const model = String(params.extracted.vehicle_model || locked.model || "").trim();
+  const intent = String(params.extracted.intent || locked.intent || "other");
+
+  const topic = model ? ("about " + model) : "about the discussed vehicle/offer";
+
+  // Make follow-ups searchable by including intent-specific keywords
+  let focus = "details, features, variants, availability and next steps";
+  if (intent === "pricing" || intent === "offer") {
+    focus = "pricing, offers, discounts, variants, on-road breakup, availability and next steps";
+  } else if (intent === "service") {
+    focus = "service details, schedule, required info, cost estimate and next steps";
+  }
+
+  const hasCampaign = Boolean((params.campaignContextText || "").trim());
+  const campaignHint = hasCampaign ? "Align with any campaign/offer context if present." : "";
+
+  // IMPORTANT: do not embed generic follow-up text alone (e.g., "tell me more")
+  return ("Provide more information " + topic + ". Focus on " + focus + ". " + campaignHint).trim();
+}
+
+
 
 async function safeChatCompletion(
   logger: ReturnType<typeof createLogger>,
@@ -973,8 +1009,11 @@ async function resolveKnowledgeContextSemantic(params: {
   logger: ReturnType<typeof createLogger>;
   vehicleModel?: string | null;
 }): Promise<{
-  context: string;
-  article_ids: string[];
+    context: string;
+    article_ids: string[];
+    confidence: 'strong' | 'weak';
+    best_similarity: number;
+    option_titles: string[];
   debug: {
     used: { id: string; article_id: string; similarity: number; title: string }[];
     rejected: { id: string; article_id: string; similarity: number; title: string; reason: string }[];
@@ -1109,17 +1148,16 @@ async function resolveKnowledgeContextSemantic(params: {
     // Sort by boosted score desc (tie-break by similarity)
     viable.sort((a, b) => (b.score - a.score) || (b.similarity - a.similarity));
 
-    // Require at least one strong-enough chunk to inject as KB
+    // Determine confidence: strong vs weak (best-effort KB still allowed)
     const best = viable[0];
-    const hasStrong = best.similarity >= SOFT_MIN_SIMILARITY;
-    if (!hasStrong) {
-      // We have some weak semantic matches; do NOT inject as authoritative KB.
-      logger.warn("[kb] semantic match too weak; not injecting", {
+    const confidence: 'strong' | 'weak' = best.similarity >= SOFT_MIN_SIMILARITY ? 'strong' : 'weak';
+
+    if (confidence === 'weak') {
+      logger.warn('[kb] semantic match weak; injecting best-effort KB', {
         best_similarity: best.similarity,
         best_title: best.title,
         vehicle_model: model || null,
       });
-      return null;
     }
 
     // 4) Build compact context from top rows with dedupe
@@ -1157,6 +1195,9 @@ ${r.chunk.trim()}`);
     return {
       context,
       article_ids: [...usedArticleIds],
+      confidence,
+      best_similarity: best.similarity,
+      option_titles: Array.from(new Set(used.map((u) => u.title))).filter(Boolean).slice(0, 6),
       debug: {
         used,
         rejected,
@@ -2400,8 +2441,24 @@ let kbMatchMeta: any = null;
 kbAttempted = true;
 
 // 10A) Semantic KB (preferred)
-const semanticKB = await resolveKnowledgeContextSemantic({
+const isFollowUpForKb = isShortFollowupMessage(user_message) && !isExplicitTopicChange(user_message);
+const semanticQueryText = buildSemanticQueryText({
   userMessage: user_message,
+  isFollowUp: isFollowUpForKb,
+  lockedEntities: conv.ai_last_entities ?? null,
+  extracted: aiExtract,
+  campaignContextText,
+});
+
+if (isFollowUpForKb) {
+  logger.info('[kb] follow-up semantic query rewrite', {
+    raw: user_message.slice(0, 80),
+    semantic_query: semanticQueryText.slice(0, 180),
+  });
+}
+
+const semanticKB = await resolveKnowledgeContextSemantic({
+  userMessage: semanticQueryText,
   organizationId,
   logger,
   vehicleModel:
@@ -2414,8 +2471,11 @@ if (semanticKB?.context) {
   contextText = semanticKB.context;
   kbFound = true;
   kbMatchMeta = {
-    match_type: "semantic",
+    match_type: 'semantic',
     article_ids: semanticKB.article_ids,
+    confidence: semanticKB.confidence,
+    best_similarity: semanticKB.best_similarity,
+    option_titles: semanticKB.option_titles,
   };
 } else {
   // 10B) Deterministic fallback (KEEP EXISTING LOGIC)
@@ -2462,6 +2522,23 @@ const kbTracePatch: Record<string, any> = {
 };
 await traceUpdate(trace_id, kbTracePatch);
 
+// Persist KB anchors into conversation memory for follow-ups (best-effort)
+const nextEntitiesWithKb: any = { ...(nextEntities as any) };
+try {
+  if (kbFound) {
+    nextEntitiesWithKb.last_kb = {
+      match_type: kbMatchMeta?.match_type ?? null,
+      article_ids: kbMatchMeta?.article_ids ?? (kbMatchMeta?.article_id ? [kbMatchMeta.article_id] : []),
+      confidence: kbMatchMeta?.confidence ?? null,
+      best_similarity: kbMatchMeta?.best_similarity ?? null,
+      option_titles: kbMatchMeta?.option_titles ?? (kbMatchMeta?.title ? [kbMatchMeta.title] : []),
+      at: new Date().toISOString(),
+    };
+  }
+} catch {
+  // never break on memory anchors
+}
+
 const requiresAuthoritativeKB =
   aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
@@ -2471,46 +2548,18 @@ const kbHasPricingSignals = looksLikePricingOrOfferContext(contextText);
 const campaignHasPricingSignals = looksLikePricingOrOfferContext(campaignContextText) ||
   looksLikePricingOrOfferContext(JSON.stringify(conv.campaign_context ?? {}));
 
-if (requiresAuthoritativeKB && !(kbHasPricingSignals || campaignHasPricingSignals)) {
-  logger.error("[guard] VERIFIED PRICING REQUIRED but not found — blocking AI reply", {
+const pricingEstimateRequired =
+  requiresAuthoritativeKB && !(kbHasPricingSignals || campaignHasPricingSignals);
+
+if (pricingEstimateRequired) {
+  logger.warn('[pricing] verified pricing not found in KB/Campaign — allow estimate with disclaimer', {
     intent: aiExtract.intent,
     vehicle_model: aiExtract.vehicle_model,
     kb_found: kbFound,
     kb_has_pricing_signals: kbHasPricingSignals,
     campaign_has_pricing_signals: campaignHasPricingSignals,
   });
-
-  const safeReply =
-    "I can share exact on-road price and current offers, but I don’t have the verified offer sheet for this right now. Which model/variant are you checking, and your city? I’ll connect you with our sales advisor for the exact quote.";
-
-  await supabase.from("messages").insert({
-    conversation_id,
-    sender: "bot",
-    message_type: "text",
-    text: safeReply,
-    channel,
-  });
-
-  if (channel === "whatsapp" && contactPhone) {
-    await safeWhatsAppSend(logger, {
-      organization_id: organizationId,
-      to: contactPhone,
-      type: "text",
-      text: safeReply,
-    });
-  }
-
-  return new Response(
-    JSON.stringify({
-      conversation_id,
-      ai_response: safeReply,
-      request_id,
-      blocked_reason: "VERIFIED_PRICING_MISSING",
-    }),
-    { headers: { "Content-Type": "application/json" } }
-  );
 }
-
 
 // 🔒 PRICING SAFETY NET
 if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
@@ -2635,6 +2684,10 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
       conv.campaign_context ?? null
     );
 
+    // KB meta for best-effort options
+    const kbConfidence: 'strong' | 'weak' | 'none' = (kbMatchMeta?.confidence as any) ?? (kbFound ? 'strong' : 'none');
+    const kbOptionTitles: string[] = (kbMatchMeta?.option_titles ?? []).filter(Boolean).slice(0, 6);
+
     // 11) System prompt
     const systemPrompt = `
 You are an AI assistant representing this business.
@@ -2666,7 +2719,7 @@ Summary (rolling):
 ${conv.ai_summary || "No summary yet."}
 
 Locked Entities (do NOT change unless user changes):
-${JSON.stringify(nextEntities || {}, null, 2)}
+${JSON.stringify(nextEntitiesWithKb || {}, null, 2)}
 
 CRITICAL ENTITY RULE:
 - If Locked Entities includes "model", you MUST NOT switch to any other model unless the user explicitly mentions a different model.
@@ -2686,11 +2739,12 @@ BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ------------------------
 ${personaBlock}
 PRICING / DISCOUNT POLICY (IMPORTANT):
+PRICING_ESTIMATE_REQUIRED: ${pricingEstimateRequired ? 'YES' : 'NO'}
 - NEVER invent prices or offers.
 - NEVER invent prices or offers.
-- For pricing/offers, answer ONLY when verified numbers/offers exist in Knowledge Context or Campaign Context.
-- If KB context exists but does NOT contain pricing/offer signals, ask ONE short clarifying question (variant/city) or connect to sales advisor.
-- You may add a soft disclaimer (e.g. "may vary by city/variant") but do not guess.
+- For pricing/offers, use verified numbers ONLY if they appear in Knowledge Context or Campaign Context.
+- If verified numbers are NOT present, you may provide a rough estimate ONLY if it helps the customer, but you MUST clearly say: "This is an estimate. Our sales team will confirm the exact on-road price/offer."
+- Never invent discounts/offers. If unsure, provide options and ask ONE short clarifying question (variant/city).
 
 ------------------------
 WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
@@ -2720,6 +2774,17 @@ These rules OVERRIDE default AI behavior.
 ------------------------
 KNOWLEDGE CONTEXT (MOST IMPORTANT)
 ------------------------
+KB_MATCH_META (INTERNAL):
+- kb_found: ${kbFound}
+- kb_confidence: ${kbConfidence}
+- kb_option_titles: ${kbOptionTitles.join(' | ') || 'none'}
+
+KB_META (INTERNAL):
+- match_type: ${kbMatchMeta?.match_type || 'none'}
+- confidence: ${kbMatchMeta?.confidence || 'n/a'}
+- best_similarity: ${kbMatchMeta?.best_similarity ?? 'n/a'}
+- option_titles: ${JSON.stringify(kbMatchMeta?.option_titles ?? [], null, 0)}
+
 ${contextText}
 
 ${workflowRequiresKBButMissing ? "WORKFLOW GUARD: Workflow requires Knowledge Base to proceed, but KB context is missing. Ask ONE short clarifying question or connect to a human advisor. Do NOT guess." : ""}
@@ -2727,6 +2792,11 @@ ${workflowRequiresKBButMissing ? "WORKFLOW GUARD: Workflow requires Knowledge Ba
 ------------------------
 KNOWLEDGE USAGE RULES (CRITICAL)
 ------------------------
+BEST-EFFORT KB (NEW):
+- If Knowledge Context is present, you MUST base your answer on it (even if it is a weak match).
+- If multiple KB topics seem relevant or the user message is a short follow-up (e.g. "tell me more"), present 2–4 options from the KB and ask the user to pick ONE.
+- Do NOT hallucinate facts outside Knowledge/Campaign Context.
+
 - The knowledge context is AUTHORITATIVE.
 - If the answer exists in the knowledge context, you MUST answer confidently.
 - Use soft disclaimers if needed, never refusal.
@@ -3071,7 +3141,7 @@ Respond now to the customer's latest message only.
     await supabase
       .from("conversations")
       .update({
-        ai_last_entities: nextEntities,
+        ai_last_entities: nextEntitiesWithKb,
       })
       .eq("id", conversation_id);
 
