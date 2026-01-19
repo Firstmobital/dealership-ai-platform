@@ -3,12 +3,8 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { logAuditEvent } from "../_shared/audit.ts";
-import {
-  isInternalRequest,
-  getRequestId,
-  requireUser,
-  requireOrgMembership,
-} from "../_shared/auth.ts";
+import { getRequestId } from "../_shared/auth.ts";
+
 /* ============================================================
    ENV
 ============================================================ */
@@ -1208,21 +1204,7 @@ serve(async (req: Request) => {
   }
 
   // PHASE 1 AUTHZ: internal-only worker endpoint
-  let actor:
-    | { type: "internal" }
-    | { type: "user"; user_id: string; organization_id?: string };
-
-  if (isInternalRequest(req)) {
-    actor = { type: "internal" };
-  } else {
-    // USER-TRIGGERED (Launch Campaign)
-    const user = await requireUser(req);
-
-    actor = {
-      type: "user",
-      user_id: user.id,
-    };
-  }
+  const actor: { type: "internal" } = { type: "internal" };
 
   try {
     const nowIso = new Date().toISOString();
@@ -1278,15 +1260,6 @@ if (mode === "scheduled" && actor.type !== "internal") {
         });
       }
 
-      // 🔐 USER AUTHZ CHECK
-      if (actor.type === "user") {
-        await requireOrgMembership({
-          supabaseAdmin,
-          userId: actor.user_id,
-          organizationId: campaign.organization_id,
-        });
-        
-      }
 
       if (campaign.status === "sending" || campaign.status === "completed") {
         return new Response(
