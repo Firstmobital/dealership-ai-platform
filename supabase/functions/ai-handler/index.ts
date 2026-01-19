@@ -1524,6 +1524,7 @@ async function detectWorkflowTrigger(
 ============================================================================ */
 async function loadActiveWorkflow(
   conversationId: string,
+  organizationId: string,
   logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowLogRow | null> {
   const data = await safeSupabase<WorkflowLogRow>(
@@ -1536,6 +1537,7 @@ async function loadActiveWorkflow(
           "id, workflow_id, conversation_id, current_step_number, variables, completed"
         )
         .eq("conversation_id", conversationId)
+        .eq("organization_id", organizationId)
         .eq("completed", false)
         .maybeSingle()
   );
@@ -1553,6 +1555,7 @@ async function loadActiveWorkflow(
 async function startWorkflow(
   workflowId: string,
   conversationId: string,
+  organizationId: string,
   logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowLogRow | null> {
   const data = await safeSupabase<WorkflowLogRow>(
@@ -1562,6 +1565,7 @@ async function startWorkflow(
       supabase
         .from("workflow_logs")
         .insert({
+          organization_id: organizationId,
           workflow_id: workflowId,
           conversation_id: conversationId,
           current_step_number: 1,
@@ -1613,6 +1617,7 @@ async function getWorkflowSteps(
 
 async function saveWorkflowProgress(
   logId: string,
+  organizationId: string,
   nextStep: number,
   vars: Record<string, any>,
   completed: boolean,
@@ -1621,7 +1626,8 @@ async function saveWorkflowProgress(
   const { error } = await supabase
     .from("workflow_logs")
     .update({ current_step_number: nextStep, variables: vars, completed })
-    .eq("id", logId);
+    .eq("id", logId)
+    .eq("organization_id", organizationId);
 
   if (error)
     logger.error("[workflow] save progress error", { error, log_id: logId });
@@ -2589,7 +2595,7 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
     let workflowInstructionText = "";
     let resolvedWorkflow: WorkflowLogRow | null = null;
 
-    const activeWorkflow = await loadActiveWorkflow(conversation_id, logger);
+    const activeWorkflow = await loadActiveWorkflow(conversation_id, organizationId, logger);
     resolvedWorkflow = activeWorkflow;
 
     // 🔒 NEW: honor workflow attached by campaign
@@ -2597,9 +2603,9 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
       resolvedWorkflow = await startWorkflow(
         conv.workflow_id,
         conversation_id,
+        organizationId,
         logger
-      );
-
+      );      
       logger.info("[workflow] attached from campaign", {
         workflow_id: conv.workflow_id,
         conversation_id,
@@ -2615,7 +2621,7 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
       );
 
       if (wf) {
-        resolvedWorkflow = await startWorkflow(wf.id, conversation_id, logger);
+        resolvedWorkflow = await startWorkflow(wf.id, conversation_id, organizationId, logger);
       }
     }
 
@@ -3066,6 +3072,7 @@ Respond now to the customer's latest message only.
 
       await saveWorkflowProgress(
         resolvedWorkflow.id,
+        organizationId,
         nextStep,
         resolvedWorkflow.variables ?? {},
         completed,

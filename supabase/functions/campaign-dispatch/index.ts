@@ -908,11 +908,13 @@ async function linkMessageToConversationAndPsf(params: {
       .select("id")
       .eq("conversation_id", conversationId)
       .eq("workflow_id", matchedWorkflowId)
+      .eq("organization_id", params.campaign.organization_id)
       .eq("completed", false)
       .maybeSingle();
 
     if (!existing?.id) {
       await supabaseAdmin.from("workflow_logs").insert({
+        organization_id: params.campaign.organization_id, // or params.msg.organization_id (whichever exists there)
         workflow_id: matchedWorkflowId,
         conversation_id: conversationId,
         current_step_number: 1,
@@ -1202,9 +1204,12 @@ serve(async (req: Request) => {
       },
     });
   }
+const internalKey = req.headers.get("x-internal-api-key") ?? "";
+
+const isInternal = !!INTERNAL_API_KEY && internalKey === INTERNAL_API_KEY;
 
   // PHASE 1 AUTHZ: internal-only worker endpoint
-  const actor: { type: "internal" } = { type: "internal" };
+  const actor = { type: isInternal ? "internal" : "external" };
 
   try {
     const nowIso = new Date().toISOString();
