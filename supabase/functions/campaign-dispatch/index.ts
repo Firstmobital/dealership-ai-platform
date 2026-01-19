@@ -3,7 +3,12 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { logAuditEvent } from "../_shared/audit.ts";
-import { isInternalRequest, getRequestId } from "../_shared/auth.ts";
+import {
+  isInternalRequest,
+  getRequestId,
+  requireUser,
+  requireOrgMembership,
+} from "../_shared/auth.ts";
 /* ============================================================
    ENV
 ============================================================ */
@@ -19,8 +24,6 @@ const supabaseAdmin = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-
-
 /* ============================================================
    PHASE 4 - DELIVERY EVENT LOGGING (best-effort)
 ============================================================ */
@@ -33,7 +36,7 @@ async function logDeliveryEvent(params: {
   payload?: Record<string, any>;
 }) {
   try {
-    await supabaseAdmin.from('message_delivery_events').insert({
+    await supabaseAdmin.from("message_delivery_events").insert({
       organization_id: params.organization_id,
       message_id: params.message_id ?? null,
       campaign_message_id: params.campaign_message_id ?? null,
@@ -270,11 +273,20 @@ function isLikelyOfferOrPricing(text: string): boolean {
   );
 }
 
-function inferVehicleModelFromRow(raw: Record<string, any> | null): string | null {
+function inferVehicleModelFromRow(
+  raw: Record<string, any> | null
+): string | null {
   if (!raw) return null;
   const keys = Object.keys(raw);
   // common column names
-  const candidates = ["model","vehicle_model","car_model","vehicle","car","variant"];
+  const candidates = [
+    "model",
+    "vehicle_model",
+    "car_model",
+    "vehicle",
+    "car",
+    "variant",
+  ];
   for (const c of candidates) {
     const k = keys.find((kk) => kk.toLowerCase() === c);
     if (k) {
@@ -446,7 +458,10 @@ async function sendWhatsappTemplate(params: {
     action: "campaign_whatsapp_send_attempt",
     entity_type: "campaign_message",
     entity_id: params.campaign_message_id,
-    metadata: { campaign_id: params.campaign_id, template: params.templateName }
+    metadata: {
+      campaign_id: params.campaign_id,
+      template: params.templateName,
+    },
   });
 
   const res = await fetch(`${PROJECT_URL}/functions/v1/whatsapp-send`, {
@@ -461,10 +476,10 @@ async function sendWhatsappTemplate(params: {
       contact_id: params.contactId,
       to: waToFromE164(params.phonePlusE164),
       type: "template",
-    
+
       template_name: params.templateName,
       template_language: params.language,
-    
+
       template_components: [
         ...(params.templateComponents ?? []),
         {
@@ -472,18 +487,18 @@ async function sendWhatsappTemplate(params: {
           parameters: params.variables,
         },
       ],
-    
+
       message_type: params.messageType ?? "template",
       media_url: params.mediaUrl ?? null,
       mime_type: params.mimeType ?? null,
-    
+
       rendered_text: params.renderedText,
       campaign_id: params.campaign_id,
       campaign_message_id: params.campaign_message_id,
       metadata: {
         reply_sheet_tab: params.reply_sheet_tab,
       },
-    }),    
+    }),
   });
 
   const body = await res.json().catch(() => ({}));
@@ -493,25 +508,32 @@ async function sendWhatsappTemplate(params: {
       action: "campaign_whatsapp_send_failed",
       entity_type: "campaign_message",
       entity_id: params.campaign_message_id,
-      metadata: { campaign_id: params.campaign_id, template: params.templateName, error: body }
+      metadata: {
+        campaign_id: params.campaign_id,
+        template: params.templateName,
+        error: body,
+      },
     });
     throw new Error(JSON.stringify(body));
   }
 
-  const waId = (
+  const waId =
     body?.meta_response?.messages?.[0]?.id ??
     body?.meta_response?.message_id ??
     body?.messages?.[0]?.id ??
     body?.message_id ??
-    null
-  );
+    null;
 
   logAuditEvent(supabaseAdmin, {
     organization_id: params.organizationId,
     action: "campaign_whatsapp_send_success",
     entity_type: "campaign_message",
     entity_id: params.campaign_message_id,
-    metadata: { campaign_id: params.campaign_id, template: params.templateName, whatsapp_message_id: waId }
+    metadata: {
+      campaign_id: params.campaign_id,
+      template: params.templateName,
+      whatsapp_message_id: waId,
+    },
   });
 
   return waId;
@@ -657,7 +679,10 @@ async function markFailed(id: string, err: string) {
 }
 
 async function scheduleRetry(id: string, err: string, attempt: number) {
-  const delay = Math.min(BASE_RETRY_DELAY_SECONDS * Math.pow(2, Math.max(attempt - 1, 0)), 60 * 60);
+  const delay = Math.min(
+    BASE_RETRY_DELAY_SECONDS * Math.pow(2, Math.max(attempt - 1, 0)),
+    60 * 60
+  );
   const next = new Date(Date.now() + delay * 1000).toISOString();
 
   await supabaseAdmin
@@ -796,7 +821,6 @@ async function linkMessageToConversationAndPsf(params: {
     channel: "whatsapp",
   });
 
-
   // Persist campaign context on the conversation so the AI + Google Sheets routing
   // remain stable across multiple replies (even if the latest outbound message isn't reloaded).
   const campaignContext: any = {
@@ -812,7 +836,8 @@ async function linkMessageToConversationAndPsf(params: {
     const raw = params.msg.raw_row ?? {};
     for (const [idx, col] of Object.entries(varMap)) {
       const v: any = (raw as any)?.[String(col)];
-      campaignContext.variables[String(idx)] = v === null || v === undefined ? "" : String(v);
+      campaignContext.variables[String(idx)] =
+        v === null || v === undefined ? "" : String(v);
     }
   } catch {
     // best-effort only
@@ -830,8 +855,11 @@ async function linkMessageToConversationAndPsf(params: {
         .eq("organization_id", params.msg.organization_id)
         .eq("is_active", true);
 
-      const match = (wfs ?? []).find((w: any) =>
-        String(w.name ?? "").trim().toLowerCase() === tab
+      const match = (wfs ?? []).find(
+        (w: any) =>
+          String(w.name ?? "")
+            .trim()
+            .toLowerCase() === tab
       );
       if (match?.id) matchedWorkflowId = match.id;
     }
@@ -857,7 +885,9 @@ async function linkMessageToConversationAndPsf(params: {
       .then((r) => (r.data as any)?.model ?? null)
       .catch(() => null));
 
-  const seedTopic = isLikelyOfferOrPricing(params.renderedText) ? "offer_pricing" : null;
+  const seedTopic = isLikelyOfferOrPricing(params.renderedText)
+    ? "offer_pricing"
+    : null;
 
   const prevEntities = (existingConv as any)?.data?.ai_last_entities ?? null;
   const nextEntities = {
@@ -1032,7 +1062,16 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
 
       // 🚨 HARD STOP: variable mismatch (Meta will silently drop otherwise)
 
-      await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'send_attempt', source: 'campaign-dispatch', payload: { campaign_id: msg.campaign_id, attempt: Number(msg.send_attempts ?? 1) } });
+      await logDeliveryEvent({
+        organization_id: msg.organization_id,
+        campaign_message_id: msg.id,
+        event_type: "send_attempt",
+        source: "campaign-dispatch",
+        payload: {
+          campaign_id: msg.campaign_id,
+          attempt: Number(msg.send_attempts ?? 1),
+        },
+      });
 
       const waId = await sendWhatsappTemplate({
         organizationId: msg.organization_id,
@@ -1058,13 +1097,25 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
 
       // keep your current behavior
       if (!waId) {
-        await markFailed(msg.id, 'meta_rejected_message');
-        await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'failed', source: 'campaign-dispatch', payload: { reason: 'meta_rejected_message' } });
+        await markFailed(msg.id, "meta_rejected_message");
+        await logDeliveryEvent({
+          organization_id: msg.organization_id,
+          campaign_message_id: msg.id,
+          event_type: "failed",
+          source: "campaign-dispatch",
+          payload: { reason: "meta_rejected_message" },
+        });
         continue;
       }
 
       await markSent(msg.id, waId);
-      await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'sent', source: 'campaign-dispatch', payload: { whatsapp_message_id: waId } });
+      await logDeliveryEvent({
+        organization_id: msg.organization_id,
+        campaign_message_id: msg.id,
+        event_type: "sent",
+        source: "campaign-dispatch",
+        payload: { whatsapp_message_id: waId },
+      });
 
       // ✅ PSF ADDITION: link conversation + psf case
       await linkMessageToConversationAndPsf({
@@ -1084,7 +1135,13 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
       // Phase 3: bounded retries + DLQ
       if (attempt >= MAX_SEND_ATTEMPTS) {
         await markFailed(msg.id, err);
-        await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'failed', source: 'campaign-dispatch', payload: { error: err, attempt } });
+        await logDeliveryEvent({
+          organization_id: msg.organization_id,
+          campaign_message_id: msg.id,
+          event_type: "failed",
+          source: "campaign-dispatch",
+          payload: { error: err, attempt },
+        });
         await writeDlq({
           organizationId: msg.organization_id,
           entityId: msg.id,
@@ -1093,7 +1150,13 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         });
       } else {
         await scheduleRetry(msg.id, err, attempt);
-        await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'retried', source: 'campaign-dispatch', payload: { error: err, attempt } });
+        await logDeliveryEvent({
+          organization_id: msg.organization_id,
+          campaign_message_id: msg.id,
+          event_type: "retried",
+          source: "campaign-dispatch",
+          payload: { error: err, attempt },
+        });
       }
     }
   }
@@ -1114,27 +1177,59 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
 serve(async (req: Request) => {
   const request_id = getRequestId(req);
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+      },
+    });
   }
 
   // PHASE 1 AUTHZ: internal-only worker endpoint
-  if (!isInternalRequest(req)) {
-    return new Response(JSON.stringify({ error: "Forbidden" }), {
-      status: 403,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+  let actor:
+    | { type: "internal" }
+    | { type: "user"; user_id: string; organization_id?: string };
+
+  if (isInternalRequest(req)) {
+    actor = { type: "internal" };
+  } else {
+    // USER-TRIGGERED (Launch Campaign)
+    const user = await requireUser(req);
+
+    actor = {
+      type: "user",
+      user_id: user.id,
+    };
   }
 
   try {
     const nowIso = new Date().toISOString();
 
-    let body: any = {};
-    if (req.method === "POST") {
-      body = await req.json().catch(() => ({}));
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
     }
 
     const mode: DispatchMode = body?.mode ?? "scheduled";
     const immediateCampaignId: string | undefined = body?.campaign_id;
+
+    // 🔐 HARD SECURITY BOUNDARY — scheduled runner is INTERNAL ONLY
+if (mode === "scheduled" && actor.type !== "internal") {
+  return new Response(
+    JSON.stringify({ error: "Forbidden" }),
+    {
+      status: 403,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+}
+
 
     /* ===========================
        IMMEDIATE MODE (Launch Now)
@@ -1159,11 +1254,17 @@ serve(async (req: Request) => {
       if (!campaign) {
         return new Response(JSON.stringify({ error: "Campaign not found" }), {
           status: 404,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
         });
+      }
+
+      // 🔐 USER AUTHZ CHECK
+      if (actor.type === "user") {
+        await requireOrgMembership({
+          supabaseAdmin,
+          userId: actor.user_id,
+          organizationId: campaign.organization_id,
+        });
+        
       }
 
       if (campaign.status === "sending" || campaign.status === "completed") {
@@ -1242,7 +1343,13 @@ serve(async (req: Request) => {
 
       const messages = await fetchMessages(campaign.id);
       for (const m of messages) {
-        await logDeliveryEvent({ organization_id: m.organization_id, campaign_message_id: m.id, event_type: 'claimed', source: 'campaign-dispatch', payload: { campaign_id: m.campaign_id } });
+        await logDeliveryEvent({
+          organization_id: m.organization_id,
+          campaign_message_id: m.id,
+          event_type: "claimed",
+          source: "campaign-dispatch",
+          payload: { campaign_id: m.campaign_id },
+        });
       }
       // ✅ PSF STEP 2 — create PSF cases before sending
       await createPsfCasesForCampaign({
@@ -1321,9 +1428,18 @@ serve(async (req: Request) => {
             variableMap: campaign.meta?.variable_map,
           });
 
-          await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'send_attempt', source: 'campaign-dispatch', payload: { campaign_id: msg.campaign_id, attempt: Number(msg.send_attempts ?? 1) } });
+          await logDeliveryEvent({
+            organization_id: msg.organization_id,
+            campaign_message_id: msg.id,
+            event_type: "send_attempt",
+            source: "campaign-dispatch",
+            payload: {
+              campaign_id: msg.campaign_id,
+              attempt: Number(msg.send_attempts ?? 1),
+            },
+          });
 
-      const waId = await sendWhatsappTemplate({
+          const waId = await sendWhatsappTemplate({
             organizationId: msg.organization_id,
             contactId,
             phonePlusE164: phonePlus,
@@ -1334,9 +1450,9 @@ serve(async (req: Request) => {
 
             renderedText,
 
-        reply_sheet_tab: campaign.reply_sheet_tab,
-        campaign_id: msg.campaign_id,
-        campaign_message_id: msg.id,
+            reply_sheet_tab: campaign.reply_sheet_tab,
+            campaign_id: msg.campaign_id,
+            campaign_message_id: msg.id,
 
             templateComponents: [...buildTemplateHeaderComponents(template)],
 
@@ -1351,9 +1467,21 @@ serve(async (req: Request) => {
           }
 
           await markSent(msg.id, waId);
-      await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'sent', source: 'campaign-dispatch', payload: { whatsapp_message_id: waId } });
+          await logDeliveryEvent({
+            organization_id: msg.organization_id,
+            campaign_message_id: msg.id,
+            event_type: "sent",
+            source: "campaign-dispatch",
+            payload: { whatsapp_message_id: waId },
+          });
           // ✅ PSF ADDITION: link conversation + psf case
-          await linkMessageToConversationAndPsf({ msg, contactId, campaign, phoneDigits, renderedText });
+          await linkMessageToConversationAndPsf({
+            msg,
+            contactId,
+            campaign,
+            phoneDigits,
+            renderedText,
+          });
 
           globalSent++;
           sentPerOrg[msg.organization_id] = orgCount + 1;
@@ -1371,7 +1499,13 @@ serve(async (req: Request) => {
             });
           } else {
             await scheduleRetry(msg.id, err, attempt);
-        await logDeliveryEvent({ organization_id: msg.organization_id, campaign_message_id: msg.id, event_type: 'retried', source: 'campaign-dispatch', payload: { error: err, attempt } });
+            await logDeliveryEvent({
+              organization_id: msg.organization_id,
+              campaign_message_id: msg.id,
+              event_type: "retried",
+              source: "campaign-dispatch",
+              payload: { error: err, attempt },
+            });
           }
         }
       }

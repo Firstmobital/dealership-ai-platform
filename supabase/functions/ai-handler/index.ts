@@ -447,21 +447,29 @@ async function loadWalletForOrg(organizationId: string) {
 
 async function createWalletDebit(params: {
   walletId: string;
+  organizationId: string;
   amount: number;
   aiUsageId: string;
 }) {
+
+  if (!params.organizationId) {
+    console.error("[wallet] missing organizationId in createWalletDebit", params);
+    return null;
+  }
+  
   const { data, error } = await supabase
-    .from("wallet_transactions")
-    .insert({
-      wallet_id: params.walletId,
-      type: "debit",
-      direction: "out",
-      amount: params.amount,
-      reference_type: "ai_usage",
-      reference_id: params.aiUsageId,
-    })
-    .select("id")
-    .single();
+  .from("wallet_transactions")
+  .insert({
+    wallet_id: params.walletId,
+    organization_id: params.organizationId, // ✅ ADD THIS LINE
+    type: "debit",
+    direction: "out",
+    amount: params.amount,
+    reference_type: "ai_usage",
+    reference_id: params.aiUsageId,
+  })
+  .select("id")
+  .single();
 
   if (error) {
     console.error("[wallet] debit insert error", error);
@@ -2891,9 +2899,10 @@ Respond now to the customer's latest message only.
       // 2) Debit wallet
       const walletTxnId = await createWalletDebit({
         walletId: wallet.id,
+        organizationId, // ✅ ADD THIS LINE
         amount: chargedAmount,
         aiUsageId: usage.id,
-      });
+      });      
 
       if (!walletTxnId) {
         logger.error("[wallet] debit failed");
