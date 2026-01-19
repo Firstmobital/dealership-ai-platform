@@ -30,6 +30,16 @@ function createUserClient(req: Request) {
     global: { headers: { Authorization: authHeader } },
   });
 }
+type BusinessMessageType = "campaign" | "agent" | "text";
+
+function resolveBusinessMessageType(
+  body: SendBody
+): "campaign" | "text" | "agent" {
+  if (body.message_type === "campaign") return "campaign";
+  if (body.sender === "agent") return "agent";
+  if (body.sender === "bot") return "text";
+  return "text";
+}
 
 
 
@@ -117,7 +127,7 @@ type SendBody = {
   document_url?: string;
   filename?: string;
 
-  message_type?: MessageType;
+  message_type?: BusinessMessageType;
   media_url?: string | null;
   mime_type?: string | null;
 
@@ -340,9 +350,10 @@ serve(async (req: Request) => {
       }
 
       const conversationId = body.conversation_id.trim();
-      const msgType = (body.type ?? body.message_type ?? "text") as MessageType;
+      const transportType = (body.type ?? "text") as MessageType;
+      const businessType = resolveBusinessMessageType(body);
 
-      if (msgType === "typing_on") {
+      if (transportType === "typing_on") {
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
 
@@ -376,7 +387,7 @@ serve(async (req: Request) => {
         entity_type: "conversation",
         entity_id: conv.id,
         actor_user_id: authedUserId,
-        metadata: { request_id, message_type: msgType },
+        metadata: { request_id, message_type: businessType },
       });
 
 
@@ -426,20 +437,20 @@ try {
     ...body,
     organization_id: orgId,
     to,
-    type: msgType,
+    type: transportType,
     image_url:
-      msgType === "image"
+    transportType === "image"
         ? body.media_url ?? body.image_url
         : body.image_url,
     document_url:
-      msgType === "document"
+    transportType === "document"
         ? body.media_url ?? body.document_url
         : body.document_url,
   });
 } catch (err: any) {
   await persistVariableMismatch({
     conversationId,
-    sender: "agent",
+    sender: businessType === "campaign" ? "bot" : "agent",
     errorDetails: err.message,
   });
 
@@ -458,7 +469,7 @@ try {
         orgId,
         conversationId,
         to,
-        type: msgType,
+        type: transportType,
         text: body.text ?? null,
         media_url: body.media_url ?? null,
         mime_type: body.mime_type ?? null,
@@ -488,7 +499,7 @@ try {
 
       // Send to Meta
       await logDeliveryEvent({ organization_id: orgId, message_id: null, campaign_message_id: body.campaign_message_id ?? null, event_type: 'send_attempt', source: 'whatsapp-send', payload: {
-        type: body.type ?? body.message_type ?? null,
+        type: body.type ?? null,business_type: businessType,
         to,
         conversation_id: conversationId ?? null,
         campaign_id: body.campaign_id ?? null
@@ -517,7 +528,7 @@ try {
           entity_type: "conversation",
           entity_id: conv.id,
           actor_user_id: authedUserId,
-          metadata: { request_id, message_type: msgType, metaResponse },
+          metadata: { request_id, message_type: businessType, metaResponse },
         });
 
         return new Response(
@@ -537,7 +548,7 @@ try {
           entity_type: "conversation",
           entity_id: conv.id,
           actor_user_id: authedUserId,
-          metadata: { request_id, message_type: msgType, whatsapp_message_id: waMessageId },
+          metadata: { request_id, message_type: businessType, whatsapp_message_id: waMessageId },
         });
       }
 
@@ -559,13 +570,6 @@ try {
       }
       
 
-      // Insert message (sender=agent) + set initial receipt state
-      const persistedText = (() => {
-        if (msgType === 'text') return body.text ?? null;
-        // For templates/media, prefer rendered_text for UI/chat history
-        return body.text ?? body.rendered_text ?? null;
-      })();
-
       const persistedMetadata = (() => {
         const base = body.metadata ?? null;
         if (!base && !body.rendered_text) return null;
@@ -579,10 +583,13 @@ try {
         .from("messages")
         .insert({
           conversation_id: conversationId,
-          sender: "agent",
+          sender: businessType === "campaign" ? "bot" : "agent",
           channel: "whatsapp",
-          message_type: body.message_type ?? msgType,
-          text: msgType === "text" ? (body.text ?? null) : ((body.text ?? (body as any).rendered_text ?? null) as any),
+          message_type: businessType,
+          text:
+  transportType === "text"
+    ? body.text ?? null
+    : body.rendered_text ?? body.text ?? null,
           media_url: body.media_url ?? null,
           mime_type: body.mime_type ?? null,
           whatsapp_message_id: waMessageId,
@@ -838,14 +845,12 @@ if (!waPayload) {
 
     if (conversationId) {
       const nowIso = new Date().toISOString();
+      const businessType = resolveBusinessMessageType(body);
       const { data: insertedMsg, error: insErr } = await supabase
         .from('messages')
         .insert({
         conversation_id: conversationId,
-        sender: body.sender ?? "bot",
         channel: "whatsapp",
-        message_type: body.message_type ?? type,
-        text: type === "text" ? body.text ?? null : null,
         media_url: body.media_url ?? null,
         mime_type: body.mime_type ?? null,
         whatsapp_message_id: waMessageId,
@@ -853,6 +858,10 @@ if (!waPayload) {
         whatsapp_status: "sent",
         sent_at: nowIso,
         metadata: body.metadata ?? null,
+        message_type: businessType,
+        sender: businessType === "campaign" ? "bot" : (body.sender ?? "bot"),
+        text: type === "text" ? body.text ?? null : body.rendered_text ?? body.text ?? null,
+
         })
         .select('id')
         .maybeSingle();

@@ -488,7 +488,8 @@ async function sendWhatsappTemplate(params: {
         },
       ],
 
-      message_type: params.messageType ?? "template",
+      sender: "bot",
+      message_type: "campaign",
       media_url: params.mediaUrl ?? null,
       mime_type: params.mimeType ?? null,
 
@@ -814,13 +815,10 @@ async function linkMessageToConversationAndPsf(params: {
   campaign: Campaign;
   phoneDigits: string;
   renderedText: string;
+  conversationId: string;
 }) {
-  const conversationId = await ensureConversationForContact({
-    organizationId: params.msg.organization_id,
-    contactId: params.contactId,
-    channel: "whatsapp",
-  });
-
+  const { msg, contactId, campaign, phoneDigits, renderedText, conversationId } =
+  params;
   // Persist campaign context on the conversation so the AI + Google Sheets routing
   // remain stable across multiple replies (even if the latest outbound message isn't reloaded).
   const campaignContext: any = {
@@ -1073,6 +1071,38 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         },
       });
 
+      const conversationId = await ensureConversationForContact({
+        organizationId: msg.organization_id,
+        contactId,
+        channel: "whatsapp",
+      });
+
+      await linkMessageToConversationAndPsf({
+        msg,
+        contactId,
+        campaign,
+        phoneDigits,
+        renderedText,
+        conversationId,
+      });
+
+      await supabaseAdmin.from("messages").insert({
+        conversation_id: conversationId,
+        sender: "bot",
+        channel: "whatsapp",
+        message_type: "campaign",
+        text: renderedText,
+        campaign_id: msg.campaign_id,
+        campaign_message_id: msg.id,
+        metadata: {
+          source: "campaign-dispatch",
+          template_name: template.name,
+        },
+        whatsapp_status: "queued",
+        sent_at: new Date().toISOString(),
+      });
+      
+
       const waId = await sendWhatsappTemplate({
         organizationId: msg.organization_id,
         contactId,
@@ -1115,15 +1145,6 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         event_type: "sent",
         source: "campaign-dispatch",
         payload: { whatsapp_message_id: waId },
-      });
-
-      // ✅ PSF ADDITION: link conversation + psf case
-      await linkMessageToConversationAndPsf({
-        msg,
-        contactId,
-        campaign,
-        phoneDigits,
-        renderedText,
       });
 
       sentGlobal++;
@@ -1473,14 +1494,6 @@ if (mode === "scheduled" && actor.type !== "internal") {
             event_type: "sent",
             source: "campaign-dispatch",
             payload: { whatsapp_message_id: waId },
-          });
-          // ✅ PSF ADDITION: link conversation + psf case
-          await linkMessageToConversationAndPsf({
-            msg,
-            contactId,
-            campaign,
-            phoneDigits,
-            renderedText,
           });
 
           globalSent++;
