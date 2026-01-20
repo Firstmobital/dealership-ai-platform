@@ -12,7 +12,6 @@ import {
   isInternalRequest,
 } from "../_shared/auth.ts";
 
-
 /* ============================================================================
    ENV
 ============================================================================ */
@@ -93,6 +92,29 @@ type KBScoredRow = {
   score: number;
 };
 
+type KBCandidate = {
+  id: string;
+  article_id: string;
+  title: string;
+  chunk: string;
+  similarity?: number; // vector similarity 0..1
+  rank?: number; // lexical rank (ts_rank_cd), > 0
+  score: number; // combined score
+};
+
+function normalizeLexicalRank(r?: number): number {
+  if (!r || r <= 0) return 0;
+  // ts_rank_cd varies; clamp to 0..1 with a soft divisor you can tune later
+  return Math.min(1, r / 2.5);
+}
+
+function combinedScore(sim?: number, rank?: number): number {
+  const v = sim ?? 0;
+  const l = normalizeLexicalRank(rank);
+  // vector slightly higher weight, lexical still meaningful
+  return 0.65 * v + 0.35 * l;
+}
+
 /* ============================================================================
    SAFE HELPERS
 ============================================================================ */
@@ -158,7 +180,6 @@ function getRequestId(req: Request): string {
   );
 }
 
-
 /* ============================================================================
    PHASE 4 — TRACE HELPERS (OBSERVABILITY)
 ============================================================================ */
@@ -208,6 +229,10 @@ async function sha256Hex(input: string): Promise<string> {
    PHASE 0 — PRICING SAFETY HELPERS (HARD BLOCKS)
 ============================================================================ */
 
+function answerLooksLikePricingOrOffer(text: string): boolean {
+  return looksLikePricingOrOfferContext(text);
+}
+
 function looksLikePricingOrOfferContext(text: string): boolean {
   const t = (text || "").toLowerCase();
   if (!t.trim()) return false;
@@ -229,14 +254,14 @@ function looksLikePricingOrOfferContext(text: string): boolean {
     "rto",
     "insurance",
     "booking",
-    "finance"
+    "finance",
   ];
 
   if (keywords.some((k) => t.includes(k))) return true;
 
   // Numeric patterns that often indicate price/discount (₹ 12,34,567 / 123456 / 40k etc.)
-  const hasLargeNumber = /\\b\d{2,}(?:[\d,\.]*\d)?\\b/.test(t);
-  const hasKNotation = /\\b\d{1,3}\s?(k|lac|lakh|cr|crore)\\b/.test(t);
+  const hasLargeNumber = /\b\d{5,}\b/.test(t) || /\b\d{1,2}\s?%\b/.test(t);
+  const hasKNotation = /\b\d{1,3}\s?(k|lac|lakh|cr|crore)\b/.test(t);
   return hasLargeNumber || hasKNotation;
 }
 
@@ -249,14 +274,12 @@ function redactUserProvidedPricing(text: string): string {
 
   // Redact currency-like fragments
   t = t.replace(/₹\s*[0-9][0-9,\.\s]*/gi, "₹[REDACTED]");
-  t = t.replace(/\\b(rs\.?|inr)\s*[0-9][0-9,\.\s]*/gi, "$1 [REDACTED]");
+  t = t.replace(/\b(rs\.?|inr)\s*[0-9][0-9,\.\s]*/gi, "$1 [REDACTED]");
 
-  // Redact amounts (including shorthand)
-  t = t.replace(/\\b\d{2,}(?:[\d,\.]*\d)?\\b/g, "[REDACTED_NUMBER]");
-  t = t.replace(/\\b\d{1,3}\s?(k|lac|lakh|cr|crore)\\b/gi, "[REDACTED_AMOUNT]");
+  t = t.replace(/\b\d{2,}(?:[\d,\.]*\d)?\b/g, "[REDACTED_NUMBER]");
+  t = t.replace(/\b\d{1,3}\s?(k|lac|lakh|cr|crore)\b/gi, "[REDACTED_AMOUNT]");
 
-  // Also redact single-digit tokens to avoid small numeric leakage (e.g., "40" -> already covered, but "5k" etc.)
-  t = t.replace(/\\b\d+\\b/g, "[REDACTED_NUMBER]");
+  t = t.replace(/\b\d+\b/g, "[REDACTED_NUMBER]");
 
   // If the message looks like a pricing/offer claim, explicitly tag it as unverified.
   const needsTag = looksLikePricingOrOfferContext(original) || t !== original;
@@ -270,7 +293,7 @@ function redactUserProvidedPricing(text: string): string {
 /* ============================================================================
    PHASE 1 — AI MODE + HUMAN OVERRIDE + ENTITY LOCK + SUMMARY CACHE
 ============================================================================ */
-type AiMode = "auto" | "suggest" | "off";
+type AiMode = "auto" | "off";
 
 function mergeEntities(
   prev: Record<string, any> | null,
@@ -451,25 +474,27 @@ async function createWalletDebit(params: {
   amount: number;
   aiUsageId: string;
 }) {
-
   if (!params.organizationId) {
-    console.error("[wallet] missing organizationId in createWalletDebit", params);
+    console.error(
+      "[wallet] missing organizationId in createWalletDebit",
+      params
+    );
     return null;
   }
-  
+
   const { data, error } = await supabase
-  .from("wallet_transactions")
-  .insert({
-    wallet_id: params.walletId,
-    organization_id: params.organizationId, // ✅ ADD THIS LINE
-    type: "debit",
-    direction: "out",
-    amount: params.amount,
-    reference_type: "ai_usage",
-    reference_id: params.aiUsageId,
-  })
-  .select("id")
-  .single();
+    .from("wallet_transactions")
+    .insert({
+      wallet_id: params.walletId,
+      organization_id: params.organizationId, // ✅ ADD THIS LINE
+      type: "debit",
+      direction: "out",
+      amount: params.amount,
+      reference_type: "ai_usage",
+      reference_id: params.aiUsageId,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     console.error("[wallet] debit insert error", error);
@@ -517,26 +542,26 @@ function isGreetingMessage(input: string): boolean {
 }
 
 function isShortFollowupMessage(msg: string): boolean {
-  const t = (msg || '').trim().toLowerCase();
+  const t = (msg || "").trim().toLowerCase();
   if (!t) return false;
   // Keep conservative: only short generic follow-ups
   const phrases = [
-    'tell me more',
-    'more',
-    'details',
-    'detail',
-    'ok',
-    'okay',
-    'yes',
-    'y',
-    'haan',
-    'ha',
-    'sure',
-    'continue',
-    'next',
-    'k',
-    'pls',
-    'please',
+    "tell me more",
+    "more",
+    "details",
+    "detail",
+    "ok",
+    "okay",
+    "yes",
+    "y",
+    "haan",
+    "ha",
+    "sure",
+    "continue",
+    "next",
+    "k",
+    "pls",
+    "please",
   ];
   if (phrases.includes(t)) return true;
   if (t.length <= 12 && /^[a-z\s]+$/.test(t)) return true;
@@ -544,25 +569,25 @@ function isShortFollowupMessage(msg: string): boolean {
 }
 
 function isExplicitTopicChange(msg: string): boolean {
-  const t = (msg || '').toLowerCase();
+  const t = (msg || "").toLowerCase();
   // Explicit switches only. If present, do NOT force continuity.
   const patterns = [
-    /different/,
-    /another/,
-    /change/,
-    /other/,
-    /variant/,
-    /model/,
-    /harrier/,
-    /nexon/,
-    /safari/,
-    /tiago/,
-    /tigor/,
-    /altroz/,
-    /punch/,
-    /service/,
-    /booking/,
-    /test drive/,
+    /\bdifferent\b/,
+    /\banother\b/,
+    /\bchange\b/,
+    /\bother\b/,
+    /\bvariant\b/,
+    /\bmodel\b/,
+    /\bharrier\b/,
+    /\bnexon\b/,
+    /\bsafari\b/,
+    /\btiago\b/,
+    /\btigor\b/,
+    /\baltroz\b/,
+    /\bpunch\b/,
+    /\bservice\b/,
+    /\bbooking\b/,
+    /\btest drive\b/,
   ];
   return patterns.some((p) => p.test(t));
 }
@@ -574,7 +599,11 @@ function buildSemanticQueryText(params: {
   userMessage: string;
   isFollowUp: boolean;
   lockedEntities: Record<string, any> | null;
-  extracted: { vehicle_model: string | null; intent: string; fuel_type: string | null };
+  extracted: {
+    vehicle_model: string | null;
+    intent: string;
+    fuel_type: string | null;
+  };
   campaignContextText: string;
 }): string {
   const raw = (params.userMessage || "").trim().replace(/\s+/g, " ");
@@ -582,48 +611,37 @@ function buildSemanticQueryText(params: {
   if (!params.isFollowUp) return raw;
 
   const locked = params.lockedEntities || {};
-  const model = String(params.extracted.vehicle_model || locked.model || "").trim();
+  const model = String(
+    params.extracted.vehicle_model || locked.model || ""
+  ).trim();
   const intent = String(params.extracted.intent || locked.intent || "other");
 
-  const topic = model ? ("about " + model) : "about the discussed vehicle/offer";
+  const topic = model ? "about " + model : "about the discussed vehicle/offer";
 
   // Make follow-ups searchable by including intent-specific keywords
   let focus = "details, features, variants, availability and next steps";
   if (intent === "pricing" || intent === "offer") {
-    focus = "pricing, offers, discounts, variants, on-road breakup, availability and next steps";
+    focus =
+      "pricing, offers, discounts, variants, on-road breakup, availability and next steps";
   } else if (intent === "service") {
-    focus = "service details, schedule, required info, cost estimate and next steps";
+    focus =
+      "service details, schedule, required info, cost estimate and next steps";
   }
 
   const hasCampaign = Boolean((params.campaignContextText || "").trim());
-  const campaignHint = hasCampaign ? "Align with any campaign/offer context if present." : "";
+  const campaignHint = hasCampaign
+    ? "Align with any campaign/offer context if present."
+    : "";
 
   // IMPORTANT: do not embed generic follow-up text alone (e.g., "tell me more")
-  return ("Provide more information " + topic + ". Focus on " + focus + ". " + campaignHint).trim();
-}
-
-
-
-async function safeChatCompletion(
-  logger: ReturnType<typeof createLogger>,
-  params: { systemPrompt: string; userMessage: string }
-): Promise<string | null> {
-  // Used for: follow-up suggestion + workflow intent classification
-  try {
-    const resp = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.3,
-      messages: [
-        { role: "system", content: params.systemPrompt },
-        { role: "user", content: params.userMessage },
-      ],
-    });
-
-    return resp.choices?.[0]?.message?.content?.trim() ?? null;
-  } catch (err) {
-    logger.error("[openai] completion error", { error: err });
-    return null;
-  }
+  return (
+    "Provide more information " +
+    topic +
+    ". Focus on " +
+    focus +
+    ". " +
+    campaignHint
+  ).trim();
 }
 
 /* ============================================================================
@@ -959,12 +977,6 @@ async function loadBotPersonality(params: { organizationId: string }) {
   );
 }
 
-/* ============================================================================
-   PHASE 6 — DETERMINISTIC KB RESOLVER (NO VECTORS, NO SCORING)
-   Order:
-   1) Exact Title match (longest title contained in message)
-   2) Keyword match (strict: exactly one article allowed)
-============================================================================ */
 function normalizeForMatch(s: string): string {
   return (s || "")
     .toLowerCase()
@@ -983,25 +995,79 @@ function containsPhrase(haystack: string, needle: string): boolean {
   return h.includes(n);
 }
 
-function titleMatchesMessage(message: string, title: string): boolean {
-  const msg = normalizeForMatch(message);
-  const titleNorm = normalizeForMatch(title);
-
-  const tokens = titleNorm.split(" ").filter(
-    (t) =>
-      t.length >= 3 &&
-      !/^\d{4}$/.test(t) && // ignore years like 2026
-      t !== "pricing" // normalize price/pricing difference
-  );
-
-  if (!tokens.length) return false;
-
-  return tokens.every((t) => containsPhrase(msg, t));
-}
-
 /* ============================================================================
    SEMANTIC KB RESOLVER (EMBEDDINGS-BASED)
 ============================================================================ */
+async function rerankCandidates(params: {
+  query: string;
+  candidates: KBCandidate[];
+  logger: ReturnType<typeof createLogger>;
+}) {
+  const { query, candidates, logger } = params;
+
+  if (candidates.length <= 6) return candidates;
+
+  const items = candidates.slice(0, 12).map((c, idx) => ({
+    idx,
+    id: c.id,
+    title: c.title,
+    chunk: c.chunk.slice(0, 700),
+  }));
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: "You are a retrieval reranker. Return JSON only.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            query,
+            instruction:
+              "Rank chunks by how directly they help answer the query. Prefer chunks with exact policy/price/specs when asked. Output JSON: { ranked: [{ idx, reason }] }",
+            items,
+          }),
+        },
+      ],
+      response_format: { type: "json_object" } as any,
+    });
+
+    const text = resp.choices?.[0]?.message?.content ?? "{}";
+    const json = JSON.parse(text);
+
+    const rankedIdx: number[] = (json.ranked ?? [])
+      .map((r: any) => Number(r.idx))
+      .filter((n: any) => Number.isFinite(n));
+
+    if (!rankedIdx.length) return candidates;
+
+    const reordered: KBCandidate[] = [];
+    const used = new Set<number>();
+
+    for (const i of rankedIdx) {
+      if (i >= 0 && i < candidates.length && !used.has(i)) {
+        reordered.push(candidates[i]);
+        used.add(i);
+      }
+    }
+
+    // append leftovers
+    for (let i = 0; i < candidates.length; i++) {
+      if (!used.has(i)) reordered.push(candidates[i]);
+    }
+
+    return reordered;
+  } catch (e) {
+    logger.warn("[kb] rerank failed; fallback to scored order", {
+      error: String(e),
+    });
+    return candidates;
+  }
+}
 
 async function resolveKnowledgeContextSemantic(params: {
   userMessage: string;
@@ -1009,15 +1075,32 @@ async function resolveKnowledgeContextSemantic(params: {
   logger: ReturnType<typeof createLogger>;
   vehicleModel?: string | null;
 }): Promise<{
-    context: string;
-    article_ids: string[];
-    confidence: 'strong' | 'weak';
-    best_similarity: number;
-    option_titles: string[];
+  context: string;
+  article_ids: string[];
+  confidence: "strong" | "weak";
+  best_similarity: number;
+  best_score: number;
+  option_titles: string[];
   debug: {
-    used: { id: string; article_id: string; similarity: number; title: string }[];
-    rejected: { id: string; article_id: string; similarity: number; title: string; reason: string }[];
-    thresholds: { hardMin: number; softMin: number; initial: number; fallback: number };
+    used: {
+      id: string;
+      article_id: string;
+      similarity: number;
+      title: string;
+    }[];
+    rejected: {
+      id: string;
+      article_id: string;
+      similarity: number;
+      title: string;
+      reason: string;
+    }[];
+    thresholds: {
+      hardMin: number;
+      softMin: number;
+      initial: number;
+      fallback: number;
+    };
   };
 } | null> {
   const { userMessage, organizationId, logger } = params;
@@ -1026,7 +1109,7 @@ async function resolveKnowledgeContextSemantic(params: {
   // - First pass: higher threshold.
   // - Fallback: slightly lower, but still requires a hard minimum similarity.
   const INITIAL_THRESHOLD = 0.58;
-  const FALLBACK_THRESHOLD = 0.50;
+  const FALLBACK_THRESHOLD = 0.5;
   const HARD_MIN_SIMILARITY = 0.48; // anything below this is treated as noise
   const SOFT_MIN_SIMILARITY = 0.55; // below this we avoid presenting as authoritative
 
@@ -1077,37 +1160,102 @@ async function resolveKnowledgeContextSemantic(params: {
       }
     }
 
-    const runMatch = async (threshold: number) => {
+    const VECTOR_COUNT = 40;
+    const LEXICAL_COUNT = 40;
+
+    const runVector = async (threshold: number) => {
       return await supabase.rpc("match_knowledge_chunks_scoped", {
         query_embedding: embedding,
         match_threshold: threshold,
-        match_count: 12,
+        match_count: VECTOR_COUNT,
+        p_organization_id: organizationId,
+        p_only_published: true,
+      });
+    };
+
+    const runLexical = async () => {
+      return await supabase.rpc("match_knowledge_chunks_lexical_scoped", {
+        p_query: normalized,
+        match_count: LEXICAL_COUNT,
         p_organization_id: organizationId,
         p_only_published: true,
       });
     };
 
     // 2) Match KB chunks (strict → fallback)
-    let { data, error } = await runMatch(INITIAL_THRESHOLD);
-    if ((error || !data?.length) && FALLBACK_THRESHOLD < INITIAL_THRESHOLD) {
-      ({ data, error } = await runMatch(FALLBACK_THRESHOLD));
+    let vectorData: any[] = [];
+    let vectorErr: any = null;
+
+    let { data: v1, error: e1 } = await runVector(INITIAL_THRESHOLD);
+    vectorErr = e1;
+    vectorData = (v1 ?? []) as any[];
+
+    if (
+      (!vectorData.length || vectorErr) &&
+      FALLBACK_THRESHOLD < INITIAL_THRESHOLD
+    ) {
+      const { data: v2, error: e2 } = await runVector(FALLBACK_THRESHOLD);
+      vectorErr = e2;
+      vectorData = (v2 ?? []) as any[];
     }
 
-    if (error || !data?.length) return null;
+    // Lexical always runs (even if vector hits) to catch exact strings
+    const { data: lexDataRaw, error: lexErr } = await runLexical();
+    const lexData = (lexDataRaw ?? []) as any[];
 
-    const rows = (data as any[]).map((r) => ({
-      id: String(r.id),
-      article_id: String(r.article_id),
-      title: String(r.article_title || "KB"),
-      chunk: String(r.chunk || ""),
-      similarity: Number(r.similarity ?? 0),
-    }));
+    if ((!vectorData.length && !lexData.length) || vectorErr) {
+      // if vector errors out entirely, treat as no KB (don’t crash)
+      if (vectorErr)
+        logger.warn("[kb] vector rpc failed", { error: vectorErr });
+      if (lexErr) logger.warn("[kb] lexical rpc failed", { error: lexErr });
+      if (!vectorData.length && !lexData.length) return null;
+    }
+
+    // Merge candidates by chunk id
+    const merged = new Map<string, KBCandidate>();
+
+    for (const r of vectorData) {
+      const id = String(r.id);
+      const sim = Number(r.similarity ?? 0);
+      merged.set(id, {
+        id,
+        article_id: String(r.article_id),
+        title: String(r.article_title || "KB"),
+        chunk: String(r.chunk || ""),
+        similarity: sim,
+        score: combinedScore(sim, undefined),
+      });
+    }
+
+    for (const r of lexData) {
+      const id = String(r.id);
+      const rank = Number(r.rank ?? 0);
+      const existing = merged.get(id);
+      if (existing) {
+        existing.rank = rank;
+        existing.score = combinedScore(existing.similarity, rank);
+      } else {
+        merged.set(id, {
+          id,
+          article_id: String(r.article_id),
+          title: String(r.article_title || "KB"),
+          chunk: String(r.chunk || ""),
+          rank,
+          score: combinedScore(undefined, rank),
+        });
+      }
+    }
+
+    const rows = [...merged.values()];
 
     // 3) Post-filter + ranking
     const model = (params.vehicleModel || "").trim();
     const modelNorm = model ? normalizeForMatch(model) : "";
 
-    const used: Pick<KBScoredRow, "id" | "article_id" | "title" | "similarity">[] = [];
+    const used: Pick<
+      KBScoredRow,
+      "id" | "article_id" | "title" | "similarity"
+    >[] = [];
     const rejected: {
       id: string;
       article_id: string;
@@ -1117,43 +1265,109 @@ async function resolveKnowledgeContextSemantic(params: {
     }[] = [];
 
     // Helper: boost if model string appears in title/chunk (never hard-drop)
-    function boostScore(row: Omit<KBScoredRow, "score">): number {
-      let score = row.similarity;
+    function boostScore(params: {
+      baseScore: number;
+      title: string;
+      chunk: string;
+    }): number {
+      let score = params.baseScore;
+
       if (modelNorm) {
-        const t = normalizeForMatch(row.title);
-        const c = normalizeForMatch(row.chunk);
+        const t = normalizeForMatch(params.title);
+        const c = normalizeForMatch(params.chunk);
         if (t.includes(modelNorm)) score += 0.05;
-        // word-boundary-ish presence
         if (containsPhrase(c, modelNorm)) score += 0.03;
       }
+
       return score;
     }
 
     // Reject obvious noise
     const viable: KBScoredRow[] = [];
+
     for (const r of rows) {
-      if (!r.chunk.trim()) {
-        rejected.push({ ...r, reason: "empty_chunk" });
+      const chunk = (r.chunk || "").trim();
+      if (!chunk) {
+        rejected.push({
+          id: r.id,
+          article_id: r.article_id,
+          title: r.title,
+          similarity: typeof r.similarity === "number" ? r.similarity : 0,
+          reason: "empty_chunk",
+        });
         continue;
       }
-      if (r.similarity < HARD_MIN_SIMILARITY) {
-        rejected.push({ id: r.id, article_id: r.article_id, similarity: r.similarity, title: r.title, reason: "below_hard_min" });
+
+      // Hard reject only if vector similarity exists AND is below hard min.
+      if (
+        typeof r.similarity === "number" &&
+        r.similarity < HARD_MIN_SIMILARITY
+      ) {
+        rejected.push({
+          id: r.id,
+          article_id: r.article_id,
+          title: r.title,
+          similarity: r.similarity,
+          reason: "below_hard_min",
+        });
         continue;
       }
-      viable.push({ ...r, score: boostScore(r) });
+
+      const sim = typeof r.similarity === "number" ? r.similarity : undefined;
+
+      const base = combinedScore(r.similarity, r.rank);
+
+      viable.push({
+        id: r.id,
+        article_id: r.article_id,
+        title: r.title,
+        chunk,
+        similarity: typeof r.similarity === "number" ? r.similarity : 0,
+        score: boostScore({
+          baseScore: base,
+          title: r.title,
+          chunk,
+        }),
+      });
     }
 
     if (!viable.length) return null;
 
     // Sort by boosted score desc (tie-break by similarity)
-    viable.sort((a, b) => (b.score - a.score) || (b.similarity - a.similarity));
+    viable.sort((a, b) => b.score - a.score || b.similarity - a.similarity);
+
+    // Rerank top candidates for better precision
+    const reranked = await rerankCandidates({
+      query: normalized,
+      candidates: viable.map((v) => ({
+        id: v.id,
+        article_id: v.article_id,
+        title: v.title,
+        chunk: v.chunk,
+        similarity: v.similarity,
+        score: v.score,
+      })),
+      logger,
+    });
+
+    // Rebuild viable in reranked order (preserve KBScoredRow shape)
+    const viableReranked: KBScoredRow[] = [];
+    for (const c of reranked) {
+      const found = viable.find((v) => v.id === c.id);
+      if (found) viableReranked.push(found);
+    }
+    viable.length = 0;
+    viable.push(...viableReranked);
 
     // Determine confidence: strong vs weak (best-effort KB still allowed)
     const best = viable[0];
-    const confidence: 'strong' | 'weak' = best.similarity >= SOFT_MIN_SIMILARITY ? 'strong' : 'weak';
+    const confidence: "strong" | "weak" =
+      best.score >= 0.62 || best.similarity >= SOFT_MIN_SIMILARITY
+        ? "strong"
+        : "weak";
 
-    if (confidence === 'weak') {
-      logger.warn('[kb] semantic match weak; injecting best-effort KB', {
+    if (confidence === "weak") {
+      logger.warn("[kb] semantic match weak; injecting best-effort KB", {
         best_similarity: best.similarity,
         best_title: best.title,
         vehicle_model: model || null,
@@ -1165,7 +1379,7 @@ async function resolveKnowledgeContextSemantic(params: {
     const contextParts: string[] = [];
     const seenChunkHashes = new Set<string>();
 
-    for (const r of viable.slice(0, 6)) {
+    for (const r of viable.slice(0, 12)) {
       usedArticleIds.add(r.article_id);
 
       // De-dupe chunks by normalized prefix hash
@@ -1175,14 +1389,19 @@ async function resolveKnowledgeContextSemantic(params: {
 
       contextParts.push(`### ${r.title} (sim=${r.similarity.toFixed(3)})
 ${r.chunk.trim()}`);
-      used.push({ id: r.id, article_id: r.article_id, similarity: r.similarity, title: r.title });
-      if (contextParts.length >= 4) break; // keep context small
+      used.push({
+        id: r.id,
+        article_id: r.article_id,
+        similarity: r.similarity,
+        title: r.title,
+      });
+      if (contextParts.length >= 8) break; // keep context small
     }
 
     let context = contextParts.join("\n\n").trim();
     if (!context) return null;
 
-    const MAX_KB_CHARS = 6500;
+    const MAX_KB_CHARS = 11000;
     if (context.length > MAX_KB_CHARS) context = context.slice(0, MAX_KB_CHARS);
 
     logger.info("[kb] semantic injected", {
@@ -1197,7 +1416,10 @@ ${r.chunk.trim()}`);
       article_ids: [...usedArticleIds],
       confidence,
       best_similarity: best.similarity,
-      option_titles: Array.from(new Set(used.map((u) => u.title))).filter(Boolean).slice(0, 6),
+      best_score: best.score,
+      option_titles: Array.from(new Set(used.map((u) => u.title)))
+        .filter(Boolean)
+        .slice(0, 6),
       debug: {
         used,
         rejected,
@@ -1215,195 +1437,53 @@ ${r.chunk.trim()}`);
   }
 }
 
-async function resolveKnowledgeContext(params: {
+async function resolveKnowledgeContextLexicalOnly(params: {
   userMessage: string;
   organizationId: string;
   logger: ReturnType<typeof createLogger>;
-  vehicleModel?: string | null;
-}): Promise<{
-  context: string;
-  match_type: "title" | "keyword";
-  article_id: string;
-  title: string;
-} | null> {
+}): Promise<{ context: string; article_ids: string[] } | null> {
   const { userMessage, organizationId, logger } = params;
+  const q = (userMessage || "").trim().replace(/\s+/g, " ");
+  if (!q) return null;
 
-  const msg = normalizeForMatch(userMessage);
-  if (!msg) return null;
-
-  // Load articles in scope (sub-org: allow null/global + exact division)
-  const { data: articles, error } = await supabase
-    .from("knowledge_articles")
-    .select("id, title, content, keywords, status")
-    .eq("organization_id", organizationId)
-    .eq("status", "published");
-
-  if (error) {
-    logger.error("[kb] failed to load articles", { error });
-    return null;
-  }
-
-  if (!articles?.length) {
-    logger.warn("[kb] ZERO articles found for organization", {
-      organization_id: organizationId,
-    });
-    return null;
-  }
-
-  const scoped = articles as any[];
-
-  // 🔍 AI-assisted model scoping (smart, typo-safe)
-  let kbScoped = scoped;
-
-  if (params.vehicleModel) {
-    const model = normalizeForMatch(params.vehicleModel);
-
-    const filtered = scoped.filter((a) =>
-      normalizeForMatch(a.title).includes(model)
-    );
-
-    if (filtered.length > 0) {
-      kbScoped = filtered;
+  const { data, error } = await supabase.rpc(
+    "match_knowledge_chunks_lexical_scoped",
+    {
+      p_query: q,
+      match_count: 40,
+      p_organization_id: organizationId,
+      p_only_published: true,
     }
+  );
 
-    logger.info("[kb] scoped by AI model", {
-      vehicle_model: params.vehicleModel,
-      before: scoped.length,
-      after: filtered.length,
-      used_filtered: filtered.length > 0,
-    });
+  if (error || !data?.length) return null;
+
+  const parts: string[] = [];
+  const articleIds = new Set<string>();
+  const seen = new Set<string>();
+
+  for (const r of data as any[]) {
+    const chunk = String(r.chunk || "").trim();
+    if (!chunk) continue;
+
+    const key = normalizeForMatch(chunk).slice(0, 280);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    articleIds.add(String(r.article_id));
+    parts.push(`### ${String(r.article_title || "KB")}\n${chunk}`);
+
+    if (parts.length >= 8) break;
   }
 
-  const effectiveArticles = kbScoped;
+  const context = parts.join("\n\n").slice(0, 9000).trim();
+  if (!context) return null;
 
-  // -------------------------
-  // PASS 1 — EXACT TITLE MATCH
-  // longest title that appears in the message wins (deterministic)
-  // -------------------------
-  const titleCandidates = effectiveArticles
-    .map((a) => ({
-      ...a,
-      title_norm: normalizeForMatch(a.title),
-      title_len: normalizeForMatch(a.title).length,
-    }))
-    .filter(
-      (a) => a.title_len >= 4 && titleMatchesMessage(userMessage, a.title)
-    )
-    .sort(
-      (a, b) =>
-        b.title_len - a.title_len || String(a.id).localeCompare(String(b.id))
-    );
-
-  if (titleCandidates.length) {
-    const best = titleCandidates[0];
-    logger.info("[kb] title match", { article_id: best.id, title: best.title });
-
-    return {
-      context: String(best.content || "").trim(),
-      match_type: "title",
-      article_id: best.id,
-      title: best.title,
-    };
-  }
-
-  // -------------------------
-  // PASS 2 — KEYWORD MATCH (DETERMINISTIC, NO SCORING)
-  // We avoid "strict single-hit" because generic keywords like "discount"
-  // would otherwise match many model articles and get rejected.
-  //
-  // Deterministic rule:
-  // - Count how many keywords from each article appear in the message
-  // - Pick the article with the highest count
-  // - If tie for highest count -> reject (ask user for clarity)
-  // -------------------------
-  const keywordCandidates = effectiveArticles
-    .map((a) => {
-      const kws: string[] = Array.isArray(a.keywords) ? a.keywords : [];
-      const normalizedKws = kws
-        .map((k) => normalizeForMatch(String(k)))
-        .filter((k) => k.length >= 3);
-
-      let matchCount = 0;
-      let bestLen = 0;
-
-      for (const k of normalizedKws) {
-        if (containsPhrase(msg, k)) {
-          matchCount += 1;
-          if (k.length > bestLen) bestLen = k.length;
-        }
-      }
-
-      return { a, matchCount, bestLen };
-    })
-    .filter((x) => x.matchCount > 0)
-    .sort((x, y) => {
-      // higher match count wins
-      if (y.matchCount !== x.matchCount) return y.matchCount - x.matchCount;
-      // then prefer longer matched keyword (more specific)
-      if (y.bestLen !== x.bestLen) return y.bestLen - x.bestLen;
-      // final deterministic tie-breaker
-      return String(x.a.id).localeCompare(String(y.a.id));
-    });
-
-  if (!keywordCandidates.length) return null;
-
-  const top = keywordCandidates[0];
-  const tied =
-    keywordCandidates.length > 1 &&
-    keywordCandidates[1].matchCount === top.matchCount &&
-    keywordCandidates[1].bestLen === top.bestLen;
-
-  if (tied) {
-    // 🔒 Deterministic tie-breaker using locked entity (model)
-    if (params.vehicleModel) {
-      const modelNorm = normalizeForMatch(params.vehicleModel);
-
-      const entityFiltered = keywordCandidates.filter((x) =>
-        normalizeForMatch(x.a.title).includes(modelNorm)
-      );
-
-      if (entityFiltered.length === 1) {
-        const best = entityFiltered[0].a;
-
-        logger.info("[kb] keyword tie resolved by locked model", {
-          model: params.vehicleModel,
-          article_id: best.id,
-          title: best.title,
-        });
-
-        return {
-          context: String(best.content || "").trim(),
-          match_type: "keyword",
-          article_id: best.id,
-          title: best.title,
-        };
-      }
-    }
-
-    logger.warn("[kb] keyword tie -> reject", {
-      top: keywordCandidates.slice(0, 5).map((x) => ({
-        id: x.a.id,
-        title: x.a.title,
-        matchCount: x.matchCount,
-      })),
-    });
-
-    return null;
-  }
-
-  const best = top.a;
-  logger.info("[kb] keyword match", {
-    article_id: best.id,
-    title: best.title,
-    matchCount: top.matchCount,
+  logger.info("[kb] lexical-only injected", {
+    articles: [...articleIds],
+    chars: context.length,
   });
-
-  return {
-    context: String(best.content || "").trim(),
-    match_type: "keyword",
-    article_id: best.id,
-    title: best.title,
-  };
+  return { context, article_ids: [...articleIds] };
 }
 
 /* ============================================================================
@@ -1670,32 +1750,6 @@ async function logUnansweredQuestion(params: {
 }
 
 /* ============================================================================
-   FOLLOW-UP SUGGESTION PROMPT (PHASE 1)
-============================================================================ */
-function buildFollowupSuggestionPrompt(params: {
-  campaignContextText: string;
-  personalityBlock: string;
-}) {
-  return `
-You are an AI assistant helping a dealership agent.
-
-Your task:
-- Suggest ONE short follow-up message
-- Sound human and polite
-- Do NOT repeat previous messages
-- Keep it WhatsApp-friendly (1–2 lines)
-
-PERSONALITY RULES:
-${params.personalityBlock}
-
-CAMPAIGN CONTEXT:
-${params.campaignContextText || "No campaign context"}
-
-Return ONLY the suggested message text.
-`.trim();
-}
-
-/* ============================================================================
    MAIN HANDLER
 ============================================================================ */
 serve(async (req: Request): Promise<Response> => {
@@ -1712,7 +1766,6 @@ serve(async (req: Request): Promise<Response> => {
     let body: {
       conversation_id?: string;
       user_message?: string;
-      mode?: "reply" | "suggest_followup";
     } | null = null;
 
     const rawBody = await req.text();
@@ -1743,7 +1796,6 @@ serve(async (req: Request): Promise<Response> => {
 
     const conversation_id = body.conversation_id;
     const raw_message = body.user_message;
-    const mode = body.mode ?? "reply";
 
     if (!conversation_id || !raw_message) {
       baseLogger.warn("[validation] Missing conversation_id or user_message");
@@ -1848,17 +1900,16 @@ serve(async (req: Request): Promise<Response> => {
       return new Response("Organization inactive", { status: 403 });
     }
 
-
-// PHASE 4: start AI trace (best-effort, never blocks)
-await traceInsertStart({
-  trace_id,
-  organization_id: conv.organization_id,
-  conversation_id: conv.id,
-  request_id,
-  channel: conv.channel,
-  caller_type: isInternal ? "internal" : "user",
-  user_text: user_message,
-});
+    // PHASE 4: start AI trace (best-effort, never blocks)
+    await traceInsertStart({
+      trace_id,
+      organization_id: conv.organization_id,
+      conversation_id: conv.id,
+      request_id,
+      channel: conv.channel,
+      caller_type: isInternal ? "internal" : "user",
+      user_text: user_message,
+    });
 
     /* ============================================================================
    4.1 AGENT TAKEOVER — HARD AI LOCK (SERVER ENFORCED)
@@ -2013,8 +2064,6 @@ await traceInsertStart({
       }
     }
 
-    const isSuggestOnly = aiMode === "suggest";
-
     const organizationId = conv.organization_id;
     const channel = conv.channel || "web";
     const contactId = conv.contact_id;
@@ -2158,10 +2207,14 @@ ${personality.donts || "- None specified."}
       // Save bot message
       await supabase.from("messages").insert({
         conversation_id,
+        organization_id: organizationId,
         sender: "bot",
         message_type: "text",
         text: greetText,
         channel,
+        order_at: new Date().toISOString(),
+        outbound_dedupe_key: request_id,
+        metadata: { request_id, trace_id, kind: "greeting" },
       });
 
       // Update conversation timestamp
@@ -2256,10 +2309,19 @@ ${personality.donts || "- None specified."}
       // Save bot reply
       await supabase.from("messages").insert({
         conversation_id,
+        organization_id: organizationId,
         sender: "bot",
         message_type: "text",
         text: replyText,
         channel,
+        order_at: new Date().toISOString(),
+        outbound_dedupe_key: request_id,
+        metadata: {
+          request_id,
+          trace_id,
+          kind: "psf_reply",
+          sentiment: result.sentiment,
+        },
       });
 
       await supabase
@@ -2294,7 +2356,7 @@ ${personality.donts || "- None specified."}
     let aiExtract: AiExtractedIntent = {
       vehicle_model: null,
       fuel_type: null,
-      intent: 'other',
+      intent: "other",
     };
 
     // Phase 2: Continuity lock for short follow-ups
@@ -2315,23 +2377,23 @@ ${personality.donts || "- None specified."}
         fuel_type: lockedFuel,
         intent:
           (lockedIntent as any) ??
-          (lockedTopic === 'offer_pricing' ? 'pricing' : 'other'),
+          (lockedTopic === "offer_pricing" ? "pricing" : "other"),
       };
-      logger.info('[ai-handler] follow-up continuity lock applied', {
+      logger.info("[ai-handler] follow-up continuity lock applied", {
         locked_topic: lockedTopic,
         locked_intent: aiExtract.intent,
         locked_model: lockedModel,
       });
-    } else if (!isGreetingMessage(user_message) && aiMode !== 'suggest') {
+    } else if (!isGreetingMessage(user_message)) {
       // Only extract intent if KB may be used
       aiExtract = await extractUserIntentWithAI({
         userMessage: user_message,
         logger,
       });
-      logger.info('[ai-extract] result', aiExtract);
+      logger.info("[ai-extract] result", aiExtract);
     }
 
-/* ---------------------------------------------------------------------------
+    /* ---------------------------------------------------------------------------
    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
 --------------------------------------------------------------------------- */
 
@@ -2340,49 +2402,15 @@ ${personality.donts || "- None specified."}
       model: aiExtract.vehicle_model ?? undefined,
       fuel_type: aiExtract.fuel_type ?? undefined,
       // Phase 2: keep intent/topic sticky; do not wipe on weak turns
-      intent: aiExtract.intent && aiExtract.intent !== 'other' ? aiExtract.intent : undefined,
+      intent:
+        aiExtract.intent && aiExtract.intent !== "other"
+          ? aiExtract.intent
+          : undefined,
       topic:
-        aiExtract.intent === 'pricing' || aiExtract.intent === 'offer'
-          ? 'offer_pricing'
+        aiExtract.intent === "pricing" || aiExtract.intent === "offer"
+          ? "offer_pricing"
           : undefined,
     });
-    
-
-    // 5) Follow-up suggestion mode (NO send, NO DB write)
-    if (mode === "suggest_followup") {
-      logger.info("[ai-handler] follow-up suggestion requested");
-
-      // Optional campaign context (best-effort)
-      let campaignContextText = "";
-      if (contactId) {
-        const campaignCtx = await fetchCampaignContextForContact(
-          organizationId,
-          contactId,
-          logger
-        );
-        if (campaignCtx)
-          campaignContextText = buildCampaignContextText(campaignCtx);
-      }
-
-      const prompt = buildFollowupSuggestionPrompt({
-        campaignContextText,
-        personalityBlock: personaBlock,
-      });
-
-      const suggestion = await safeChatCompletion(logger, {
-        systemPrompt: prompt,
-        userMessage: "Suggest a follow-up message.",
-      });
-
-      return new Response(
-        JSON.stringify({
-          conversation_id,
-          suggestion: suggestion?.trim() || "",
-          request_id,
-        }),
-        { headers: { "Content-Type": "application/json" } }
-      );
-    }
 
     // 7) WhatsApp typing_on before expensive work
     if (channel === "whatsapp" && contactPhone) {
@@ -2401,7 +2429,8 @@ ${personality.donts || "- None specified."}
         .from("messages")
         .select("sender, text, order_at")
         .eq("conversation_id", conversation_id)
-        .order("order_at", { ascending: true })
+        .order("order_at", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true })
         .limit(20)
     );
 
@@ -2416,7 +2445,9 @@ ${personality.donts || "- None specified."}
     const historyMessagesSafe =
       aiExtract.intent === "pricing" || aiExtract.intent === "offer"
         ? historyMessages.map((m) =>
-            m.role === "user" ? { ...m, content: redactUserProvidedPricing(m.content) } : m
+            m.role === "user"
+              ? { ...m, content: redactUserProvidedPricing(m.content) }
+              : m
           )
         : historyMessages;
 
@@ -2441,136 +2472,146 @@ ${personality.donts || "- None specified."}
     let kbFound = false;
 
     // 10) Phase 6 — Knowledge Base Resolution (Semantic → Deterministic)
-let contextText = "";
-let kbMatchMeta: any = null;
+    let contextText = "";
+    let kbMatchMeta: any = null;
 
-kbAttempted = true;
+    kbAttempted = true;
 
-// 10A) Semantic KB (preferred)
-const isFollowUpForKb = isShortFollowupMessage(user_message) && !isExplicitTopicChange(user_message);
-const semanticQueryText = buildSemanticQueryText({
-  userMessage: user_message,
-  isFollowUp: isFollowUpForKb,
-  lockedEntities: conv.ai_last_entities ?? null,
-  extracted: aiExtract,
-  campaignContextText,
-});
-
-if (isFollowUpForKb) {
-  logger.info('[kb] follow-up semantic query rewrite', {
-    raw: user_message.slice(0, 80),
-    semantic_query: semanticQueryText.slice(0, 180),
-  });
-}
-
-const semanticKB = await resolveKnowledgeContextSemantic({
-  userMessage: semanticQueryText,
-  organizationId,
-  logger,
-  vehicleModel:
-    aiExtract.vehicle_model ??
-    (conv.ai_last_entities?.model ?? null),
-});
-
-
-if (semanticKB?.context) {
-  contextText = semanticKB.context;
-  kbFound = true;
-  kbMatchMeta = {
-    match_type: 'semantic',
-    article_ids: semanticKB.article_ids,
-    confidence: semanticKB.confidence,
-    best_similarity: semanticKB.best_similarity,
-    option_titles: semanticKB.option_titles,
-  };
-} else {
-  // 10B) Deterministic fallback (KEEP EXISTING LOGIC)
-  const resolvedKB = await resolveKnowledgeContext({
-    userMessage: user_message,
-    organizationId,
-    logger,
-    vehicleModel:
-      aiExtract.vehicle_model ??
-      (conv.ai_last_entities?.model ?? null),
-  });
-
-  if (resolvedKB?.context) {
-    contextText = resolvedKB.context;
-    kbFound = true;
-    kbMatchMeta = {
-      match_type: resolvedKB.match_type,
-      article_id: resolvedKB.article_id,
-      title: resolvedKB.title,
-    };
-  } else {
-    logger.warn("[kb] attempted but NO match", {
-      user_message: user_message.slice(0, 120),
+    // 10A) Semantic KB (preferred)
+    const isFollowUpForKb =
+      isShortFollowupMessage(user_message) &&
+      !isExplicitTopicChange(user_message);
+    const semanticQueryText = buildSemanticQueryText({
+      userMessage: user_message,
+      isFollowUp: isFollowUpForKb,
+      lockedEntities: conv.ai_last_entities ?? null,
+      extracted: aiExtract,
+      campaignContextText,
     });
-  }
-}
 
+    if (isFollowUpForKb) {
+      logger.info("[kb] follow-up semantic query rewrite", {
+        raw: user_message.slice(0, 80),
+        semantic_query: semanticQueryText.slice(0, 180),
+      });
+    }
 
+    const semanticKB = await resolveKnowledgeContextSemantic({
+      userMessage: semanticQueryText,
+      organizationId,
+      logger,
+      vehicleModel:
+        aiExtract.vehicle_model ?? conv.ai_last_entities?.model ?? null,
+    });
 
-// PHASE 4: persist KB retrieval trace (best-effort)
-const kbTracePatch: Record<string, any> = {
-  kb_used: kbFound,
-  kb_reason: kbFound ? "matched" : "no_match",
-  kb_threshold: semanticKB?.debug?.thresholds?.initial ?? null,
-  kb_top_score: semanticKB?.debug?.used?.[0]?.similarity ?? null,
-  kb_chunks: semanticKB?.debug?.used ?? [],
-  decision: {
-    kb_attempted: kbAttempted,
-    kb_found: kbFound,
-    kb_match_meta: kbMatchMeta,
-    kb_thresholds: semanticKB?.debug?.thresholds ?? null,
-    kb_rejected: semanticKB?.debug?.rejected ?? [],
-  },
-};
-await traceUpdate(trace_id, kbTracePatch);
+    if (semanticKB?.context) {
+      contextText = semanticKB.context;
+      kbFound = true;
+      kbMatchMeta = {
+        match_type: "semantic",
+        article_ids: semanticKB.article_ids,
+        confidence: semanticKB.confidence,
+        best_similarity: semanticKB.best_similarity,
+        best_score: semanticKB.best_score,
+        option_titles: semanticKB.option_titles,
+      };
+    } else {
+      // 10B) Deterministic fallback (KEEP EXISTING LOGIC)
+      const lexicalOnly = await resolveKnowledgeContextLexicalOnly({
+        userMessage: user_message,
+        organizationId,
+        logger,
+      });
 
-// Persist KB anchors into conversation memory for follow-ups (best-effort)
-const nextEntitiesWithKb: any = { ...(nextEntities as any) };
-try {
-  if (kbFound) {
-    nextEntitiesWithKb.last_kb = {
-      match_type: kbMatchMeta?.match_type ?? null,
-      article_ids: kbMatchMeta?.article_ids ?? (kbMatchMeta?.article_id ? [kbMatchMeta.article_id] : []),
-      confidence: kbMatchMeta?.confidence ?? null,
-      best_similarity: kbMatchMeta?.best_similarity ?? null,
-      option_titles: kbMatchMeta?.option_titles ?? (kbMatchMeta?.title ? [kbMatchMeta.title] : []),
-      at: new Date().toISOString(),
+      if (lexicalOnly?.context) {
+        contextText = lexicalOnly.context;
+        kbFound = true;
+        kbMatchMeta = {
+          match_type: "lexical_only",
+          article_ids: lexicalOnly.article_ids,
+        };
+      } else {
+        logger.warn("[kb] attempted but NO match", {
+          user_message: user_message.slice(0, 120),
+        });
+      }
+    }
+
+    // PHASE 4: persist KB retrieval trace (best-effort)
+    const kbTracePatch: Record<string, any> = {
+      kb_used: kbFound,
+      kb_reason: kbFound ? "matched" : "no_match",
+      kb_threshold: semanticKB?.debug?.thresholds?.initial ?? null,
+      kb_top_score: semanticKB?.best_score ?? null,
+      kb_top_similarity: semanticKB?.best_similarity ?? null,
+      kb_chunks: semanticKB?.debug?.used ?? [],
+      decision: {
+        kb_attempted: kbAttempted,
+        kb_found: kbFound,
+        kb_match_meta: kbMatchMeta,
+        kb_thresholds: semanticKB?.debug?.thresholds ?? null,
+        kb_rejected: semanticKB?.debug?.rejected ?? [],
+        kb_hybrid: true,
+        kb_rerank: true,
+      },
     };
-  }
-} catch {
-  // never break on memory anchors
-}
+    await traceUpdate(trace_id, kbTracePatch);
 
-const requiresAuthoritativeKB =
-  aiExtract.intent === "pricing" || aiExtract.intent === "offer";
+    // Persist KB anchors into conversation memory for follow-ups (best-effort)
+    const nextEntitiesWithKb: any = { ...(nextEntities as any) };
+    try {
+      if (kbFound) {
+        nextEntitiesWithKb.last_kb = {
+          match_type: kbMatchMeta?.match_type ?? null,
+          article_ids:
+            kbMatchMeta?.article_ids ??
+            (kbMatchMeta?.article_id ? [kbMatchMeta.article_id] : []),
+          confidence: kbMatchMeta?.confidence ?? null,
+          best_similarity: kbMatchMeta?.best_similarity ?? null,
+          best_score: kbMatchMeta?.best_score ?? null,
+          option_titles:
+            kbMatchMeta?.option_titles ??
+            (kbMatchMeta?.title ? [kbMatchMeta.title] : []),
+          at: new Date().toISOString(),
+        };
+      }
+    } catch {
+      // never break on memory anchors
+    }
 
-// PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
-// This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
-const kbHasPricingSignals = looksLikePricingOrOfferContext(contextText);
-const campaignHasPricingSignals = looksLikePricingOrOfferContext(campaignContextText) ||
-  looksLikePricingOrOfferContext(JSON.stringify(conv.campaign_context ?? {}));
+    const requiresAuthoritativeKB =
+      aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-const pricingEstimateRequired =
-  requiresAuthoritativeKB && !(kbHasPricingSignals || campaignHasPricingSignals);
+    // PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
+    // This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
+    const kbHasPricingSignals = looksLikePricingOrOfferContext(contextText);
+    const campaignHasPricingSignals =
+      looksLikePricingOrOfferContext(campaignContextText) ||
+      looksLikePricingOrOfferContext(
+        JSON.stringify(conv.campaign_context ?? {})
+      );
 
-if (pricingEstimateRequired) {
-  logger.warn('[pricing] verified pricing not found in KB/Campaign — allow estimate with disclaimer', {
-    intent: aiExtract.intent,
-    vehicle_model: aiExtract.vehicle_model,
-    kb_found: kbFound,
-    kb_has_pricing_signals: kbHasPricingSignals,
-    campaign_has_pricing_signals: campaignHasPricingSignals,
-  });
-}
+    const pricingEstimateRequired =
+      requiresAuthoritativeKB &&
+      !(kbHasPricingSignals || campaignHasPricingSignals);
 
-// 🔒 PRICING SAFETY NET
-if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
-  logger.warn("[kb] pricing intent but no KB context found");
-}
+    if (pricingEstimateRequired) {
+      logger.warn(
+        "[pricing] verified pricing not found in KB/Campaign — allow estimate with disclaimer",
+        {
+          intent: aiExtract.intent,
+          vehicle_model: aiExtract.vehicle_model,
+          kb_found: kbFound,
+          kb_has_pricing_signals: kbHasPricingSignals,
+          campaign_has_pricing_signals: campaignHasPricingSignals,
+        }
+      );
+    }
+
+    // 🔒 PRICING SAFETY NET
+    if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
+      logger.warn("[kb] pricing intent but no KB context found");
+    }
 
     // 🧠 Intent-aware soft handling (Issue 3 - Option B)
     // If user intent is pricing/features but KB has no match,
@@ -2595,7 +2636,11 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
     let workflowInstructionText = "";
     let resolvedWorkflow: WorkflowLogRow | null = null;
 
-    const activeWorkflow = await loadActiveWorkflow(conversation_id, organizationId, logger);
+    const activeWorkflow = await loadActiveWorkflow(
+      conversation_id,
+      organizationId,
+      logger
+    );
     resolvedWorkflow = activeWorkflow;
 
     // 🔒 NEW: honor workflow attached by campaign
@@ -2605,7 +2650,7 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
         conversation_id,
         organizationId,
         logger
-      );      
+      );
       logger.info("[workflow] attached from campaign", {
         workflow_id: conv.workflow_id,
         conversation_id,
@@ -2621,7 +2666,12 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
       );
 
       if (wf) {
-        resolvedWorkflow = await startWorkflow(wf.id, conversation_id, organizationId, logger);
+        resolvedWorkflow = await startWorkflow(
+          wf.id,
+          conversation_id,
+          organizationId,
+          logger
+        );
       }
     }
 
@@ -2653,11 +2703,16 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
     // Rule: If KB/Campaign already provides a sufficient answer for the current intent,
     // workflow guidance must NOT cause redundant questions or override facts.
 
-    const kbSufficientForIntent = Boolean(contextText?.trim()) && (
-      requiresAuthoritativeKB ? (kbHasPricingSignals || campaignHasPricingSignals) : true
-    );
+    const kbSufficientForIntent =
+      Boolean(contextText?.trim()) &&
+      (requiresAuthoritativeKB
+        ? kbHasPricingSignals || campaignHasPricingSignals
+        : true);
 
-    const workflowRequiresKB = (workflowInstructionText || "").toLowerCase().includes("knowledge base") ||
+    const workflowRequiresKB =
+      (workflowInstructionText || "")
+        .toLowerCase()
+        .includes("knowledge base") ||
       (workflowInstructionText || "").toLowerCase().includes("kb");
 
     let workflowRequiresKBButMissing = false;
@@ -2684,15 +2739,17 @@ if (!kbFound && aiExtract.intent === "pricing" && contextText === "") {
         has_workflow: true,
       });
     }
-    
 
     const campaignFactsBlock = buildCampaignFactsBlock(
       conv.campaign_context ?? null
     );
 
     // KB meta for best-effort options
-    const kbConfidence: 'strong' | 'weak' | 'none' = (kbMatchMeta?.confidence as any) ?? (kbFound ? 'strong' : 'none');
-    const kbOptionTitles: string[] = (kbMatchMeta?.option_titles ?? []).filter(Boolean).slice(0, 6);
+    const kbConfidence: "strong" | "weak" | "none" =
+      (kbMatchMeta?.confidence as any) ?? (kbFound ? "strong" : "none");
+    const kbOptionTitles: string[] = (kbMatchMeta?.option_titles ?? [])
+      .filter(Boolean)
+      .slice(0, 6);
 
     // 11) System prompt
     const systemPrompt = `
@@ -2745,7 +2802,7 @@ BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ------------------------
 ${personaBlock}
 PRICING / DISCOUNT POLICY (IMPORTANT):
-PRICING_ESTIMATE_REQUIRED: ${pricingEstimateRequired ? 'YES' : 'NO'}
+PRICING_ESTIMATE_REQUIRED: ${pricingEstimateRequired ? "YES" : "NO"}
 - NEVER invent prices or offers.
 - NEVER invent prices or offers.
 - For pricing/offers, use verified numbers ONLY if they appear in Knowledge Context or Campaign Context.
@@ -2783,17 +2840,21 @@ KNOWLEDGE CONTEXT (MOST IMPORTANT)
 KB_MATCH_META (INTERNAL):
 - kb_found: ${kbFound}
 - kb_confidence: ${kbConfidence}
-- kb_option_titles: ${kbOptionTitles.join(' | ') || 'none'}
+- kb_option_titles: ${kbOptionTitles.join(" | ") || "none"}
 
 KB_META (INTERNAL):
-- match_type: ${kbMatchMeta?.match_type || 'none'}
-- confidence: ${kbMatchMeta?.confidence || 'n/a'}
-- best_similarity: ${kbMatchMeta?.best_similarity ?? 'n/a'}
+- match_type: ${kbMatchMeta?.match_type || "none"}
+- confidence: ${kbMatchMeta?.confidence || "n/a"}
+- best_similarity: ${kbMatchMeta?.best_similarity ?? "n/a"}
 - option_titles: ${JSON.stringify(kbMatchMeta?.option_titles ?? [], null, 0)}
 
 ${contextText}
 
-${workflowRequiresKBButMissing ? "WORKFLOW GUARD: Workflow requires Knowledge Base to proceed, but KB context is missing. Ask ONE short clarifying question or connect to a human advisor. Do NOT guess." : ""}
+${
+  workflowRequiresKBButMissing
+    ? "WORKFLOW GUARD: Workflow requires Knowledge Base to proceed, but KB context is missing. Ask ONE short clarifying question or connect to a human advisor. Do NOT guess."
+    : ""
+}
 
 ------------------------
 KNOWLEDGE USAGE RULES (CRITICAL)
@@ -2893,6 +2954,29 @@ Respond now to the customer's latest message only.
     let aiResponseText = aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
+    // ------------------------------------------------------------------
+    // GROUNDEDNESS VALIDATOR (HIGH-RISK: pricing/offer/spec/policy)
+    // If pricing signals are missing from KB/Campaign, block numeric answers.
+    // ------------------------------------------------------------------
+    const highRiskIntent =
+      aiExtract.intent === "pricing" || aiExtract.intent === "offer";
+
+    if (highRiskIntent && pricingEstimateRequired) {
+      // If the model still tried to output numbers/offers, force safe behavior.
+      const hasAnyNumber = /\d/.test(aiResponseText);
+      if (answerLooksLikePricingOrOffer(aiResponseText) || hasAnyNumber) {
+        logger.warn("[validator] blocked unsupported pricing-style answer", {
+          intent: aiExtract.intent,
+          kb_found: kbFound,
+          kb_has_pricing_signals: kbHasPricingSignals,
+          campaign_has_pricing_signals: campaignHasPricingSignals,
+        });
+
+        aiResponseText =
+          "I can help — just confirm the exact variant and city, and I’ll share the correct quote. If you want, I can connect you to a sales advisor to confirm the latest on-road price.";
+      }
+    }
+
     // 14) Wallet debit + AI usage log (only if AI was actually called)
     if (aiResult) {
       const chargedAmount = getChargedAmountForModel(aiResult.model);
@@ -2978,7 +3062,7 @@ Respond now to the customer's latest message only.
         organizationId, // ✅ ADD THIS LINE
         amount: chargedAmount,
         aiUsageId: usage.id,
-      });      
+      });
 
       if (!walletTxnId) {
         logger.error("[wallet] debit failed");
@@ -3115,33 +3199,19 @@ Respond now to the customer's latest message only.
       aiResponseText === fallbackMessage
     ) {
       logger.error("[guard] pricing fallback despite KB present");
-    }    
-
-    /* ---------------------------------------------------------------------------
-   PHASE 1 — SUGGEST MODE HARD STOP (STEP 7)
---------------------------------------------------------------------------- */
-
-    if (isSuggestOnly) {
-      logger.info("[ai-handler] suggest-only mode — returning draft");
-
-      return new Response(
-        JSON.stringify({
-          conversation_id,
-          draft: aiResponseText,
-          auto_send: false,
-          request_id,
-        }),
-        { headers: { "Content-Type": "application/json" } }
-      );
     }
 
     // 17) Save message + update conversation
     await supabase.from("messages").insert({
       conversation_id,
+      organization_id: organizationId,
       sender: "bot",
       message_type: "text",
       text: aiResponseText,
       channel,
+      order_at: new Date().toISOString(),
+      outbound_dedupe_key: request_id,
+      metadata: { request_id, trace_id, kb: kbMatchMeta ?? null },
     });
 
     // 🔒 Persist locked entities (Issue 4)
@@ -3169,7 +3239,7 @@ Respond now to the customer's latest message only.
 
     // PHASE 4: finalize AI trace (best-effort)
     await traceUpdate(trace_id, {
-      status: 'succeeded',
+      status: "succeeded",
       finished_at: new Date().toISOString(),
     });
 
@@ -3186,9 +3256,9 @@ Respond now to the customer's latest message only.
 
     // PHASE 4: mark trace failed (best-effort)
     await traceUpdate(trace_id, {
-      status: 'failed',
+      status: "failed",
       finished_at: new Date().toISOString(),
-      error_stage: 'fatal',
+      error_stage: "fatal",
       error: { message: String(err?.message ?? err) },
     });
 
