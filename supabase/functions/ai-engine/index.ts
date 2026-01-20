@@ -1,8 +1,17 @@
 // supabase/functions/ai-engine/index.ts
+// P0 FINAL — INTERNAL ONLY
+// This function exists ONLY for legacy WhatsApp webhook compatibility.
+// It must never be exposed publicly because it uses service_role and reads messages.
+//
+// Security model:
+// - Require INTERNAL_API_KEY via x-internal-api-key (or Authorization: Bearer <key>)
+// - Derive organization_id from conversation row (DB truth)
+// - Always scope inserts/updates to that derived org
 
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import { getRequestId, isInternalRequest } from "../_shared/auth.ts";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
@@ -57,45 +66,66 @@ async function generateResponse(prompt: string): Promise<string> {
 
 type AiEngineBody = {
   conversation_id?: string;
+  // optional for idempotency across upstream retries
+  request_id?: string;
 };
 
 // Legacy helper: used by `whatsapp-webhook`.
 // New WhatsApp pipeline uses `whatsapp-inbound` + `ai-handler`.
 serve(async (req: Request): Promise<Response> => {
+  const rid = getRequestId(req);
+
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
+  }
+
+  // P0: internal gate (service_role + message reads)
+  if (!isInternalRequest(req)) {
+    return new Response(
+      JSON.stringify({ error: "Forbidden", request_id: rid }),
+      { status: 403, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   try {
     const body = (await req.json()) as AiEngineBody;
     const conversation_id = body.conversation_id;
+    const request_id = (body.request_id || "").trim() || rid;
 
     if (!conversation_id) {
       return new Response(
-        JSON.stringify({ error: "Missing conversation_id" }),
+        JSON.stringify({ error: "Missing conversation_id", request_id }),
         { status: 400, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    // Load conversation
+    // Load conversation (DB truth for org)
     const { data: conversation, error: convErr } = await supabase
       .from("conversations")
-      .select("id, organization_id")
+      .select("id, organization_id, channel")
       .eq("id", conversation_id)
       .maybeSingle();
 
     if (convErr) {
       console.error("[ai-engine] conversation load error:", convErr);
       return new Response(
-        JSON.stringify({ error: "Failed to load conversation" }),
+        JSON.stringify({ error: "Failed to load conversation", request_id }),
         { status: 500, headers: { "Content-Type": "application/json" } },
       );
     }
 
     if (!conversation) {
       return new Response(
-        JSON.stringify({ error: "Conversation not found" }),
+        JSON.stringify({ error: "Conversation not found", request_id }),
         { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    const organization_id = String((conversation as any).organization_id);
+    if (!organization_id) {
+      return new Response(
+        JSON.stringify({ error: "Conversation missing organization_id", request_id }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
       );
     }
 
@@ -104,6 +134,7 @@ serve(async (req: Request): Promise<Response> => {
       .from("messages")
       .select("id, sender, text, created_at")
       .eq("conversation_id", conversation_id)
+      .eq("organization_id", organization_id)
       .order("created_at", { ascending: false })
       .limit(20);
 
@@ -118,16 +149,18 @@ serve(async (req: Request): Promise<Response> => {
     // Generate AI reply
     const aiResponse = await generateResponse(userMessage);
 
-    // Insert bot message
+    // Insert bot message (idempotent via outbound_dedupe_key)
     const { data: inserted, error: insertErr } = await supabase
       .from("messages")
       .insert({
+        organization_id,
         conversation_id,
         sender: "bot",
         message_type: "text",
         text: aiResponse,
         media_url: null,
         channel: "whatsapp",
+        outbound_dedupe_key: request_id,
       })
       .select("created_at")
       .maybeSingle();
@@ -141,7 +174,8 @@ serve(async (req: Request): Promise<Response> => {
       const { error: updErr } = await supabase
         .from("conversations")
         .update({ last_message_at: inserted.created_at })
-        .eq("id", conversation_id);
+        .eq("id", conversation_id)
+        .eq("organization_id", organization_id);
 
       if (updErr) {
         console.error("[ai-engine] update conversation error:", updErr);
@@ -149,13 +183,13 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, response: aiResponse }),
+      JSON.stringify({ success: true, response: aiResponse, request_id }),
       { headers: { "Content-Type": "application/json" } },
     );
   } catch (err) {
     console.error("[ai-engine] Fatal error:", err);
     return new Response(
-      JSON.stringify({ error: "Internal Server Error" }),
+      JSON.stringify({ error: "Internal Server Error", request_id: rid }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }

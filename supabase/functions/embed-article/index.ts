@@ -6,7 +6,12 @@ import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
 import { logAuditEvent } from "../_shared/audit.ts";
-import { getRequestId, requireOrgMembership, requireUser } from "../_shared/auth.ts";
+import {
+  getRequestId,
+  isInternalRequest,
+  requireOrgMembership,
+  requireUser,
+} from "../_shared/auth.ts";
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -231,12 +236,16 @@ serve(async (req: Request): Promise<Response> => {
 
   const orgId = article.organization_id as string;
 
-  // PHASE 1 AUTHZ: user must belong to org to embed KB
-  try {
-    const u = await requireUser(req);
-    await requireOrgMembership({ supabaseAdmin: supabase, userId: u.id, organizationId: orgId });
-  } catch {
-    return json(403, { error: "Forbidden", request_id });
+  // AUTHZ:
+  // - Normal path: user must belong to org
+  // - Internal path (background worker / cron): INTERNAL_API_KEY gating is handled by isInternalRequest
+  if (!isInternalRequest(req)) {
+    try {
+      const u = await requireUser(req);
+      await requireOrgMembership({ supabaseAdmin: supabase, userId: u.id, organizationId: orgId });
+    } catch {
+      return json(403, { error: "Forbidden", request_id });
+    }
   }
 
   await logAuditEvent(supabase, {

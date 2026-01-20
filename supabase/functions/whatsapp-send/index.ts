@@ -644,7 +644,9 @@ try {
       return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
     }
 
-    const orgId = body.organization_id?.trim();
+    // P0: Never trust orgId from request body, even for internal calls.
+    // We treat it as an optional hint and validate/derive it from DB-owned entities.
+    const orgIdHint = body.organization_id?.trim() ?? null;
     const contactId = body.contact_id ?? null;
     const type = body.type;
 
@@ -662,6 +664,48 @@ try {
     }
 
     body.to = toNorm;
+
+    // Derive/validate organization_id
+    let orgId: string | null = orgIdHint;
+
+    // 1) campaign_id (strongest when present)
+    if (body.campaign_id) {
+      const { data: camp, error: campErr } = await supabase
+        .from("campaigns")
+        .select("organization_id")
+        .eq("id", body.campaign_id)
+        .maybeSingle();
+      if (campErr) throw campErr;
+      if (!camp?.organization_id) {
+        return new Response(JSON.stringify({ error: "Invalid campaign_id" }), { status: 400 });
+      }
+      const campOrg = String((camp as any).organization_id);
+      if (orgId && orgId !== campOrg) {
+        return new Response(JSON.stringify({ error: "organization_id mismatch for campaign_id" }), { status: 403 });
+      }
+      orgId = campOrg;
+    }
+
+    // 2) contact_id (next strongest)
+    if (contactId) {
+      const { data: c, error: cErr } = await supabase
+        .from("contacts")
+        .select("organization_id")
+        .eq("id", contactId)
+        .maybeSingle();
+      if (cErr) throw cErr;
+      if (!c?.organization_id) {
+        return new Response(JSON.stringify({ error: "Invalid contact_id" }), { status: 400 });
+      }
+      const contactOrg = String((c as any).organization_id);
+      if (orgId && orgId !== contactOrg) {
+        return new Response(JSON.stringify({ error: "organization_id mismatch for contact_id" }), { status: 403 });
+      }
+      orgId = contactOrg;
+    }
+
+    // 3) derived conversation_id (if we found it below)
+    // (validated later once conversationId is resolved)
 
     if (!orgId || !type || !body.to) {
       return new Response(
@@ -717,14 +761,27 @@ if (!waPayload) {
     
 
     if (contactId) {
-      const { data: conversation } = await supabase
+      // Resolve conversation for this contact AND validate org using DB truth.
+      const { data: conversation, error: convErr } = await supabase
         .from("conversations")
-        .select("id")
-        .eq("organization_id", orgId)
+        .select("id, organization_id")
         .eq("contact_id", contactId)
         .eq("channel", "whatsapp")
         .maybeSingle();
 
+      if (convErr) throw convErr;
+
+      const convOrg = conversation?.organization_id
+        ? String((conversation as any).organization_id)
+        : null;
+      if (convOrg && orgId && convOrg !== orgId) {
+        return new Response(
+          JSON.stringify({ error: "organization_id mismatch for resolved conversation" }),
+          { status: 403 },
+        );
+      }
+
+      if (convOrg && !orgId) orgId = convOrg;
       conversationId = conversation?.id ?? null;
     }
 

@@ -3,6 +3,7 @@
 
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
+import { getRequestId, isInternalRequest } from "../_shared/auth.ts";
 
 /* =====================================================================================
    ENV
@@ -74,8 +75,18 @@ serve(async (req: Request) => {
     return cors(new Response("ok", { status: 200 }));
   }
 
-  const request_id = crypto.randomUUID();
+  const request_id = getRequestId(req);
   const logger = createLogger(request_id);
+
+  // P0: Never expose test endpoints publicly (prevents spend abuse + probing)
+  if (!isInternalRequest(req)) {
+    return cors(
+      new Response(
+        JSON.stringify({ ok: false, error: "Forbidden", request_id }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  }
 
   if (req.method !== "POST") {
     return cors(

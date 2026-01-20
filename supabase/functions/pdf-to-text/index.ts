@@ -343,6 +343,21 @@ serve(async (req) => {
       throw new Error(`Failed to update article content: ${updateErr.message}`);
     }
 
+    // P1: enqueue embedding as a background job (best-effort).
+    // This decouples heavy embedding from the user-facing extraction request.
+    try {
+      await supabaseAdmin.from("background_jobs").insert({
+        organization_id,
+        job_type: "embed_article",
+        payload: { article_id },
+        status: "queued",
+        run_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      // Do not fail extraction if queue insert fails.
+      console.warn("[pdf-to-text] failed to enqueue embed_article job", e);
+    }
+
     logAuditEvent(supabaseAdmin, {
       organization_id,
       action: "kb_extract_completed",

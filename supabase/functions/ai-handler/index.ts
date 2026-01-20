@@ -20,6 +20,11 @@ const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")!;
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY") || "";
+const OPENAI_MODEL_FAST = Deno.env.get("OPENAI_MODEL_FAST") || "gpt-4o-mini";
+const OPENAI_MODEL_MAIN = Deno.env.get("OPENAI_MODEL_MAIN") || "gpt-4o";
+const GEMINI_MODEL_FAST = Deno.env.get("GEMINI_MODEL_FAST") || "gemini-1.5-flash";
+const GEMINI_MODEL_MAIN = Deno.env.get("GEMINI_MODEL_MAIN") || "gemini-1.5-pro";
+
 const AI_NO_REPLY_TOKEN = "<NO_REPLY>";
 
 if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
@@ -174,6 +179,114 @@ function safeText(v: any): string {
   return typeof v === "string" ? v : "";
 }
 
+
+/* ============================================================================
+   PHASE P3 — TOKEN BUDGET + MODEL ROUTING
+============================================================================ */
+// NOTE: Token estimation is approximate (chars/4). We use it for:
+// - dynamic context packing
+// - cost control
+// - rate limiting estimates
+function estimateTokensFromText(text: string): number {
+  const t = (text || "").trim();
+  if (!t) return 0;
+  // A conservative heuristic for mixed English + numbers.
+  return Math.max(1, Math.ceil(t.length / 4));
+}
+
+function estimateTokensFromMessages(msgs: ChatMsg[]): number {
+  return (msgs || []).reduce((sum, m) => sum + estimateTokensFromText(m.content) + 4, 0);
+}
+
+function truncateTextToTokenLimit(text: string, maxTokens: number): string {
+  if (maxTokens <= 0) return "";
+  const approxMaxChars = maxTokens * 4;
+  if ((text || "").length <= approxMaxChars) return text;
+  // Trim with a small safety margin to avoid overshooting.
+  return (text || "").slice(0, Math.max(0, approxMaxChars - 80)).trim();
+}
+
+function packHistoryByTokenBudget(params: {
+  history: ChatMsg[];
+  maxTokens: number;
+}): { packed: ChatMsg[]; usedTokens: number } {
+  const { history, maxTokens } = params;
+  const msgs = Array.isArray(history) ? history : [];
+  if (!msgs.length) return { packed: [], usedTokens: 0 };
+
+  // Always keep the last user message.
+  const last = msgs[msgs.length - 1];
+  let used = estimateTokensFromText(last.content) + 4;
+  const packed: ChatMsg[] = [last];
+
+  // Walk backwards and prepend while we have budget.
+  for (let i = msgs.length - 2; i >= 0; i--) {
+    const m = msgs[i];
+    const t = estimateTokensFromText(m.content) + 4;
+    if (used + t > maxTokens) break;
+    packed.unshift(m);
+    used += t;
+  }
+
+  return { packed, usedTokens: used };
+}
+
+function modelTokenLimits(model: string): { maxContext: number; reserveOutput: number } {
+  // Safe defaults. You can tune per model later.
+  // We keep a decent output reserve to avoid truncation mid-answer.
+  const lower = (model || "").toLowerCase();
+  if (lower.includes("4o")) return { maxContext: 16000, reserveOutput: 900 };
+  if (lower.includes("1.5-pro")) return { maxContext: 12000, reserveOutput: 900 };
+  if (lower.includes("1.5-flash")) return { maxContext: 8000, reserveOutput: 700 };
+  return { maxContext: 8000, reserveOutput: 700 };
+}
+
+function chooseRoutedModel(params: {
+  provider: "openai" | "gemini";
+  configuredModel: string;
+  channel: string;
+  kbConfidence: "strong" | "weak" | "none";
+  aiMode: string | null;
+  userMessage: string;
+  hasWorkflow: boolean;
+}): string {
+  const {
+    provider,
+    configuredModel,
+    channel,
+    kbConfidence,
+    aiMode,
+    userMessage,
+    hasWorkflow,
+  } = params;
+
+  // If org explicitly set a model (not "auto"), respect it.
+  const explicit = (configuredModel || "").trim();
+  const isAuto = !explicit || explicit.toLowerCase() === "auto";
+  if (!isAuto) return explicit;
+
+  const msg = (userMessage || "").trim();
+  const len = msg.length;
+  const lower = msg.toLowerCase();
+
+  // WhatsApp: default to fast unless the turn is clearly complex.
+  const isComplex =
+    len > 240 ||
+    /\b(compare|explain|why|how|difference|pros|cons|finance|loan|emi|features|spec|variant)\b/.test(lower);
+
+  // kb_only: no need for big model — we should answer strictly from context.
+  const preferFast =
+    channel === "whatsapp" ||
+    aiMode === "kb_only" ||
+    (kbConfidence === "strong" && !isComplex && !hasWorkflow);
+
+  if (provider === "gemini") {
+    return preferFast ? GEMINI_MODEL_FAST : GEMINI_MODEL_MAIN;
+  }
+
+  return preferFast ? OPENAI_MODEL_FAST : OPENAI_MODEL_MAIN;
+}
+
 function getRequestId(req: Request): string {
   return (
     req.headers.get("x-request-id") ??
@@ -295,7 +408,9 @@ function redactUserProvidedPricing(text: string): string {
 /* ============================================================================
    PHASE 1 — AI MODE + HUMAN OVERRIDE + ENTITY LOCK + SUMMARY CACHE
 ============================================================================ */
-type AiMode = "auto" | "off";
+// AI mode is stored on conversations.ai_mode (text). Keep this union broad so
+// older rows remain valid and newer stricter modes can be introduced safely.
+type AiMode = "auto" | "off" | "kb_only";
 
 function mergeEntities(
   prev: Record<string, any> | null,
@@ -1080,45 +1195,100 @@ function packKbContext(params: {
   maxChars: number;       // total KB budget
   maxChunks: number;      // hard cap
   maxChunkChars: number;  // per-chunk cap
-}): { context: string; used: { id: string; article_id: string; title: string; similarity?: number; score: number }[] } {
-  const { rows, maxChars, maxChunks, maxChunkChars } = params;
+  maxPerArticle?: number; // diversity cap per article
+}): {
+  context: string;
+  used: { id: string; article_id: string; title: string; similarity?: number; score: number }[];
+} {
+  const {
+    rows,
+    maxChars,
+    maxChunks,
+    maxChunkChars,
+    maxPerArticle = 4,
+  } = params;
+
+  // Diversify by article: prevent 8 chunks from the same doc.
+  // Strategy:
+  // 1) Group rows by article_id
+  // 2) Sort chunks within each article by score desc
+  // 3) Sort articles by best score desc
+  // 4) Round-robin pick chunks across top articles with per-article cap
+  const groups = new Map<string, KBScoredRow[]>();
+  const articleTitle = new Map<string, string>();
+
+  for (const r of rows) {
+    if (!groups.has(r.article_id)) groups.set(r.article_id, []);
+    groups.get(r.article_id)!.push(r);
+    if (!articleTitle.has(r.article_id)) articleTitle.set(r.article_id, r.title);
+  }
+
+  const articleOrder = [...groups.entries()]
+    .map(([article_id, rs]) => {
+      rs.sort((a, b) => b.score - a.score);
+      return {
+        article_id,
+        bestScore: rs[0]?.score ?? 0,
+      };
+    })
+    .sort((a, b) => b.bestScore - a.bestScore);
 
   const used: { id: string; article_id: string; title: string; similarity?: number; score: number }[] = [];
   const parts: string[] = [];
   const seen = new Set<string>();
+  const usedCountByArticle = new Map<string, number>();
+  const nextIndexByArticle = new Map<string, number>();
 
   let remaining = maxChars;
 
-  for (const r of rows) {
-    if (parts.length >= maxChunks) break;
-    if (remaining <= 200) break;
+  // Round-robin across articles until we hit caps/budget
+  outer: while (parts.length < maxChunks && remaining > 200) {
+    let progressed = false;
 
-    const raw = (r.chunk || "").trim();
-    if (!raw) continue;
+    for (const a of articleOrder) {
+      if (parts.length >= maxChunks || remaining <= 200) break;
 
-    // Dedup by normalized prefix
-    const key = normalizeForMatch(raw).slice(0, 280);
-    if (seen.has(key)) continue;
-    seen.add(key);
+      const already = usedCountByArticle.get(a.article_id) ?? 0;
+      if (already >= maxPerArticle) continue;
 
-    // Trim chunk to reduce token waste
-    const chunk = raw.length > maxChunkChars ? raw.slice(0, maxChunkChars) : raw;
+      const idx = nextIndexByArticle.get(a.article_id) ?? 0;
+      const rs = groups.get(a.article_id) ?? [];
+      if (idx >= rs.length) continue;
 
-    // Minimal metadata: title only (no sim/score printed)
-    const block = `### ${r.title}\n${chunk}`;
+      const r = rs[idx];
+      nextIndexByArticle.set(a.article_id, idx + 1);
 
-    if (block.length > remaining) continue;
+      const raw = (r.chunk || "").trim();
+      if (!raw) continue;
 
-    parts.push(block);
-    remaining -= block.length + 2;
+      // Dedup by normalized prefix
+      const key = normalizeForMatch(raw).slice(0, 280);
+      if (seen.has(key)) continue;
+      seen.add(key);
 
-    used.push({
-      id: r.id,
-      article_id: r.article_id,
-      title: r.title,
-      similarity: r.similarity,
-      score: r.score,
-    });
+      // Trim chunk to reduce token waste
+      const chunk = raw.length > maxChunkChars ? raw.slice(0, maxChunkChars) : raw;
+
+      const title = r.title || articleTitle.get(a.article_id) || "KB";
+      const block = `### ${title}\n${chunk}`;
+      if (block.length > remaining) continue;
+
+      parts.push(block);
+      remaining -= block.length + 2;
+
+      used.push({
+        id: r.id,
+        article_id: r.article_id,
+        title,
+        similarity: r.similarity,
+        score: r.score,
+      });
+
+      usedCountByArticle.set(a.article_id, already + 1);
+      progressed = true;
+    }
+
+    if (!progressed) break outer;
   }
 
   return { context: parts.join("\n\n").trim(), used };
@@ -1536,6 +1706,7 @@ const packed = packKbContext({
   maxChars: MAX_KB_CHARS,
   maxChunks: 18,        // bigger than fixed-8, but budget controlled
   maxChunkChars: 1200,  // prevents giant chunks
+  maxPerArticle: 3,     // diversify across articles
 });
 
 const context = packed.context;
@@ -1607,26 +1778,34 @@ async function resolveKnowledgeContextLexicalOnly(params: {
 
   if (error || !data?.length) return null;
 
-  const parts: string[] = [];
-  const articleIds = new Set<string>();
-  const seen = new Set<string>();
+  // Convert to KBScoredRow so we can reuse the same packing/diversification.
+  const rows: KBScoredRow[] = (data as any[]).map((r) => {
+    const rank = Number(r.rank ?? 0);
+    return {
+      id: String(r.id),
+      article_id: String(r.article_id),
+      title: String(r.article_title || "KB"),
+      chunk: String(r.chunk || ""),
+      // lexical-only: no similarity
+      similarity: undefined,
+      rank,
+      // treat rank as a weak proxy for score
+      score: combinedScore(undefined, rank),
+    };
+  });
 
-  for (const r of data as any[]) {
-    const chunk = String(r.chunk || "").trim();
-    if (!chunk) continue;
+  const packed = packKbContext({
+    rows,
+    maxChars: 9000,
+    maxChunks: 12,
+    maxChunkChars: 1200,
+    maxPerArticle: 3,
+  });
 
-    const key = normalizeForMatch(chunk).slice(0, 280);
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    articleIds.add(String(r.article_id));
-    parts.push(`### ${String(r.article_title || "KB")}\n${chunk}`);
-
-    if (parts.length >= 8) break;
-  }
-
-  const context = parts.join("\n\n").slice(0, 9000).trim();
+  const context = packed.context;
   if (!context) return null;
+
+  const articleIds = new Set<string>(packed.used.map((u) => u.article_id));
 
   logger.info("[kb] lexical-only injected", {
     articles: [...articleIds],
@@ -2259,24 +2438,26 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     // 2.5) Phase 5: Per-org AI rate limits (requests + tokens).
-    // Only enforced for non-greeting messages (greetings are free).
+    // Enforced for non-greeting messages (greetings are free).
+    // P3: we do a small early pre-charge to stop abuse quickly, then top-up later
+    // once we know the packed prompt size.
+    let prechargedTokens = 0;
+
     if (!isGreetingMessage(user_message)) {
-      const estimatedTokens = Math.max(
-        0,
-        Math.ceil((user_message || "").length / 4) + 800
-      );
+      // Small, conservative pre-charge: user message + baseline.
+      // (We top-up later after prompt/context packing.)
+      prechargedTokens = Math.max(0, estimateTokensFromText(user_message) + 600);
 
       try {
         await supabase.rpc("consume_ai_quota", {
           p_organization_id: organizationId,
-          p_estimated_tokens: estimatedTokens,
+          p_estimated_tokens: prechargedTokens,
         });
       } catch (err: any) {
-        // Supabase will surface the raised exception as an error.
         const msg = String(err?.message || err || "");
         if (msg.toLowerCase().includes("ai_rate_limit_exceeded")) {
-          logger.warn("[rate-limit] exceeded", {
-            estimated_tokens: estimatedTokens,
+          logger.warn("[rate-limit] exceeded (precharge)", {
+            estimated_tokens: prechargedTokens,
           });
 
           return new Response(
@@ -2288,7 +2469,7 @@ serve(async (req: Request): Promise<Response> => {
           );
         }
 
-        logger.error("[rate-limit] consume_ai_quota failed", { error: err });
+        logger.error("[rate-limit] consume_ai_quota failed (precharge)", { error: err });
         // Fail-open for unexpected RPC failures to avoid production outages.
       }
     }
@@ -2780,6 +2961,31 @@ ${personality.donts || "- None specified."}
     }
 
     // ------------------------------------------------------------------
+    // P2 — STRICT KB-ONLY MODE
+    // If conversation.ai_mode = "kb_only", the bot must not answer from
+    // general knowledge. It may only respond when we have a strong KB match.
+    // Otherwise, it should politely decline and log the unanswered question.
+    // ------------------------------------------------------------------
+    const kbStrongEnoughForKbOnly =
+      kbFound &&
+      contextText.trim().length > 0 &&
+      (kbMatchMeta?.match_type === "lexical_only" ||
+        semanticKB?.confidence === "strong");
+
+    let forcedReplyText: string | null = null;
+    if (aiMode === "kb_only" && !kbStrongEnoughForKbOnly) {
+      forcedReplyText =
+        "I don’t have this information in our knowledge base yet. If you share the exact model/variant (or the brochure), I’ll confirm the right details — our sales team can also verify it for you.";
+
+      logger.warn("[kb_only] blocked: no strong KB match", {
+        conversation_id,
+        organization_id: organizationId,
+        kb_found: kbFound,
+        kb_match: kbMatchMeta ?? null,
+      });
+    }
+
+    // ------------------------------------------------------------------
     // WORKFLOW CONTEXT (GUIDANCE ONLY — NO EXECUTION)
     // ------------------------------------------------------------------
     let workflowInstructionText = "";
@@ -2900,6 +3106,18 @@ ${personality.donts || "- None specified."}
       .filter(Boolean)
       .slice(0, 6);
 
+    // P3: Keep full KB/Campaign context for validation, but trim what we send to the model
+    // to stay within budget and reduce cost.
+    const kbContextForPrompt = truncateTextToTokenLimit(
+      contextText,
+      channel === "whatsapp" ? 1200 : 3200
+    );
+
+    const campaignContextForPrompt = truncateTextToTokenLimit(
+      campaignContextText,
+      channel === "whatsapp" ? 700 : 1800
+    );
+
     // 11) System prompt
     const systemPrompt = `
 You are an AI assistant representing this business.
@@ -2997,7 +3215,7 @@ KB_META (INTERNAL):
 - best_similarity: ${kbMatchMeta?.best_similarity ?? "n/a"}
 - option_titles: ${JSON.stringify(kbMatchMeta?.option_titles ?? [], null, 0)}
 
-${contextText}
+${kbContextForPrompt}
 
 ${
   workflowRequiresKBButMissing
@@ -3031,7 +3249,7 @@ CAMPAIGN CONTEXT (AUTHORITATIVE)
 - Use qualification language if needed, never denial.
 
 
-${campaignContextText || "No prior campaign history available."}
+${campaignContextForPrompt || "No prior campaign history available."}
 
 ENTITY SAFETY RULE (CRITICAL)
 ------------------------
@@ -3077,11 +3295,87 @@ FORMATTING & STYLE
 Respond now to the customer's latest message only.
 `.trim();
 
-    // 12) AI settings
-    const aiSettings = await resolveAISettings({
-      organizationId,
-      logger,
+    // 12) AI settings (skip if a strict-mode forced reply is already chosen)
+    const aiSettings = forcedReplyText
+      ? null
+      : await resolveAISettings({
+          organizationId,
+          logger,
+        });
+
+    // P3: Model routing (cheap model for routine turns, bigger model only when needed)
+    const routedModel = forcedReplyText
+      ? ''
+      : chooseRoutedModel({
+          provider: aiSettings!.provider,
+          configuredModel: aiSettings!.model,
+          channel,
+          kbConfidence,
+          aiMode,
+          userMessage: user_message,
+          hasWorkflow: Boolean(workflowInstructionText?.trim()),
+        });
+
+    // P3: Dynamic context packing (token-budgeted)
+    const limits = modelTokenLimits(routedModel || aiSettings?.model || '');
+    const systemTokens = estimateTokensFromText(systemPrompt);
+    const maxHistoryTokens = Math.max(
+      0,
+      limits.maxContext - limits.reserveOutput - systemTokens
+    );
+
+    const packedHistory = packHistoryByTokenBudget({
+      history: historyMessagesSafe,
+      maxTokens: maxHistoryTokens,
     });
+
+    const historyMessagesPacked = packedHistory.packed;
+
+    // P3: Rate-limit top-up after we know the actual packed prompt size.
+    if (!isGreetingMessage(user_message) && routedModel) {
+      const promptTokensEstimate =
+        systemTokens + estimateTokensFromMessages(historyMessagesPacked);
+      const totalEstimate = promptTokensEstimate + limits.reserveOutput;
+      const topUp = Math.max(0, totalEstimate - prechargedTokens);
+
+      if (topUp > 0) {
+        try {
+          await supabase.rpc('consume_ai_quota', {
+            p_organization_id: organizationId,
+            p_estimated_tokens: topUp,
+          });
+        } catch (err: any) {
+          const msg = String(err?.message || err || '');
+          if (msg.toLowerCase().includes('ai_rate_limit_exceeded')) {
+            logger.warn('[rate-limit] exceeded (top-up)', {
+              total_estimated_tokens: totalEstimate,
+              precharged_tokens: prechargedTokens,
+            });
+
+            return new Response(
+              JSON.stringify({
+                error: 'rate_limit_exceeded',
+                request_id,
+              }),
+              { status: 429, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+
+          logger.error('[rate-limit] consume_ai_quota failed (top-up)', {
+            error: err,
+          });
+          // Fail-open on unexpected errors.
+        }
+      }
+
+      logger.info('[token-budget] packed', {
+        model: routedModel,
+        system_tokens_est: systemTokens,
+        history_tokens_est: packedHistory.usedTokens,
+        reserve_output: limits.reserveOutput,
+        total_tokens_est: totalEstimate,
+      });
+    }
 
     logger.info("[ai-decision] context_summary", {
       kb_attempted: kbAttempted,
@@ -3089,18 +3383,21 @@ Respond now to the customer's latest message only.
       kb_match: kbMatchMeta ?? null,
       has_workflow: Boolean(workflowInstructionText?.trim()),
       has_campaign: Boolean(campaignContextText?.trim()),
+      model_routed: routedModel || aiSettings?.model,
     });
 
-    // 13) Run AI completion
-    const aiResult = await runAICompletion({
-      provider: aiSettings.provider,
-      model: aiSettings.model,
-      systemPrompt,
-      historyMessages: historyMessagesSafe,
-      logger,
-    });
+    // 13) Run AI completion (or honor forced reply)
+    const aiResult = forcedReplyText
+      ? null
+      : await runAICompletion({
+          provider: aiSettings!.provider,
+          model: routedModel,
+          systemPrompt,
+          historyMessages: historyMessagesPacked,
+          logger,
+        });
 
-    let aiResponseText = aiResult?.text ?? fallbackMessage;
+    let aiResponseText = forcedReplyText ?? (aiResult?.text ?? fallbackMessage);
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
     // ------------------------------------------------------------------
@@ -3345,8 +3642,14 @@ if (!v.grounded) {
       );
     }
 
-    // 16) Phase 6.3 — Log unanswered question (fallback only)
-    if (aiResponseText === fallbackMessage && !intentNeedsKB) {
+    // 16) Phase 6.3 — Log unanswered question
+    // - Classic fallback
+    // - OR kb_only blocked reply (P2)
+    const shouldLogUnanswered =
+      (aiResponseText === fallbackMessage && !intentNeedsKB) ||
+      (aiMode === "kb_only" && forcedReplyText !== null);
+
+    if (shouldLogUnanswered) {
       await logUnansweredQuestion({
         organization_id: organizationId,
         conversation_id,
