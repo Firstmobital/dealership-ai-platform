@@ -88,9 +88,11 @@ type KBScoredRow = {
   article_id: string;
   title: string;
   chunk: string;
-  similarity: number;
+  similarity?: number; // undefined for lexical-only
+  rank?: number; // keep lexical signal for debugging / confidence
   score: number;
 };
+
 
 type KBCandidate = {
   id: string;
@@ -395,6 +397,69 @@ function buildChatMessagesFromHistory(
   // Keep a stable window
   return msgs.slice(-20);
 }
+
+async function validateGroundedness(params: {
+  answer: string;
+  userMessage: string;
+  kbContext: string;
+  campaignContext: string;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<{ grounded: boolean; revised_answer?: string; issues?: string[] }> {
+  const { answer, userMessage, kbContext, campaignContext, logger } = params;
+
+  // Nothing to validate against
+  const sources = `${(kbContext || "").trim()}\n\n${(campaignContext || "").trim()}`.trim();
+  if (!sources) return { grounded: true };
+
+  try {
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" } as any,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a groundedness validator. Only allow answers that are supported by the provided SOURCES. Return JSON only.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task:
+              "Check whether the ANSWER is fully supported by SOURCES. If not, rewrite it to be fully grounded, removing unsupported specifics (numbers, offers, timelines, specs). Keep it helpful and dealership-friendly.",
+            userMessage,
+            sources,
+            answer,
+            output_schema: {
+              grounded: "boolean",
+              issues: "string[] (brief)",
+              revised_answer:
+                "string (only if grounded=false; a grounded rewrite)",
+            },
+          }),
+        },
+      ],
+    });
+
+    const text = resp.choices?.[0]?.message?.content ?? "{}";
+    const json = JSON.parse(text);
+
+    const grounded = Boolean(json.grounded);
+    const revised = typeof json.revised_answer === "string" ? json.revised_answer.trim() : undefined;
+    const issues = Array.isArray(json.issues) ? json.issues.map(String).slice(0, 6) : undefined;
+
+    if (!grounded) {
+      logger.warn("[groundedness] ungrounded answer detected", { issues });
+    }
+
+    return { grounded, revised_answer: revised, issues };
+  } catch (e) {
+    logger.warn("[groundedness] validator failed open", { error: String(e) });
+    // Fail open to avoid outages
+    return { grounded: true };
+  }
+}
+
 
 /* ============================================================================
    PSF HELPERS
@@ -995,6 +1060,56 @@ function containsPhrase(haystack: string, needle: string): boolean {
   return h.includes(n);
 }
 
+
+function packKbContext(params: {
+  rows: KBScoredRow[];
+  maxChars: number;       // total KB budget
+  maxChunks: number;      // hard cap
+  maxChunkChars: number;  // per-chunk cap
+}): { context: string; used: { id: string; article_id: string; title: string; similarity?: number; score: number }[] } {
+  const { rows, maxChars, maxChunks, maxChunkChars } = params;
+
+  const used: { id: string; article_id: string; title: string; similarity?: number; score: number }[] = [];
+  const parts: string[] = [];
+  const seen = new Set<string>();
+
+  let remaining = maxChars;
+
+  for (const r of rows) {
+    if (parts.length >= maxChunks) break;
+    if (remaining <= 200) break;
+
+    const raw = (r.chunk || "").trim();
+    if (!raw) continue;
+
+    // Dedup by normalized prefix
+    const key = normalizeForMatch(raw).slice(0, 280);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    // Trim chunk to reduce token waste
+    const chunk = raw.length > maxChunkChars ? raw.slice(0, maxChunkChars) : raw;
+
+    // Minimal metadata: title only (no sim/score printed)
+    const block = `### ${r.title}\n${chunk}`;
+
+    if (block.length > remaining) continue;
+
+    parts.push(block);
+    remaining -= block.length + 2;
+
+    used.push({
+      id: r.id,
+      article_id: r.article_id,
+      title: r.title,
+      similarity: r.similarity,
+      score: r.score,
+    });
+  }
+
+  return { context: parts.join("\n\n").trim(), used };
+}
+
 /* ============================================================================
    SEMANTIC KB RESOLVER (EMBEDDINGS-BASED)
 ============================================================================ */
@@ -1314,27 +1429,33 @@ async function resolveKnowledgeContextSemantic(params: {
       }
 
       const sim = typeof r.similarity === "number" ? r.similarity : undefined;
+const rank = typeof r.rank === "number" ? r.rank : undefined;
 
-      const base = combinedScore(r.similarity, r.rank);
+const base = combinedScore(sim, rank);
 
-      viable.push({
-        id: r.id,
-        article_id: r.article_id,
-        title: r.title,
-        chunk,
-        similarity: typeof r.similarity === "number" ? r.similarity : 0,
-        score: boostScore({
-          baseScore: base,
-          title: r.title,
-          chunk,
-        }),
-      });
+viable.push({
+  id: r.id,
+  article_id: r.article_id,
+  title: r.title,
+  chunk,
+  similarity: sim,
+  rank,
+  score: boostScore({
+    baseScore: base,
+    title: r.title,
+    chunk,
+  }),
+});
+
     }
 
     if (!viable.length) return null;
 
     // Sort by boosted score desc (tie-break by similarity)
-    viable.sort((a, b) => b.score - a.score || b.similarity - a.similarity);
+    viable.sort(
+      (a, b) => b.score - a.score || (b.similarity ?? 0) - (a.similarity ?? 0)
+    );
+    
 
     // Rerank top candidates for better precision
     const reranked = await rerankCandidates({
@@ -1361,48 +1482,53 @@ async function resolveKnowledgeContextSemantic(params: {
 
     // Determine confidence: strong vs weak (best-effort KB still allowed)
     const best = viable[0];
-    const confidence: "strong" | "weak" =
-      best.score >= 0.62 || best.similarity >= SOFT_MIN_SIMILARITY
-        ? "strong"
-        : "weak";
+
+// If lexical rank exists, let score drive confidence.
+// Vector similarity is optional.
+const hasLexicalEvidence = typeof best.rank === "number" && best.rank > 0;
+const hasVectorEvidence = typeof best.similarity === "number";
+
+const confidence: "strong" | "weak" =
+  best.score >= 0.62 ||
+  (hasVectorEvidence && best.similarity! >= SOFT_MIN_SIMILARITY) ||
+  (hasLexicalEvidence && best.score >= 0.55)
+    ? "strong"
+    : "weak";
+
 
     if (confidence === "weak") {
       logger.warn("[kb] semantic match weak; injecting best-effort KB", {
-        best_similarity: best.similarity,
+        best_similarity: best.similarity ?? 0,
         best_title: best.title,
         vehicle_model: model || null,
       });
     }
 
     // 4) Build compact context from top rows with dedupe
-    const usedArticleIds = new Set<string>();
-    const contextParts: string[] = [];
-    const seenChunkHashes = new Set<string>();
+   // 4) Pack context by budget (dynamic, no sim metadata)
+const MAX_KB_CHARS = 11000;
 
-    for (const r of viable.slice(0, 12)) {
-      usedArticleIds.add(r.article_id);
+const packed = packKbContext({
+  rows: viable,         // already reranked
+  maxChars: MAX_KB_CHARS,
+  maxChunks: 18,        // bigger than fixed-8, but budget controlled
+  maxChunkChars: 1200,  // prevents giant chunks
+});
 
-      // De-dupe chunks by normalized prefix hash
-      const key = normalizeForMatch(r.chunk).slice(0, 280);
-      if (seenChunkHashes.has(key)) continue;
-      seenChunkHashes.add(key);
+const context = packed.context;
+if (!context) return null;
 
-      contextParts.push(`### ${r.title} (sim=${r.similarity.toFixed(3)})
-${r.chunk.trim()}`);
-      used.push({
-        id: r.id,
-        article_id: r.article_id,
-        similarity: r.similarity,
-        title: r.title,
-      });
-      if (contextParts.length >= 8) break; // keep context small
-    }
+const usedArticleIds = new Set<string>(packed.used.map((u) => u.article_id));
 
-    let context = contextParts.join("\n\n").trim();
-    if (!context) return null;
+for (const u of packed.used) {
+  used.push({
+    id: u.id,
+    article_id: u.article_id,
+    similarity: u.similarity ?? 0,
+    title: u.title,
+  });
+}
 
-    const MAX_KB_CHARS = 11000;
-    if (context.length > MAX_KB_CHARS) context = context.slice(0, MAX_KB_CHARS);
 
     logger.info("[kb] semantic injected", {
       chars: context.length,
@@ -2953,6 +3079,31 @@ Respond now to the customer's latest message only.
 
     let aiResponseText = aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
+
+    // ------------------------------------------------------------------
+// REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
+// ------------------------------------------------------------------
+const shouldValidate =
+Boolean(contextText?.trim() || campaignContextText?.trim()) &&
+aiResponseText !== fallbackMessage;
+
+if (shouldValidate) {
+const v = await validateGroundedness({
+  answer: aiResponseText,
+  userMessage: user_message,
+  kbContext: contextText,
+  campaignContext: campaignContextText,
+  logger,
+});
+
+if (!v.grounded) {
+  // Prefer grounded rewrite; if missing, fall back to safe clarification
+  aiResponseText =
+    v.revised_answer ||
+    "I can help — just confirm the exact variant and city, and I’ll share the correct details. If you want, I can connect you to a sales advisor to confirm the latest info.";
+}
+}
+
 
     // ------------------------------------------------------------------
     // GROUNDEDNESS VALIDATOR (HIGH-RISK: pricing/offer/spec/policy)
