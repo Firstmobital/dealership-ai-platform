@@ -404,6 +404,7 @@ async function validateGroundedness(params: {
   kbContext: string;
   campaignContext: string;
   logger: ReturnType<typeof createLogger>;
+  failClosed?: boolean;
 }): Promise<{ grounded: boolean; revised_answer?: string; issues?: string[] }> {
   const { answer, userMessage, kbContext, campaignContext, logger } = params;
 
@@ -454,10 +455,23 @@ async function validateGroundedness(params: {
 
     return { grounded, revised_answer: revised, issues };
   } catch (e) {
-    logger.warn("[groundedness] validator failed open", { error: String(e) });
-    // Fail open to avoid outages
+    logger.warn("[groundedness] validator error", {
+      error: String(e),
+      failClosed: Boolean(params.failClosed),
+    });
+  
+    if (params.failClosed) {
+      return {
+        grounded: false,
+        revised_answer:
+          "I can help — please confirm the exact variant and city, and I’ll share the correct details. If you want, I can connect you to a sales advisor to confirm the latest info.",
+        issues: ["validator_error_fail_closed"],
+      };
+    }
+  
+    // Fail open only for low-risk queries
     return { grounded: true };
-  }
+  }  
 }
 
 
@@ -1120,7 +1134,19 @@ async function rerankCandidates(params: {
 }) {
   const { query, candidates, logger } = params;
 
-  if (candidates.length <= 6) return candidates;
+  const scoreAt = (i: number) => candidates[Math.min(i, candidates.length - 1)]?.score ?? 0;
+const gap = scoreAt(0) - scoreAt(5); // compare #1 vs #6
+const looksHighRisk = looksLikePricingOrOfferContext(query);
+
+// Rerank only when:
+// - high-risk query (pricing/offer/spec/policy-ish), OR
+// - the scores are “close” (ambiguous retrieval)
+const shouldRerank =
+  candidates.length > 6 &&
+  (looksHighRisk || gap < 0.08);
+
+if (!shouldRerank) return candidates;
+
 
   const items = candidates.slice(0, 12).map((c, idx) => ({
     idx,
@@ -1367,10 +1393,7 @@ async function resolveKnowledgeContextSemantic(params: {
     const model = (params.vehicleModel || "").trim();
     const modelNorm = model ? normalizeForMatch(model) : "";
 
-    const used: Pick<
-      KBScoredRow,
-      "id" | "article_id" | "title" | "similarity"
-    >[] = [];
+    const used: { id: string; article_id: string; title: string; similarity: number }[] = [];
     const rejected: {
       id: string;
       article_id: string;
@@ -1541,7 +1564,7 @@ for (const u of packed.used) {
       context,
       article_ids: [...usedArticleIds],
       confidence,
-      best_similarity: best.similarity,
+      best_similarity: best.similarity ?? 0,
       best_score: best.score,
       option_titles: Array.from(new Set(used.map((u) => u.title)))
         .filter(Boolean)
@@ -3088,13 +3111,20 @@ Boolean(contextText?.trim() || campaignContextText?.trim()) &&
 aiResponseText !== fallbackMessage;
 
 if (shouldValidate) {
+  const failClosed =
+  answerLooksLikePricingOrOffer(user_message) ||
+  aiExtract.intent === "pricing" ||
+  aiExtract.intent === "offer";
+
 const v = await validateGroundedness({
   answer: aiResponseText,
   userMessage: user_message,
   kbContext: contextText,
   campaignContext: campaignContextText,
   logger,
+  failClosed,
 });
+
 
 if (!v.grounded) {
   // Prefer grounded rewrite; if missing, fall back to safe clarification
