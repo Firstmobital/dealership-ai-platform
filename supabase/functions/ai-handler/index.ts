@@ -3137,9 +3137,12 @@ ${personality.donts || "- None specified."}
     // PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
     // This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
     const kbHasPricingSignals =
-      looksLikePricingOrOfferContext(contextText) ||
-      (/\bvariant\b/i.test(contextText) &&
-        /\bprice\b|\b₹\b|\bon-road\b|\bex-showroom\b/i.test(contextText));
+    looksLikePricingOrOfferContext(contextText) ||
+    (
+      /\bvariant\b/i.test(contextText) &&
+      /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i
+    );
+  
 
     const campaignHasPricingSignals =
       looksLikePricingOrOfferContext(campaignContextText) ||
