@@ -22,7 +22,8 @@ const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY") || "";
 const OPENAI_MODEL_FAST = Deno.env.get("OPENAI_MODEL_FAST") || "gpt-4o-mini";
 const OPENAI_MODEL_MAIN = Deno.env.get("OPENAI_MODEL_MAIN") || "gpt-4o";
-const GEMINI_MODEL_FAST = Deno.env.get("GEMINI_MODEL_FAST") || "gemini-1.5-flash";
+const GEMINI_MODEL_FAST =
+  Deno.env.get("GEMINI_MODEL_FAST") || "gemini-1.5-flash";
 const GEMINI_MODEL_MAIN = Deno.env.get("GEMINI_MODEL_MAIN") || "gemini-1.5-pro";
 
 const AI_NO_REPLY_TOKEN = "<NO_REPLY>";
@@ -36,8 +37,8 @@ if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
   });
 }
 
-const KB_DISABLE_LEXICAL = (Deno.env.get("KB_DISABLE_LEXICAL") || "").toLowerCase() === "true";
-
+const KB_DISABLE_LEXICAL =
+  (Deno.env.get("KB_DISABLE_LEXICAL") || "").toLowerCase() === "true";
 
 /* ============================================================================
    CLIENTS
@@ -101,7 +102,6 @@ type KBScoredRow = {
   score: number;
 };
 
-
 type KBCandidate = {
   id: string;
   article_id: string;
@@ -118,10 +118,21 @@ function normalizeLexicalRank(r?: number): number {
   return Math.min(1, r / 2.5);
 }
 
-function combinedScore(sim?: number, rank?: number): number {
+function combinedScore(
+  sim?: number,
+  rank?: number,
+  intent: "pricing" | "offer" | "features" | "service" | "other" = "other"
+): number {
   const v = sim ?? 0;
   const l = normalizeLexicalRank(rank);
-  // vector slightly higher weight, lexical still meaningful
+
+  // Intent-aware weights:
+  // Pricing/offer needs lexical + exact matches more than embeddings.
+  if (intent === "pricing" || intent === "offer") {
+    return 0.6 * (sim ?? 0) + 0.4 * normalizeLexicalRank(rank);
+  }
+
+  // Features/specs usually fine with embeddings
   return 0.65 * v + 0.35 * l;
 }
 
@@ -182,7 +193,6 @@ function safeText(v: any): string {
   return typeof v === "string" ? v : "";
 }
 
-
 /* ============================================================================
    PHASE P3 — TOKEN BUDGET + MODEL ROUTING
 ============================================================================ */
@@ -198,7 +208,10 @@ function estimateTokensFromText(text: string): number {
 }
 
 function estimateTokensFromMessages(msgs: ChatMsg[]): number {
-  return (msgs || []).reduce((sum, m) => sum + estimateTokensFromText(m.content) + 4, 0);
+  return (msgs || []).reduce(
+    (sum, m) => sum + estimateTokensFromText(m.content) + 4,
+    0
+  );
 }
 
 function truncateTextToTokenLimit(text: string, maxTokens: number): string {
@@ -235,13 +248,21 @@ function extractPricingFocusedContext(text: string, maxChars: number): string {
   for (let i = 0; i < lines.length; i++) {
     if (isPricingLine(lines[i])) {
       // keep this line + 2 lines before/after for context
-      for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 2); j++) {
+      for (
+        let j = Math.max(0, i - 2);
+        j <= Math.min(lines.length - 1, i + 2);
+        j++
+      ) {
         keep.add(j);
       }
     }
   }
 
-  const picked = [...keep].sort((a, b) => a - b).map((i) => lines[i]).join("\n").trim();
+  const picked = [...keep]
+    .sort((a, b) => a - b)
+    .map((i) => lines[i])
+    .join("\n")
+    .trim();
 
   if (!picked) {
     // fallback: don’t return empty if we failed to detect pricing lines
@@ -250,7 +271,6 @@ function extractPricingFocusedContext(text: string, maxChars: number): string {
 
   return picked.length > maxChars ? picked.slice(0, maxChars) : picked;
 }
-
 
 function packHistoryByTokenBudget(params: {
   history: ChatMsg[];
@@ -277,13 +297,18 @@ function packHistoryByTokenBudget(params: {
   return { packed, usedTokens: used };
 }
 
-function modelTokenLimits(model: string): { maxContext: number; reserveOutput: number } {
+function modelTokenLimits(model: string): {
+  maxContext: number;
+  reserveOutput: number;
+} {
   // Safe defaults. You can tune per model later.
   // We keep a decent output reserve to avoid truncation mid-answer.
   const lower = (model || "").toLowerCase();
   if (lower.includes("4o")) return { maxContext: 16000, reserveOutput: 900 };
-  if (lower.includes("1.5-pro")) return { maxContext: 12000, reserveOutput: 900 };
-  if (lower.includes("1.5-flash")) return { maxContext: 8000, reserveOutput: 700 };
+  if (lower.includes("1.5-pro"))
+    return { maxContext: 12000, reserveOutput: 900 };
+  if (lower.includes("1.5-flash"))
+    return { maxContext: 8000, reserveOutput: 700 };
   return { maxContext: 8000, reserveOutput: 700 };
 }
 
@@ -318,7 +343,9 @@ function chooseRoutedModel(params: {
   // WhatsApp: default to fast unless the turn is clearly complex.
   const isComplex =
     len > 240 ||
-    /\b(compare|explain|why|how|difference|pros|cons|finance|loan|emi|features|spec|variant)\b/.test(lower);
+    /\b(compare|explain|why|how|difference|pros|cons|finance|loan|emi|features|spec|variant)\b/.test(
+      lower
+    );
 
   // kb_only: no need for big model — we should answer strictly from context.
   const preferFast =
@@ -570,7 +597,9 @@ async function validateGroundedness(params: {
   const { answer, userMessage, kbContext, campaignContext, logger } = params;
 
   // Nothing to validate against
-  const sources = `${(kbContext || "").trim()}\n\n${(campaignContext || "").trim()}`.trim();
+  const sources = `${(kbContext || "").trim()}\n\n${(
+    campaignContext || ""
+  ).trim()}`.trim();
   if (!sources) return { grounded: true };
 
   try {
@@ -587,8 +616,7 @@ async function validateGroundedness(params: {
         {
           role: "user",
           content: JSON.stringify({
-            task:
-  "Check whether the ANSWER contains any factual claims (prices, offers, timelines, specs, availability) that are NOT supported by SOURCES. If the ANSWER is purely a clarification question or a safe handoff (and makes no factual claims), mark it grounded=true. If not grounded, rewrite it to be fully grounded by removing unsupported specifics while staying helpful.",
+            task: "Check whether the ANSWER contains any factual claims (prices, offers, timelines, specs, availability) that are NOT supported by SOURCES. If the ANSWER is purely a clarification question or a safe handoff (and makes no factual claims), mark it grounded=true. If not grounded, rewrite it to be fully grounded by removing unsupported specifics while staying helpful.",
             userMessage,
             sources,
             answer,
@@ -607,8 +635,13 @@ async function validateGroundedness(params: {
     const json = JSON.parse(text);
 
     const grounded = Boolean(json.grounded);
-    const revised = typeof json.revised_answer === "string" ? json.revised_answer.trim() : undefined;
-    const issues = Array.isArray(json.issues) ? json.issues.map(String).slice(0, 6) : undefined;
+    const revised =
+      typeof json.revised_answer === "string"
+        ? json.revised_answer.trim()
+        : undefined;
+    const issues = Array.isArray(json.issues)
+      ? json.issues.map(String).slice(0, 6)
+      : undefined;
 
     if (!grounded) {
       logger.warn("[groundedness] ungrounded answer detected", { issues });
@@ -620,7 +653,7 @@ async function validateGroundedness(params: {
       error: String(e),
       failClosed: Boolean(params.failClosed),
     });
-  
+
     if (params.failClosed) {
       return {
         grounded: false,
@@ -629,12 +662,11 @@ async function validateGroundedness(params: {
         issues: ["validator_error_fail_closed"],
       };
     }
-  
+
     // Fail open only for low-risk queries
     return { grounded: true };
-  }  
+  }
 }
-
 
 /* ============================================================================
    PSF HELPERS
@@ -1235,16 +1267,21 @@ function containsPhrase(haystack: string, needle: string): boolean {
   return h.includes(n);
 }
 
-
 function packKbContext(params: {
   rows: KBScoredRow[];
-  maxChars: number;       // total KB budget
-  maxChunks: number;      // hard cap
-  maxChunkChars: number;  // per-chunk cap
+  maxChars: number; // total KB budget
+  maxChunks: number; // hard cap
+  maxChunkChars: number; // per-chunk cap
   maxPerArticle?: number; // diversity cap per article
 }): {
   context: string;
-  used: { id: string; article_id: string; title: string; similarity?: number; score: number }[];
+  used: {
+    id: string;
+    article_id: string;
+    title: string;
+    similarity?: number;
+    score: number;
+  }[];
 } {
   const {
     rows,
@@ -1266,7 +1303,8 @@ function packKbContext(params: {
   for (const r of rows) {
     if (!groups.has(r.article_id)) groups.set(r.article_id, []);
     groups.get(r.article_id)!.push(r);
-    if (!articleTitle.has(r.article_id)) articleTitle.set(r.article_id, r.title);
+    if (!articleTitle.has(r.article_id))
+      articleTitle.set(r.article_id, r.title);
   }
 
   const articleOrder = [...groups.entries()]
@@ -1279,7 +1317,13 @@ function packKbContext(params: {
     })
     .sort((a, b) => b.bestScore - a.bestScore);
 
-  const used: { id: string; article_id: string; title: string; similarity?: number; score: number }[] = [];
+  const used: {
+    id: string;
+    article_id: string;
+    title: string;
+    similarity?: number;
+    score: number;
+  }[] = [];
   const parts: string[] = [];
   const seen = new Set<string>();
   const usedCountByArticle = new Map<string, number>();
@@ -1313,7 +1357,8 @@ function packKbContext(params: {
       seen.add(key);
 
       // Trim chunk to reduce token waste
-      const chunk = raw.length > maxChunkChars ? raw.slice(0, maxChunkChars) : raw;
+      const chunk =
+        raw.length > maxChunkChars ? raw.slice(0, maxChunkChars) : raw;
 
       const title = r.title || articleTitle.get(a.article_id) || "KB";
       const block = `### ${title}\n${chunk}`;
@@ -1340,6 +1385,29 @@ function packKbContext(params: {
   return { context: parts.join("\n\n").trim(), used };
 }
 
+function articleMatchesIntent(
+  title: string,
+  intent: "pricing" | "offer" | "features" | "service" | "other"
+): boolean {
+  const t = title.toLowerCase();
+
+  if (intent === "pricing" || intent === "offer") {
+    return (
+      t.includes("price") ||
+      t.includes("pricing") ||
+      t.includes("on-road") ||
+      t.includes("ex-showroom") ||
+      t.includes("offer")
+    );
+  }
+
+  if (intent === "features") {
+    return t.includes("feature") || t.includes("spec") || t.includes("variant");
+  }
+
+  return true;
+}
+
 /* ============================================================================
    SEMANTIC KB RESOLVER (EMBEDDINGS-BASED)
 ============================================================================ */
@@ -1350,19 +1418,17 @@ async function rerankCandidates(params: {
 }) {
   const { query, candidates, logger } = params;
 
-  const scoreAt = (i: number) => candidates[Math.min(i, candidates.length - 1)]?.score ?? 0;
-const gap = scoreAt(0) - scoreAt(5); // compare #1 vs #6
-const looksHighRisk = looksLikePricingOrOfferContext(query);
+  const scoreAt = (i: number) =>
+    candidates[Math.min(i, candidates.length - 1)]?.score ?? 0;
+  const gap = scoreAt(0) - scoreAt(5); // compare #1 vs #6
+  const looksHighRisk = looksLikePricingOrOfferContext(query);
 
-// Rerank only when:
-// - high-risk query (pricing/offer/spec/policy-ish), OR
-// - the scores are “close” (ambiguous retrieval)
-const shouldRerank =
-  candidates.length > 6 &&
-  (looksHighRisk || gap < 0.08);
+  // Rerank only when:
+  // - high-risk query (pricing/offer/spec/policy-ish), OR
+  // - the scores are “close” (ambiguous retrieval)
+  const shouldRerank = candidates.length > 6 && (looksHighRisk || gap < 0.08);
 
-if (!shouldRerank) return candidates;
-
+  if (!shouldRerank) return candidates;
 
   const items = candidates.slice(0, 12).map((c, idx) => ({
     idx,
@@ -1475,14 +1541,11 @@ async function resolveKnowledgeContextSemantic(params: {
   try {
     // 1) Create embedding for user query (Phase 5: cache by org+model+text_hash)
     const EMBED_MODEL = "text-embedding-3-small";
-    const raw = (userMessage || "")
-  .trim()
-  .replace(/\s+/g, " ");
+    const raw = (userMessage || "").trim().replace(/\s+/g, " ");
 
-const normalized =
-  raw
-    .replace(/\bsmart\+/gi, "smart plus")
-    .replace(/\+/g, " plus ");
+    const normalized = raw
+      .replace(/\bsmart\+/gi, "smart plus")
+      .replace(/\+/g, " plus ");
 
     const textHash = await sha256Hex(normalized.toLowerCase());
 
@@ -1569,15 +1632,14 @@ const normalized =
     // Lexical always runs (even if vector hits) to catch exact strings
     let lexData: any[] = [];
     let lexErr: any = null;
-    
-    if (!KB_DISABLE_LEXICAL) {
-  const { data: lexDataRaw, error } = await runLexical();
-  lexErr = error;
-  lexData = (lexDataRaw ?? []) as any[];
-} else {
-  logger.info("[kb] lexical disabled; skipping lexical rpc");
-}
 
+    if (!KB_DISABLE_LEXICAL) {
+      const { data: lexDataRaw, error } = await runLexical();
+      lexErr = error;
+      lexData = (lexDataRaw ?? []) as any[];
+    } else {
+      logger.info("[kb] lexical disabled; skipping lexical rpc");
+    }
 
     if ((!vectorData.length && !lexData.length) || vectorErr) {
       // if vector errors out entirely, treat as no KB (don’t crash)
@@ -1628,7 +1690,12 @@ const normalized =
     const model = (params.vehicleModel || "").trim();
     const modelNorm = model ? normalizeForMatch(model) : "";
 
-    const used: { id: string; article_id: string; title: string; similarity: number }[] = [];
+    const used: {
+      id: string;
+      article_id: string;
+      title: string;
+      similarity: number;
+    }[] = [];
     const rejected: {
       id: string;
       article_id: string;
@@ -1642,14 +1709,73 @@ const normalized =
       baseScore: number;
       title: string;
       chunk: string;
+      intent: "pricing" | "offer" | "features" | "service" | "other";
     }): number {
       let score = params.baseScore;
 
+      const t = normalizeForMatch(params.title);
+      const c = normalizeForMatch(params.chunk);
+      const text = `${t} ${c}`;
+
+      // 1) Model boost (your existing logic)
       if (modelNorm) {
-        const t = normalizeForMatch(params.title);
-        const c = normalizeForMatch(params.chunk);
-        if (t.includes(modelNorm)) score += 0.05;
-        if (containsPhrase(c, modelNorm)) score += 0.03;
+        if (t.includes(modelNorm)) score += 0.06; // slightly stronger
+        if (containsPhrase(c, modelNorm)) score += 0.04;
+      }
+
+      // 2) Intent boost: force pricing queries to rank pricing docs higher
+      const pricingSignals = [
+        "price",
+        "pricing",
+        "ex showroom",
+        "ex-showroom",
+        "on road",
+        "on-road",
+        "esp",
+        "emi",
+        "rto",
+        "insurance",
+        "down payment",
+        "discount",
+        "offer",
+        "final deal",
+        "total",
+        "breakup",
+        "cost",
+        "tax",
+        "registration",
+        "fees",
+      ];
+
+      const featuresSignals = [
+        "feature",
+        "features",
+        "spec",
+        "specs",
+        "variant-wise features",
+        "equipment",
+        "safety",
+        "infotainment",
+        "interior",
+        "exterior",
+        "dimension",
+        "capacity",
+        "performance",
+        "mileage",
+        "engine",
+        "transmission",
+        "tyre",
+        "warranty",
+      ];
+
+      const isPricingish = pricingSignals.some((k) => text.includes(k));
+      const isFeaturesish = featuresSignals.some((k) => text.includes(k));
+
+      if (params.intent === "pricing" || params.intent === "offer") {
+        if (isPricingish) score += 0.12; // ✅ big bump for pricing articles
+        if (isFeaturesish) score -= 0.05; // ✅ slight penalty for feature docs
+      } else if (params.intent === "features") {
+        if (isFeaturesish) score += 0.08;
       }
 
       return score;
@@ -1687,24 +1813,25 @@ const normalized =
       }
 
       const sim = typeof r.similarity === "number" ? r.similarity : undefined;
-const rank = typeof r.rank === "number" ? r.rank : undefined;
+      const rank = typeof r.rank === "number" ? r.rank : undefined;
 
-const base = combinedScore(sim, rank);
+      const intent = params.intent || "other";
+      const baseScore = combinedScore(sim, rank, intent);
 
-viable.push({
-  id: r.id,
-  article_id: r.article_id,
-  title: r.title,
-  chunk,
-  similarity: sim,
-  rank,
-  score: boostScore({
-    baseScore: base,
-    title: r.title,
-    chunk,
-  }),
-});
-
+      viable.push({
+        id: r.id,
+        article_id: r.article_id,
+        title: r.title,
+        chunk,
+        similarity: sim,
+        rank,
+        score: boostScore({
+          baseScore,
+          title: r.title,
+          chunk,
+          intent,
+        }),
+      });
     }
 
     if (!viable.length) return null;
@@ -1713,7 +1840,6 @@ viable.push({
     viable.sort(
       (a, b) => b.score - a.score || (b.similarity ?? 0) - (a.similarity ?? 0)
     );
-    
 
     // Rerank top candidates for better precision
     const reranked = await rerankCandidates({
@@ -1741,18 +1867,17 @@ viable.push({
     // Determine confidence: strong vs weak (best-effort KB still allowed)
     const best = viable[0];
 
-// If lexical rank exists, let score drive confidence.
-// Vector similarity is optional.
-const hasLexicalEvidence = typeof best.rank === "number" && best.rank > 0;
-const hasVectorEvidence = typeof best.similarity === "number";
+    // If lexical rank exists, let score drive confidence.
+    // Vector similarity is optional.
+    const hasLexicalEvidence = typeof best.rank === "number" && best.rank > 0;
+    const hasVectorEvidence = typeof best.similarity === "number";
 
-const confidence: "strong" | "weak" =
-  best.score >= 0.62 ||
-  (hasVectorEvidence && best.similarity! >= SOFT_MIN_SIMILARITY) ||
-  (hasLexicalEvidence && best.score >= 0.55)
-    ? "strong"
-    : "weak";
-
+    const confidence: "strong" | "weak" =
+      best.score >= 0.62 ||
+      (hasVectorEvidence && best.similarity! >= SOFT_MIN_SIMILARITY) ||
+      (hasLexicalEvidence && best.score >= 0.55)
+        ? "strong"
+        : "weak";
 
     if (confidence === "weak") {
       logger.warn("[kb] semantic match weak; injecting best-effort KB", {
@@ -1763,33 +1888,49 @@ const confidence: "strong" | "weak" =
     }
 
     // 4) Build compact context from top rows with dedupe
-   // 4) Pack context by budget (dynamic, no sim metadata)
-   const intent = params.intent || "other";
-   const pricingMode = intent === "pricing" || intent === "offer";
-   
-   const packed = packKbContext({
-     rows: viable,
-     maxChars: pricingMode ? 16000 : 11000,
-     maxChunks: pricingMode ? 30 : 18,
-     maxChunkChars: pricingMode ? 4000 : 1200,
-     maxPerArticle: pricingMode ? 12 : 3,
-   });
-   
+    // 4) Pack context by budget (dynamic, no sim metadata)
+    const intent = params.intent || "other";
+    const pricingMode = intent === "pricing" || intent === "offer";
 
-const context = packed.context;
-if (!context) return null;
+    // 🔒 Pricing requires full-article coverage
+    if (pricingMode) {
+      const byArticle = new Map<string, KBScoredRow[]>();
+      for (const r of viable) {
+        if (!byArticle.has(r.article_id)) byArticle.set(r.article_id, []);
+        byArticle.get(r.article_id)!.push(r);
+      }
 
-const usedArticleIds = new Set<string>(packed.used.map((u) => u.article_id));
+      // Prefer articles with many pricing rows (variant tables)
+      viable.sort((a, b) => {
+        const ac = byArticle.get(a.article_id)?.length ?? 0;
+        const bc = byArticle.get(b.article_id)?.length ?? 0;
+        return bc - ac;
+      });
+    }
 
-for (const u of packed.used) {
-  used.push({
-    id: u.id,
-    article_id: u.article_id,
-    similarity: u.similarity ?? 0,
-    title: u.title,
-  });
-}
+    const packed = packKbContext({
+      rows: viable,
+      maxChars: pricingMode ? 16000 : 11000,
+      maxChunks: pricingMode ? 30 : 18,
+      maxChunkChars: pricingMode ? 4000 : 1200,
+      maxPerArticle: pricingMode ? 12 : 3,
+    });
 
+    const context = packed.context;
+    if (!context) return null;
+
+    const usedArticleIds = new Set<string>(
+      packed.used.map((u) => u.article_id)
+    );
+
+    for (const u of packed.used) {
+      used.push({
+        id: u.id,
+        article_id: u.article_id,
+        similarity: u.similarity ?? 0,
+        title: u.title,
+      });
+    }
 
     logger.info("[kb] semantic injected", {
       chars: context.length,
@@ -1849,7 +1990,6 @@ async function resolveKnowledgeContextLexicalOnly(params: {
     return null;
   }
   if (!data?.length) return null;
-  
 
   // Convert to KBScoredRow so we can reuse the same packing/diversification.
   const rows: KBScoredRow[] = (data as any[]).map((r) => {
@@ -2519,7 +2659,10 @@ serve(async (req: Request): Promise<Response> => {
     if (!isGreetingMessage(user_message)) {
       // Small, conservative pre-charge: user message + baseline.
       // (We top-up later after prompt/context packing.)
-      prechargedTokens = Math.max(0, estimateTokensFromText(user_message) + 600);
+      prechargedTokens = Math.max(
+        0,
+        estimateTokensFromText(user_message) + 600
+      );
 
       try {
         await supabase.rpc("consume_ai_quota", {
@@ -2542,7 +2685,9 @@ serve(async (req: Request): Promise<Response> => {
           );
         }
 
-        logger.error("[rate-limit] consume_ai_quota failed (precharge)", { error: err });
+        logger.error("[rate-limit] consume_ai_quota failed (precharge)", {
+          error: err,
+        });
         // Fail-open for unexpected RPC failures to avoid production outages.
       }
     }
@@ -2770,10 +2915,9 @@ ${personality.donts || "- None specified."}
     const lockedFuel = locked?.fuel_type ?? null;
 
     const shouldContinue =
-  (lockedTopic || lockedModel) &&
-  isShortFollowupMessage(user_message) &&
-  !isExplicitTopicChange(user_message);
-
+      (lockedTopic || lockedModel) &&
+      isShortFollowupMessage(user_message) &&
+      !isExplicitTopicChange(user_message);
 
     if (shouldContinue) {
       aiExtract = {
@@ -2904,10 +3048,11 @@ ${personality.donts || "- None specified."}
       userMessage: semanticQueryText,
       organizationId,
       logger,
-      vehicleModel: aiExtract.vehicle_model ?? conv.ai_last_entities?.model ?? null,
+      vehicleModel:
+        aiExtract.vehicle_model ?? conv.ai_last_entities?.model ?? null,
       intent: aiExtract.intent,
       fuelType: aiExtract.fuel_type ?? null,
-    });    
+    });
 
     if (semanticKB?.context) {
       contextText = semanticKB.context;
@@ -2929,7 +3074,6 @@ ${personality.donts || "- None specified."}
             organizationId,
             logger,
           });
-    
 
       if (lexicalOnly?.context) {
         contextText = lexicalOnly.context;
@@ -2992,7 +3136,11 @@ ${personality.donts || "- None specified."}
 
     // PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
     // This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
-    const kbHasPricingSignals = looksLikePricingOrOfferContext(contextText);
+    const kbHasPricingSignals =
+      looksLikePricingOrOfferContext(contextText) ||
+      (/\bvariant\b/i.test(contextText) &&
+        /\bprice\b|\b₹\b|\bon-road\b|\bex-showroom\b/i.test(contextText));
+
     const campaignHasPricingSignals =
       looksLikePricingOrOfferContext(campaignContextText) ||
       looksLikePricingOrOfferContext(
@@ -3001,7 +3149,8 @@ ${personality.donts || "- None specified."}
 
     const pricingEstimateRequired =
       requiresAuthoritativeKB &&
-      !(kbHasPricingSignals || campaignHasPricingSignals);
+      !kbHasPricingSignals &&
+      semanticKB?.confidence !== "strong";
 
     if (pricingEstimateRequired) {
       logger.warn(
@@ -3178,8 +3327,12 @@ ${personality.donts || "- None specified."}
     );
 
     // KB meta for best-effort options
-    const kbConfidence: "strong" | "weak" | "none" =
-      (kbMatchMeta?.confidence as any) ?? (kbFound ? "strong" : "none");
+    const kbConfidence: "strong" | "weak" | "none" = kbMatchMeta?.confidence
+      ? (kbMatchMeta.confidence as any)
+      : kbFound
+      ? "weak"
+      : "none";
+
     const kbOptionTitles: string[] = (kbMatchMeta?.option_titles ?? [])
       .filter(Boolean)
       .slice(0, 6);
@@ -3187,28 +3340,27 @@ ${personality.donts || "- None specified."}
     // P3: Keep full KB/Campaign context for validation, but trim what we send to the model
     // to stay within budget and reduce cost.
     const highRiskIntentForContext =
-  aiExtract.intent === "pricing" || aiExtract.intent === "offer";
+      aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-const kbContextForPrompt = highRiskIntentForContext
-  ? extractPricingFocusedContext(
-      contextText,
-      channel === "whatsapp" ? 9000 : 14000
-    )
-  : truncateTextToTokenLimit(
-      contextText,
-      channel === "whatsapp" ? 1200 : 3200
-    );
+    const kbContextForPrompt = highRiskIntentForContext
+      ? extractPricingFocusedContext(
+          contextText,
+          channel === "whatsapp" ? 9000 : 14000
+        )
+      : truncateTextToTokenLimit(
+          contextText,
+          channel === "whatsapp" ? 1200 : 3200
+        );
 
-const campaignContextForPrompt = highRiskIntentForContext
-  ? extractPricingFocusedContext(
-      campaignContextText,
-      channel === "whatsapp" ? 5000 : 9000
-    )
-  : truncateTextToTokenLimit(
-      campaignContextText,
-      channel === "whatsapp" ? 700 : 1800
-    );
-
+    const campaignContextForPrompt = highRiskIntentForContext
+      ? extractPricingFocusedContext(
+          campaignContextText,
+          channel === "whatsapp" ? 5000 : 9000
+        )
+      : truncateTextToTokenLimit(
+          campaignContextText,
+          channel === "whatsapp" ? 700 : 1800
+        );
 
     // 11) System prompt
     const systemPrompt = `
@@ -3397,7 +3549,7 @@ Respond now to the customer's latest message only.
 
     // P3: Model routing (cheap model for routine turns, bigger model only when needed)
     const routedModel = forcedReplyText
-      ? ''
+      ? ""
       : chooseRoutedModel({
           provider: aiSettings!.provider,
           configuredModel: aiSettings!.model,
@@ -3409,7 +3561,7 @@ Respond now to the customer's latest message only.
         });
 
     // P3: Dynamic context packing (token-budgeted)
-    const limits = modelTokenLimits(routedModel || aiSettings?.model || '');
+    const limits = modelTokenLimits(routedModel || aiSettings?.model || "");
     const systemTokens = estimateTokensFromText(systemPrompt);
     const maxHistoryTokens = Math.max(
       0,
@@ -3432,35 +3584,35 @@ Respond now to the customer's latest message only.
 
       if (topUp > 0) {
         try {
-          await supabase.rpc('consume_ai_quota', {
+          await supabase.rpc("consume_ai_quota", {
             p_organization_id: organizationId,
             p_estimated_tokens: topUp,
           });
         } catch (err: any) {
-          const msg = String(err?.message || err || '');
-          if (msg.toLowerCase().includes('ai_rate_limit_exceeded')) {
-            logger.warn('[rate-limit] exceeded (top-up)', {
+          const msg = String(err?.message || err || "");
+          if (msg.toLowerCase().includes("ai_rate_limit_exceeded")) {
+            logger.warn("[rate-limit] exceeded (top-up)", {
               total_estimated_tokens: totalEstimate,
               precharged_tokens: prechargedTokens,
             });
 
             return new Response(
               JSON.stringify({
-                error: 'rate_limit_exceeded',
+                error: "rate_limit_exceeded",
                 request_id,
               }),
-              { status: 429, headers: { 'Content-Type': 'application/json' } }
+              { status: 429, headers: { "Content-Type": "application/json" } }
             );
           }
 
-          logger.error('[rate-limit] consume_ai_quota failed (top-up)', {
+          logger.error("[rate-limit] consume_ai_quota failed (top-up)", {
             error: err,
           });
           // Fail-open on unexpected errors.
         }
       }
 
-      logger.info('[token-budget] packed', {
+      logger.info("[token-budget] packed", {
         model: routedModel,
         system_tokens_est: systemTokens,
         history_tokens_est: packedHistory.usedTokens,
@@ -3489,43 +3641,40 @@ Respond now to the customer's latest message only.
           logger,
         });
 
-    let aiResponseText = forcedReplyText ?? (aiResult?.text ?? fallbackMessage);
+    let aiResponseText = forcedReplyText ?? aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
     // ------------------------------------------------------------------
-// REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
-// ------------------------------------------------------------------
-const shouldValidate =
-Boolean(contextText?.trim() || campaignContextText?.trim()) &&
-aiResponseText !== fallbackMessage;
+    // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
+    // ------------------------------------------------------------------
+    const shouldValidate =
+      Boolean(contextText?.trim() || campaignContextText?.trim()) &&
+      aiResponseText !== fallbackMessage;
 
-if (shouldValidate) {
-  const highRiskIntent =
-  aiExtract.intent === "pricing" || aiExtract.intent === "offer";
+    if (shouldValidate) {
+      const highRiskIntent =
+        aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-// Only fail-close when we do NOT have authoritative pricing signals in KB/Campaign
-// (i.e. when the model might be guessing).
-const failClosed = highRiskIntent && pricingEstimateRequired;
+      // Only fail-close when we do NOT have authoritative pricing signals in KB/Campaign
+      // (i.e. when the model might be guessing).
+      const failClosed = highRiskIntent && pricingEstimateRequired;
 
+      const v = await validateGroundedness({
+        answer: aiResponseText,
+        userMessage: user_message,
+        kbContext: contextText,
+        campaignContext: campaignContextText,
+        logger,
+        failClosed,
+      });
 
-const v = await validateGroundedness({
-  answer: aiResponseText,
-  userMessage: user_message,
-  kbContext: contextText,
-  campaignContext: campaignContextText,
-  logger,
-  failClosed,
-});
-
-
-if (!v.grounded) {
-  // Prefer grounded rewrite; if missing, fall back to safe clarification
-  aiResponseText =
-    v.revised_answer ||
-    "I can help — just confirm the exact variant (fuel + transmission) and I’ll share the correct pricing from the knowledge base.";
-}
-}
-
+      if (!v.grounded) {
+        // Prefer grounded rewrite; if missing, fall back to safe clarification
+        aiResponseText =
+          v.revised_answer ||
+          "I can help — just confirm the exact variant (fuel + transmission) and I’ll share the correct pricing from the knowledge base.";
+      }
+    }
 
     // ------------------------------------------------------------------
     // GROUNDEDNESS VALIDATOR (HIGH-RISK: pricing/offer/spec/policy)
@@ -3534,9 +3683,15 @@ if (!v.grounded) {
     const highRiskIntent =
       aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-    if (highRiskIntent && pricingEstimateRequired) {
-      // If the model still tried to output numbers/offers, force safe behavior.
+    // Block pricing-style answers ONLY when pricing is truly unsupported by KB or campaign
+    if (
+      highRiskIntent &&
+      pricingEstimateRequired &&
+      !kbHasPricingSignals &&
+      !campaignHasPricingSignals
+    ) {
       const hasAnyNumber = /\d/.test(aiResponseText);
+
       if (answerLooksLikePricingOrOffer(aiResponseText) || hasAnyNumber) {
         logger.warn("[validator] blocked unsupported pricing-style answer", {
           intent: aiExtract.intent,
@@ -3547,7 +3702,6 @@ if (!v.grounded) {
 
         aiResponseText =
           "I can help — just confirm the exact variant (fuel + transmission) and I’ll share the correct quote from the knowledge base.";
-
       }
     }
 
