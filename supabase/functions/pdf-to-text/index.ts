@@ -263,10 +263,14 @@ serve(async (req) => {
     /* --------------------------------------------------
        2) Upload PDF to OpenAI Files (used by Responses input_file)
     -------------------------------------------------- */
-    const uploadedFile = await openai.files.create({
-      file: new Blob([pdfBytes], { type: "application/pdf" }),
-      purpose: "assistants",
-    });
+    // ✅ Create a File (must include a filename)
+const file = new File([pdfBytes], "source.pdf", { type: "application/pdf" });
+
+const uploadedFile = await openai.files.create({
+  file,
+  purpose: "assistants",
+});
+
 
     /* --------------------------------------------------
        3) DIGITAL TEXT EXTRACTION (fast path)
