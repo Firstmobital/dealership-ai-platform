@@ -40,7 +40,6 @@ const PROJECT_URL = Deno.env.get("PROJECT_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
 
 if (!OPENAI_API_KEY || !PROJECT_URL || !SERVICE_ROLE_KEY) {
-  // Fail fast on deploy misconfig, but still return JSON in handler too.
   console.error(
     "[pdf-to-text] Missing env: OPENAI_API_KEY / PROJECT_URL / SERVICE_ROLE_KEY",
   );
@@ -81,6 +80,10 @@ function normalizeStr(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const s = v.trim();
   return s.length ? s : null;
+}
+
+function bytesToFile(bytes: Uint8Array, filename: string, mime: string) {
+  return new File([bytes], filename, { type: mime });
 }
 
 async function safeMarkProcessing(
@@ -261,16 +264,14 @@ serve(async (req) => {
     }
 
     /* --------------------------------------------------
-       2) Upload PDF to OpenAI Files (used by Responses input_file)
+       2) EDGE-SAFE: pass the PDF directly to Responses API
+       - DO NOT use openai.files.create() (not reliable in Edge/ESM)
     -------------------------------------------------- */
-    // ✅ Create a File (must include a filename)
-const file = new File([pdfBytes], "source.pdf", { type: "application/pdf" });
-
-const uploadedFile = await openai.files.create({
-  file,
-  purpose: "assistants",
-});
-
+    const pdfFile = bytesToFile(
+      pdfBytes,
+      "source.pdf",
+      a.file_mime_type ?? "application/pdf",
+    );
 
     /* --------------------------------------------------
        3) DIGITAL TEXT EXTRACTION (fast path)
@@ -281,7 +282,10 @@ const uploadedFile = await openai.files.create({
         {
           role: "user",
           content: [
-            { type: "input_file", file_id: uploadedFile.id },
+            {
+              type: "input_file",
+              file: pdfFile,
+            },
             {
               type: "input_text",
               text:
@@ -297,7 +301,7 @@ const uploadedFile = await openai.files.create({
 
     /* --------------------------------------------------
        4) OCR FALLBACK (scanned PDFs)
-       - Important: still pass the same file_id, just a different instruction.
+       - Same file, different instruction.
     -------------------------------------------------- */
     if (text.length < 200) {
       used_ocr = true;
@@ -308,7 +312,10 @@ const uploadedFile = await openai.files.create({
           {
             role: "user",
             content: [
-              { type: "input_file", file_id: uploadedFile.id },
+              {
+                type: "input_file",
+                file: pdfFile,
+              },
               {
                 type: "input_text",
                 text:
@@ -348,7 +355,6 @@ const uploadedFile = await openai.files.create({
     }
 
     // P1: enqueue embedding as a background job (best-effort).
-    // This decouples heavy embedding from the user-facing extraction request.
     try {
       await supabaseAdmin.from("background_jobs").insert({
         organization_id,
@@ -358,7 +364,6 @@ const uploadedFile = await openai.files.create({
         run_at: new Date().toISOString(),
       });
     } catch (e) {
-      // Do not fail extraction if queue insert fails.
       console.warn("[pdf-to-text] failed to enqueue embed_article job", e);
     }
 
