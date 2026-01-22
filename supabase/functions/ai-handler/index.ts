@@ -36,6 +36,9 @@ if (!PROJECT_URL || !SERVICE_ROLE_KEY) {
   });
 }
 
+const KB_DISABLE_LEXICAL = (Deno.env.get("KB_DISABLE_LEXICAL") || "").toLowerCase() === "true";
+
+
 /* ============================================================================
    CLIENTS
 ============================================================================ */
@@ -205,6 +208,49 @@ function truncateTextToTokenLimit(text: string, maxTokens: number): string {
   // Trim with a small safety margin to avoid overshooting.
   return (text || "").slice(0, Math.max(0, approxMaxChars - 80)).trim();
 }
+
+function extractPricingFocusedContext(text: string, maxChars: number): string {
+  const src = (text || "").trim();
+  if (!src) return "";
+
+  // Keep lines that likely contain pricing + a little neighborhood context.
+  const lines = src.split("\n");
+  const keep = new Set<number>();
+
+  const isPricingLine = (l: string) => {
+    const t = l.toLowerCase();
+    return (
+      t.includes("₹") ||
+      t.includes("rs") ||
+      t.includes("inr") ||
+      t.includes("ex-showroom") ||
+      t.includes("on-road") ||
+      t.includes("on road") ||
+      t.includes("emi") ||
+      t.includes("discount") ||
+      /\d/.test(l) // any numeric signal
+    );
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    if (isPricingLine(lines[i])) {
+      // keep this line + 2 lines before/after for context
+      for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 2); j++) {
+        keep.add(j);
+      }
+    }
+  }
+
+  const picked = [...keep].sort((a, b) => a - b).map((i) => lines[i]).join("\n").trim();
+
+  if (!picked) {
+    // fallback: don’t return empty if we failed to detect pricing lines
+    return src.slice(0, Math.min(maxChars, src.length));
+  }
+
+  return picked.length > maxChars ? picked.slice(0, maxChars) : picked;
+}
+
 
 function packHistoryByTokenBudget(params: {
   history: ChatMsg[];
@@ -542,7 +588,7 @@ async function validateGroundedness(params: {
           role: "user",
           content: JSON.stringify({
             task:
-              "Check whether the ANSWER is fully supported by SOURCES. If not, rewrite it to be fully grounded, removing unsupported specifics (numbers, offers, timelines, specs). Keep it helpful and dealership-friendly.",
+  "Check whether the ANSWER contains any factual claims (prices, offers, timelines, specs, availability) that are NOT supported by SOURCES. If the ANSWER is purely a clarification question or a safe handoff (and makes no factual claims), mark it grounded=true. If not grounded, rewrite it to be fully grounded by removing unsupported specifics while staying helpful.",
             userMessage,
             sources,
             answer,
@@ -1385,6 +1431,8 @@ async function resolveKnowledgeContextSemantic(params: {
   organizationId: string;
   logger: ReturnType<typeof createLogger>;
   vehicleModel?: string | null;
+  intent?: "pricing" | "offer" | "features" | "service" | "other";
+  fuelType?: string | null;
 }): Promise<{
   context: string;
   article_ids: string[];
@@ -1427,7 +1475,15 @@ async function resolveKnowledgeContextSemantic(params: {
   try {
     // 1) Create embedding for user query (Phase 5: cache by org+model+text_hash)
     const EMBED_MODEL = "text-embedding-3-small";
-    const normalized = (userMessage || "").trim().replace(/\s+/g, " ");
+    const raw = (userMessage || "")
+  .trim()
+  .replace(/\s+/g, " ");
+
+const normalized =
+  raw
+    .replace(/\bsmart\+/gi, "smart plus")
+    .replace(/\+/g, " plus ");
+
     const textHash = await sha256Hex(normalized.toLowerCase());
 
     // Cache lookup (service-role table; never blocks if it fails)
@@ -1511,8 +1567,17 @@ async function resolveKnowledgeContextSemantic(params: {
     }
 
     // Lexical always runs (even if vector hits) to catch exact strings
-    const { data: lexDataRaw, error: lexErr } = await runLexical();
-    const lexData = (lexDataRaw ?? []) as any[];
+    let lexData: any[] = [];
+    let lexErr: any = null;
+    
+    if (!KB_DISABLE_LEXICAL) {
+  const { data: lexDataRaw, error } = await runLexical();
+  lexErr = error;
+  lexData = (lexDataRaw ?? []) as any[];
+} else {
+  logger.info("[kb] lexical disabled; skipping lexical rpc");
+}
+
 
     if ((!vectorData.length && !lexData.length) || vectorErr) {
       // if vector errors out entirely, treat as no KB (don’t crash)
@@ -1699,15 +1764,17 @@ const confidence: "strong" | "weak" =
 
     // 4) Build compact context from top rows with dedupe
    // 4) Pack context by budget (dynamic, no sim metadata)
-const MAX_KB_CHARS = 11000;
-
-const packed = packKbContext({
-  rows: viable,         // already reranked
-  maxChars: MAX_KB_CHARS,
-  maxChunks: 18,        // bigger than fixed-8, but budget controlled
-  maxChunkChars: 1200,  // prevents giant chunks
-  maxPerArticle: 3,     // diversify across articles
-});
+   const intent = params.intent || "other";
+   const pricingMode = intent === "pricing" || intent === "offer";
+   
+   const packed = packKbContext({
+     rows: viable,
+     maxChars: pricingMode ? 16000 : 11000,
+     maxChunks: pricingMode ? 30 : 18,
+     maxChunkChars: pricingMode ? 4000 : 1200,
+     maxPerArticle: pricingMode ? 12 : 3,
+   });
+   
 
 const context = packed.context;
 if (!context) return null;
@@ -1763,6 +1830,7 @@ async function resolveKnowledgeContextLexicalOnly(params: {
   logger: ReturnType<typeof createLogger>;
 }): Promise<{ context: string; article_ids: string[] } | null> {
   const { userMessage, organizationId, logger } = params;
+  if (KB_DISABLE_LEXICAL) return null;
   const q = (userMessage || "").trim().replace(/\s+/g, " ");
   if (!q) return null;
 
@@ -1776,7 +1844,12 @@ async function resolveKnowledgeContextLexicalOnly(params: {
     }
   );
 
-  if (error || !data?.length) return null;
+  if (error) {
+    logger.warn("[kb] lexical-only rpc failed", { error });
+    return null;
+  }
+  if (!data?.length) return null;
+  
 
   // Convert to KBScoredRow so we can reuse the same packing/diversification.
   const rows: KBScoredRow[] = (data as any[]).map((r) => {
@@ -2697,9 +2770,10 @@ ${personality.donts || "- None specified."}
     const lockedFuel = locked?.fuel_type ?? null;
 
     const shouldContinue =
-      lockedTopic &&
-      isShortFollowupMessage(user_message) &&
-      !isExplicitTopicChange(user_message);
+  (lockedTopic || lockedModel) &&
+  isShortFollowupMessage(user_message) &&
+  !isExplicitTopicChange(user_message);
+
 
     if (shouldContinue) {
       aiExtract = {
@@ -2830,9 +2904,10 @@ ${personality.donts || "- None specified."}
       userMessage: semanticQueryText,
       organizationId,
       logger,
-      vehicleModel:
-        aiExtract.vehicle_model ?? conv.ai_last_entities?.model ?? null,
-    });
+      vehicleModel: aiExtract.vehicle_model ?? conv.ai_last_entities?.model ?? null,
+      intent: aiExtract.intent,
+      fuelType: aiExtract.fuel_type ?? null,
+    });    
 
     if (semanticKB?.context) {
       contextText = semanticKB.context;
@@ -2846,12 +2921,15 @@ ${personality.donts || "- None specified."}
         option_titles: semanticKB.option_titles,
       };
     } else {
-      // 10B) Deterministic fallback (KEEP EXISTING LOGIC)
-      const lexicalOnly = await resolveKnowledgeContextLexicalOnly({
-        userMessage: user_message,
-        organizationId,
-        logger,
-      });
+      // 10B) Deterministic fallback (lexical-only) — optional
+      const lexicalOnly = KB_DISABLE_LEXICAL
+        ? null
+        : await resolveKnowledgeContextLexicalOnly({
+            userMessage: user_message,
+            organizationId,
+            logger,
+          });
+    
 
       if (lexicalOnly?.context) {
         contextText = lexicalOnly.context;
@@ -3108,15 +3186,29 @@ ${personality.donts || "- None specified."}
 
     // P3: Keep full KB/Campaign context for validation, but trim what we send to the model
     // to stay within budget and reduce cost.
-    const kbContextForPrompt = truncateTextToTokenLimit(
+    const highRiskIntentForContext =
+  aiExtract.intent === "pricing" || aiExtract.intent === "offer";
+
+const kbContextForPrompt = highRiskIntentForContext
+  ? extractPricingFocusedContext(
+      contextText,
+      channel === "whatsapp" ? 9000 : 14000
+    )
+  : truncateTextToTokenLimit(
       contextText,
       channel === "whatsapp" ? 1200 : 3200
     );
 
-    const campaignContextForPrompt = truncateTextToTokenLimit(
+const campaignContextForPrompt = highRiskIntentForContext
+  ? extractPricingFocusedContext(
+      campaignContextText,
+      channel === "whatsapp" ? 5000 : 9000
+    )
+  : truncateTextToTokenLimit(
       campaignContextText,
       channel === "whatsapp" ? 700 : 1800
     );
+
 
     // 11) System prompt
     const systemPrompt = `
@@ -3408,10 +3500,13 @@ Boolean(contextText?.trim() || campaignContextText?.trim()) &&
 aiResponseText !== fallbackMessage;
 
 if (shouldValidate) {
-  const failClosed =
-  answerLooksLikePricingOrOffer(user_message) ||
-  aiExtract.intent === "pricing" ||
-  aiExtract.intent === "offer";
+  const highRiskIntent =
+  aiExtract.intent === "pricing" || aiExtract.intent === "offer";
+
+// Only fail-close when we do NOT have authoritative pricing signals in KB/Campaign
+// (i.e. when the model might be guessing).
+const failClosed = highRiskIntent && pricingEstimateRequired;
+
 
 const v = await validateGroundedness({
   answer: aiResponseText,
@@ -3427,7 +3522,7 @@ if (!v.grounded) {
   // Prefer grounded rewrite; if missing, fall back to safe clarification
   aiResponseText =
     v.revised_answer ||
-    "I can help — just confirm the exact variant and city, and I’ll share the correct details. If you want, I can connect you to a sales advisor to confirm the latest info.";
+    "I can help — just confirm the exact variant (fuel + transmission) and I’ll share the correct pricing from the knowledge base.";
 }
 }
 
@@ -3451,7 +3546,8 @@ if (!v.grounded) {
         });
 
         aiResponseText =
-          "I can help — just confirm the exact variant and city, and I’ll share the correct quote. If you want, I can connect you to a sales advisor to confirm the latest on-road price.";
+          "I can help — just confirm the exact variant (fuel + transmission) and I’ll share the correct quote from the knowledge base.";
+
       }
     }
 
