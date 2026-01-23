@@ -193,6 +193,8 @@ function safeText(v: any): string {
   return typeof v === "string" ? v : "";
 }
 
+// Dealership default city (business rule)
+const DEFAULT_CITY = "Jaipur";
 /* ============================================================================
    INTENT HEURISTICS (FAILSAFE)
 ============================================================================ */
@@ -210,6 +212,9 @@ function inferIntentHeuristic(userMessage: string): {
   const pricingKeys = [
     "price",
     "pricing",
+    "prize",
+    "onroad",
+    "exshowroom",
     "on road",
     "on-road",
     "ex showroom",
@@ -225,6 +230,18 @@ function inferIntentHeuristic(userMessage: string): {
     "quote",
     "breakup",
     "cost",
+    // Hindi / Hinglish
+    "कीमत",
+    "क़ीमत",
+    "दाम",
+    "प्राइस",
+    "price kya",
+    "price kya hai",
+    "on road price",
+    "ऑन रोड",
+    "ऑन-रोड",
+    "एक्स शोरूम",
+    "एक्स-शोरूम",
   ];
   const offerKeys = [
     "discount",
@@ -235,6 +252,13 @@ function inferIntentHeuristic(userMessage: string): {
     "exchange",
     "corporate",
     "loyalty",
+    // Hindi / Hinglish
+    "डिस्काउंट",
+    "ऑफर",
+    "स्कीम",
+    "scheme kya",
+    "koi offer",
+    "best offer",
   ];
   const featuresKeys = [
     "feature",
@@ -756,7 +780,7 @@ async function validateGroundedness(params: {
 async function loadOpenPsfCaseByConversation(conversationId: string) {
   const { data } = await supabase
     .from("psf_cases")
-    .select("id, campaign_id, sentiment")
+    .select("id, campaign_id, sentiment, first_customer_reply_at")
     .eq("conversation_id", conversationId)
     .eq("resolution_status", "open")
     .maybeSingle();
@@ -1855,6 +1879,19 @@ async function resolveKnowledgeContextSemantic(params: {
       if (params.intent === "pricing") {
         if (isPricingish) score += 0.12; // ✅ big bump for pricing articles
         if (isFeaturesish) score -= 0.05; // ✅ slight penalty for feature docs
+
+        // If an "offers" doc matches strongly, allow it but don't let it outrank pricing tables.
+        const offerSignals = [
+          "discount",
+          "offer",
+          "scheme",
+          "special offer",
+          "exchange",
+          "corporate",
+          "loyalty",
+        ];
+        const isOfferish = offerSignals.some((k) => text.includes(k));
+        if (isOfferish) score += 0.03; // ✅ small bump only (keeps it secondary for pricing intent)
       } else if (params.intent === "offer") {
         // Offers should prefer explicit offer/discount docs over generic pricing tables.
         const offerSignals = [
@@ -3037,6 +3074,15 @@ ${personality.donts || "- None specified."}
         logger,
       });
       logger.info("[ai-extract] result", aiExtract);
+
+      // Business rule: we always quote Jaipur unless specified otherwise (but UX: don't ask)
+      // If you don't have a city field in aiExtract, you can skip this block safely.
+      if (
+        (aiExtract as any).city == null ||
+        String((aiExtract as any).city).trim() === ""
+      ) {
+        (aiExtract as any).city = DEFAULT_CITY;
+      }
       // Heuristic intent failsafe: if AI extraction is missing/other, infer from keywords.
       // This prevents pricing/offer turns from being treated as "other" and getting blocked/hedged.
       const heuristic = inferIntentHeuristic(user_message);
@@ -3249,9 +3295,9 @@ ${personality.donts || "- None specified."}
     // PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
     // This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
     const kbHasPricingSignals =
-      looksLikePricingOrOfferContext(contextText) ||
-      (/\bvariant\b/i.test(contextText) &&
-        /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i);
+  looksLikePricingOrOfferContext(contextText) ||
+  (/\bvariant\b/i.test(contextText) &&
+    /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i.test(contextText));
 
     const campaignHasPricingSignals =
       looksLikePricingOrOfferContext(campaignContextText) ||
@@ -3493,7 +3539,21 @@ IMPORTANT:
   - Treat user-provided prices/discounts/offers/availability/timelines as UNVERIFIED unless the same info appears in Knowledge Context or Campaign Context.
   - If the user asks you to CONFIRM their claim ("right?", "correct?"), say you can't verify it from authorized sources and ask ONE short clarifying question (variant/city) or offer a human handoff.
   - If the user is ASKING you for pricing/offers (and they did NOT provide numbers), answer confidently using verified numbers from Knowledge/Campaign context.
+  - HARD DO-NOT-SAY:
+  - Do NOT say "I can't verify", "I cannot verify", "can't confirm", "mujhe verify nahi", "मैं verify नहीं कर सकती" unless the USER first provided a specific number/claim you are being asked to confirm.
   - Never learn dealership facts from chat history or user repetition.
+
+ - PRICING RESPONSE FORMAT (WHEN KB HAS VERIFIED NUMBERS):
+   - If the user asked for pricing and verified numbers exist in KB/Campaign context:
+     1) First line MUST be:
+        "<Model> <Variant> (<Fuel/Transmission>) – On-road Jaipur: ₹<OnRoad>"
+     2) Second line MUST be:
+        "Breakup: Ex-showroom ₹…, Insurance ₹…, RTO ₹…, TCS ₹…"
+        (Include only fields present in sources)
+     3) Third line (optional, 1 line max):
+        "Also, special offers are currently running on select variants (e.g., Smart). Want me to share the best offer options too?"
+        IMPORTANT: this offers line must come AFTER pricing, not before.
+   - If verified numbers are NOT present, ask ONE short clarifying question (variant only) OR say it's not available in KB and sales team will confirm.
 
 ------------------------
 DEALERSHIP INFORMATION
