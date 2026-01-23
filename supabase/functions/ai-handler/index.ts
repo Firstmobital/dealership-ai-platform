@@ -193,6 +193,266 @@ function safeText(v: any): string {
   return typeof v === "string" ? v : "";
 }
 
+
+/* ============================================================================
+   PRICING/OFFER PARSERS (KB → STRUCTURED ANSWERS)
+============================================================================ */
+type OfferEntry = {
+  model: string;
+  variant: string;
+  fuel: string | null;
+  transmission: string | null;
+  manufacturing_year: string | null;
+  color: string | null;
+  original_price: string | null;
+  discounted_price: string | null;
+  total_discount: string | null;
+};
+
+function normalizePriceToken(v: string): string {
+  // Keep only digits (so "₹10,19,990" == "1019990")
+  return (v || "").replace(/[^0-9]/g, "");
+}
+
+function formatRupee(raw: string): string {
+  // Prefer the raw formatting from KB (keeps commas/₹ if present).
+  const s = (raw || "").trim();
+  if (!s) return "";
+  return s.startsWith("₹") ? s : `₹${s}`;
+}
+
+function extractOfferEntriesFromText(text: string): OfferEntry[] {
+  const t = (text || "").trim();
+  if (!t) return [];
+
+  // Normalize some common formatting differences
+  const normalized = t
+    .replace(/\r/g, "")
+    .replace(/\t/g, " ")
+    .replace(/[ ]{2,}/g, " ");
+
+  // Split into MODEL blocks if present
+  const parts = normalized.split(/\n\s*MODEL\s*:\s*/i);
+  const entries: OfferEntry[] = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    const block = parts[i].trim();
+    if (!block) continue;
+
+    let model = "";
+    let body = block;
+
+    if (i === 0 && !/^\w+/i.test(block)) continue;
+
+    if (i > 0) {
+      const firstLineBreak = block.indexOf("\n");
+      if (firstLineBreak >= 0) {
+        model = block.slice(0, firstLineBreak).trim();
+        body = block.slice(firstLineBreak + 1);
+      } else {
+        model = block.trim();
+        body = "";
+      }
+    } else {
+      // If no MODEL headings exist, try to infer model from "MODEL:" lines inside
+      const m = block.match(/\bMODEL\s*:\s*([^\n]+)\n/i);
+      if (m) model = (m[1] || "").trim();
+    }
+
+    // Find variants inside the body (multiple variants per model)
+    const variantSplits = body.split(/\n\s*Variant\s*:\s*/i);
+    if (variantSplits.length <= 1) continue;
+
+    for (let j = 1; j < variantSplits.length; j++) {
+      const vb = variantSplits[j];
+      const endIdx = vb.search(/\n\s*Variant\s*:\s*/i);
+      const vblock = (endIdx >= 0 ? vb.slice(0, endIdx) : vb).trim();
+
+      const firstLineBreak = vblock.indexOf("\n");
+      const variant = (firstLineBreak >= 0 ? vblock.slice(0, firstLineBreak) : vblock).trim();
+      const rest = firstLineBreak >= 0 ? vblock.slice(firstLineBreak + 1) : "";
+
+      const fuel = (rest.match(/\bFuel\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
+      const transmission =
+        (rest.match(/\bTransmission\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
+      const color =
+        (rest.match(/\bColor(?: Options)?\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
+      const manufacturing_year =
+        (rest.match(/\bManufacturing Year\s*:\s*(\d{4})\b/i)?.[1] || "").trim() || null;
+
+      const original_price =
+        (rest.match(/\bOriginal Price\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
+      const discounted_price =
+        (rest.match(/\bDiscounted Price\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
+      const total_discount =
+        (rest.match(/\bTotal Discount\s*:\s*([^\n]+)\n?/i)?.[1] || "").trim() || null;
+
+      entries.push({
+        model: model || "",
+        variant,
+        fuel,
+        transmission,
+        manufacturing_year,
+        color,
+        original_price,
+        discounted_price,
+        total_discount,
+      });
+    }
+  }
+
+  return entries.filter((e) => e.variant && (e.original_price || e.discounted_price || e.total_discount));
+}
+
+function pickBestOfferEntry(params: {
+  entries: OfferEntry[];
+  lockedModel?: string | null;
+  lockedVariant?: string | null;
+  lockedFuel?: string | null;
+  lockedTransmission?: string | null;
+  lockedYear?: string | null;
+}): OfferEntry | null {
+  const { entries } = params;
+  if (!entries.length) return null;
+
+  const m = normalizeForMatch(params.lockedModel || "");
+  const v = normalizeForMatch(params.lockedVariant || "");
+  const f = normalizeForMatch(params.lockedFuel || "");
+  const tr = normalizeForMatch(params.lockedTransmission || "");
+  const y = (params.lockedYear || "").trim();
+
+  let best: { e: OfferEntry; score: number } | null = null;
+
+  for (const e of entries) {
+    let score = 0;
+
+    const em = normalizeForMatch(e.model || "");
+    const ev = normalizeForMatch(e.variant || "");
+    const ef = normalizeForMatch(e.fuel || "");
+    const et = normalizeForMatch(e.transmission || "");
+    const ey = (e.manufacturing_year || "").trim();
+
+    if (m && em.includes(m)) score += 6;
+    if (v && ev.includes(v)) score += 10;
+
+    if (f && ef.includes(f)) score += 2;
+    if (tr && et.includes(tr)) score += 2;
+    if (y && ey === y) score += 2;
+
+    // Light preference for newer year if tie
+    if (!y && ey) score += Number(ey) / 10_000;
+
+    if (!best || score > best.score) best = { e, score };
+  }
+
+  return best?.e ?? null;
+}
+
+function buildOfferReply(entry: OfferEntry): string {
+  const bits: string[] = [];
+
+  const headParts: string[] = [];
+  if (entry.model) headParts.push(entry.model.trim());
+  if (preventingRobotLikeHead(entry.variant)) headParts.push(entry.variant.trim());
+
+  const meta: string[] = [];
+  if (entry.fuel) meta.push(entry.fuel.trim());
+  if (entry.transmission) meta.push(entry.transmission.trim());
+  if (entry.manufacturing_year) meta.push(`MY${entry.manufacturing_year.trim()}`);
+
+  const metaText = meta.length ? ` (${meta.join(", ")})` : "";
+  const head = `${headParts.join(" ")}${metaText}`.trim();
+
+  const o = entry.original_price ? formatRupee(entry.original_price) : "";
+  const d = entry.total_discount ? formatRupee(entry.total_discount) : "";
+  const f = entry.discounted_price ? formatRupee(entry.discounted_price) : "";
+
+  // If one of the three is missing but we can compute, do it deterministically (no guessing)
+  const oN = normalizePriceToken(o);
+  const fN = normalizePriceToken(f);
+  const dN = normalizePriceToken(d);
+
+  let original = o;
+  let final = f;
+  let discount = d;
+
+  if ((!discount || !dN) && oN && fN) {
+    const disc = (Number(oN) - Number(fN)).toString();
+    discount = `₹${disc}`;
+  }
+
+  if ((!final || !fN) && oN && dN) {
+    const fin = (Number(oN) - Number(dN)).toString();
+    final = `₹${fin}`;
+  }
+
+  if ((!original || !oN) && fN && dN) {
+    const org = (Number(fN) + Number(dN)).toString();
+    original = `₹${org}`;
+  }
+
+  // Human-like, but complete
+  if (head) bits.push(`${head} ✅`);
+  if (final) bits.push(`Final (after offer): ${final}`);
+  if (original) bits.push(`Original: ${original}`);
+  if (discount) bits.push(`Discount: ${discount}`);
+
+  // Soft next step (human)
+  bits.push(`If you want, I can also check availability for this exact color/year.`);
+
+  return bits.join("\n");
+}
+
+
+function extractOnRoadLine(params: {
+  text: string;
+  model?: string | null;
+  variant?: string | null;
+}): string | null {
+  const t = (params.text || "").replace(/\r/g, "");
+  if (!t) return null;
+
+  const modelNorm = normalizeForMatch(params.model || "");
+  const variantNorm = normalizeForMatch(params.variant || "");
+
+  const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+
+  // Prefer lines that mention on-road + model/variant
+  let best: { line: string; score: number } | null = null;
+
+  for (const line of lines) {
+    if (!/on\s*-?\s*road/i.test(line) || !/(₹|rs\.?|inr)\s*\d/i.test(line))
+      continue;
+
+    const ln = normalizeForMatch(line);
+    let score = 1;
+    if (modelNorm && ln.includes(modelNorm)) score += 3;
+    if (variantNorm && ln.includes(variantNorm)) score += 5;
+
+    if (!best || score > best.score) best = { line, score };
+  }
+
+  return best?.line ?? null;
+}
+
+function buildOnRoadReply(params: {
+  model?: string | null;
+  variant?: string | null;
+  onRoadLine: string;
+}): string {
+  const head = [params.model, params.variant].filter(Boolean).join(" ").trim();
+  const prefix = head ? `${head} – ` : "";
+  // Keep the KB line intact for numbers, but wrap in a friendly sentence
+  return `${prefix}${params.onRoadLine.trim()}\nIf you want, I can also share the breakup (RTO/insurance) if it’s mentioned for this variant.`;
+}
+
+
+// Small helper to prevent weird empty variant joins in TS string building
+function preventingRobotLikeHead(variant: string): boolean {
+  return Boolean((variant || "").trim());
+}
+
+
 /* ============================================================================
    INTENT HEURISTICS (FAILSAFE)
 ============================================================================ */
@@ -719,7 +979,7 @@ async function validateGroundedness(params: {
         {
           role: "user",
           content: JSON.stringify({
-            task: "Check whether the ANSWER contains any factual claims (prices, offers, timelines, specs, availability) that are NOT supported by SOURCES. If the ANSWER is purely a clarification question or a safe handoff (and makes no factual claims), mark it grounded=true. If not grounded, rewrite it to be fully grounded by removing unsupported specifics while staying helpful.",
+            task: "Check whether the ANSWER contains any factual claims (prices, offers, timelines, specs, availability) that are NOT supported by SOURCES. Treat ₹ formatting and comma separators as equivalent (e.g., ₹10,19,990 == 1019990). If the ANSWER is purely a clarification question or a safe handoff (and makes no factual claims), mark it grounded=true. If not grounded, rewrite it to be fully grounded by removing unsupported specifics while staying helpful.",
             userMessage,
             sources,
             answer,
@@ -1025,7 +1285,10 @@ function buildSemanticQueryText(params: {
 
 type AiExtractedIntent = {
   vehicle_model: string | null;
+  vehicle_variant: string | null;
   fuel_type: string | null;
+  transmission: "Manual" | "Automatic" | "DCA" | "AMT" | null;
+  manufacturing_year: string | null; // keep as string to avoid accidental hallucinated math
   intent: "pricing" | "features" | "service" | "offer" | "other";
 };
 
@@ -1040,7 +1303,10 @@ You are helping a car dealership chatbot.
 
 From the customer message below, extract:
 - vehicle_model (example: Tigor, Nexon, Tiago) or null
+- vehicle_variant (full variant/trim string if mentioned, else null)
 - fuel_type (Petrol, Diesel, CNG, EV) or null
+- transmission: Manual | Automatic | DCA | AMT | null
+- manufacturing_year (4-digit year like 2024/2025/2026) or null
 - intent: pricing | features | service | offer | other
 
 Rules:
@@ -1068,7 +1334,10 @@ Customer message:
     logger.warn("[ai-extract] failed, falling back to nulls", { error: err });
     return {
       vehicle_model: null,
+      vehicle_variant: null,
       fuel_type: null,
+      transmission: null,
+      manufacturing_year: null,
       intent: "other",
     };
   }
@@ -3049,7 +3318,10 @@ ${personality.donts || "- None specified."}
 
     let aiExtract: AiExtractedIntent = {
       vehicle_model: null,
+      vehicle_variant: null,
       fuel_type: null,
+      transmission: null,
+      manufacturing_year: null,
       intent: "other",
     };
 
@@ -3059,16 +3331,28 @@ ${personality.donts || "- None specified."}
     const lockedIntent = locked?.intent ?? null;
     const lockedModel = locked?.model ?? null;
     const lockedFuel = locked?.fuel_type ?? null;
+    const lockedVariant = locked?.variant ?? null;
+    const lockedTransmission = locked?.transmission ?? null;
+    const lockedYear = locked?.manufacturing_year ?? null;
 
     const shouldContinue =
-      (lockedTopic || lockedModel) &&
-      isShortFollowupMessage(user_message) &&
-      !isExplicitTopicChange(user_message);
+      (lockedTopic || lockedModel || lockedVariant) &&
+      !isExplicitTopicChange(user_message) &&
+      // Classic short follow-ups ("ok", "and?", "what about?")
+      (isShortFollowupMessage(user_message) ||
+        // Pricing/offer follow-ups often aren't "short" but still refer to the same vehicle
+        looksLikePricingOrOfferContext(user_message) ||
+        /(final|total|on\s*road|on-?road|discount|offer|scheme|breakup)/i.test(
+          user_message
+        ));
 
     if (shouldContinue) {
       aiExtract = {
         vehicle_model: lockedModel,
+        vehicle_variant: lockedVariant,
         fuel_type: lockedFuel,
+        transmission: (lockedTransmission as any) ?? null,
+        manufacturing_year: lockedYear,
         intent:
           (lockedIntent as any) ??
           (lockedTopic === "offer_pricing" ? "pricing" : "other"),
@@ -3109,7 +3393,10 @@ ${personality.donts || "- None specified."}
     // 🧠 Merge AI-extracted entities into locked entities (Issue 4)
     const nextEntities = mergeEntities(conv.ai_last_entities, {
       model: aiExtract.vehicle_model ?? undefined,
+      variant: aiExtract.vehicle_variant ?? undefined,
       fuel_type: aiExtract.fuel_type ?? undefined,
+      transmission: aiExtract.transmission ?? undefined,
+      manufacturing_year: aiExtract.manufacturing_year ?? undefined,
       // Phase 2: keep intent/topic sticky; do not wipe on weak turns
       intent:
         aiExtract.intent && aiExtract.intent !== "other"
@@ -3308,12 +3595,57 @@ ${personality.donts || "- None specified."}
   (/\bvariant\b/i.test(contextText) &&
     /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i.test(contextText));
 
+    // Forced reply text can be set by deterministic KB handlers (pricing/offers) or strict-mode guards.
+    let forcedReplyText: string | null = null;
 
     const campaignHasPricingSignals =
       looksLikePricingOrOfferContext(campaignContextText) ||
       looksLikePricingOrOfferContext(
         JSON.stringify(conv.campaign_context ?? {})
       );
+
+    // ------------------------------------------------------------------
+    // P1-D: OFFER / DISCOUNT — STRUCTURED REPLY FROM KB (NO HALLUCINATION)
+    // If KB context contains a structured offers table, respond deterministically
+    // and auto-lock the exact variant until the user mentions a new model/variant.
+    // ------------------------------------------------------------------
+    if (!forcedReplyText && kbHasPricingSignals && contextText.trim()) {
+      const wantsOffer =
+        aiExtract.intent === "offer" ||
+        /\b(discount|offer|scheme|deal)\b/i.test(user_message);
+
+      if (wantsOffer) {
+        const entries = extractOfferEntriesFromText(contextText);
+        const picked = pickBestOfferEntry({
+          entries,
+          lockedModel: (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null,
+          lockedVariant: (nextEntitiesWithKb as any)?.variant ?? aiExtract.vehicle_variant ?? null,
+          lockedFuel: (nextEntitiesWithKb as any)?.fuel_type ?? aiExtract.fuel_type ?? null,
+          lockedTransmission: (nextEntitiesWithKb as any)?.transmission ?? aiExtract.transmission ?? null,
+          lockedYear: (nextEntitiesWithKb as any)?.manufacturing_year ?? aiExtract.manufacturing_year ?? null,
+        });
+
+        if (picked) {
+          forcedReplyText = buildOfferReply(picked);
+
+          // Auto-lock exact match for follow-ups
+          (nextEntitiesWithKb as any).model = picked.model || (nextEntitiesWithKb as any).model;
+          (nextEntitiesWithKb as any).variant = picked.variant || (nextEntitiesWithKb as any).variant;
+          if (picked.fuel) (nextEntitiesWithKb as any).fuel_type = picked.fuel;
+          if (picked.transmission) (nextEntitiesWithKb as any).transmission = picked.transmission;
+          if (picked.manufacturing_year)
+            (nextEntitiesWithKb as any).manufacturing_year = picked.manufacturing_year;
+
+          logger.info("[offer] structured_reply_used", {
+            model: (nextEntitiesWithKb as any).model,
+            variant: (nextEntitiesWithKb as any).variant,
+            fuel: (nextEntitiesWithKb as any).fuel_type,
+            transmission: (nextEntitiesWithKb as any).transmission,
+            manufacturing_year: (nextEntitiesWithKb as any).manufacturing_year,
+          });
+        }
+      }
+    }
 
     const pricingEstimateRequired =
       requiresAuthoritativeKB &&
@@ -3369,8 +3701,8 @@ ${personality.donts || "- None specified."}
       (kbMatchMeta?.match_type === "lexical_only" ||
         semanticKB?.confidence === "strong");
 
-    let forcedReplyText: string | null = null;
-    if (aiMode === "kb_only" && !kbStrongEnoughForKbOnly) {
+    // kb_only can still override / set a forced reply when KB isn't strong enough.
+    if (aiMode === "kb_only" && !kbStrongEnoughForKbOnly && !forcedReplyText) {
       forcedReplyText =
         "I don’t have this information in our knowledge base yet. If you share the exact model/variant (or the brochure), I’ll confirm the right details — our sales team can also verify it for you.";
 
@@ -3582,6 +3914,7 @@ ${JSON.stringify(nextEntitiesWithKb || {}, null, 2)}
 
 CRITICAL ENTITY RULE:
 - If Locked Entities includes "model", you MUST NOT switch to any other model unless the user explicitly mentions a different model.
+- If Locked Entities includes "variant", keep answering for the SAME variant unless the user explicitly changes the variant.
 - If Locked Entities includes "topic": "offer_pricing", follow-up messages like "tell me more" MUST expand the same offer context.
 
 ------------------------
