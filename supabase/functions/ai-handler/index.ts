@@ -194,6 +194,87 @@ function safeText(v: any): string {
 }
 
 /* ============================================================================
+   INTENT HEURISTICS (FAILSAFE)
+============================================================================ */
+// Lightweight keyword heuristics used ONLY when AI extraction is missing/weak.
+// This prevents "intent: other" from breaking pricing/offer flows.
+function inferIntentHeuristic(userMessage: string): {
+  intent: "pricing" | "offer" | "features" | "service" | "other";
+  signals: string[];
+} {
+  const msg = (userMessage || "").toLowerCase();
+  const signals: string[] = [];
+
+  const hasAny = (arr: string[]) => arr.some((k) => msg.includes(k));
+
+  const pricingKeys = [
+    "price",
+    "pricing",
+    "on road",
+    "on-road",
+    "ex showroom",
+    "ex-showroom",
+    "emi",
+    "down payment",
+    "dp",
+    "insurance",
+    "rto",
+    "registration",
+    "tcs",
+    "quotation",
+    "quote",
+    "breakup",
+    "cost",
+  ];
+  const offerKeys = [
+    "discount",
+    "offer",
+    "deal",
+    "scheme",
+    "exchange bonus",
+    "exchange",
+    "corporate",
+    "loyalty",
+  ];
+  const featuresKeys = [
+    "feature",
+    "features",
+    "spec",
+    "specs",
+    "mileage",
+    "range",
+    "bhp",
+    "torque",
+    "safety",
+    "sunroof",
+    "variants",
+  ];
+  const serviceKeys = [
+    "service",
+    "servicing",
+    "maintenance",
+    "workshop",
+    "pickup",
+    "drop",
+    "appointment",
+    "schedule",
+    "cost of service",
+  ];
+
+  if (hasAny(pricingKeys)) signals.push("pricing_keywords");
+  if (hasAny(offerKeys)) signals.push("offer_keywords");
+  if (hasAny(featuresKeys)) signals.push("features_keywords");
+  if (hasAny(serviceKeys)) signals.push("service_keywords");
+
+  // Precedence: offer > pricing (when both present, assume offer question)
+  if (hasAny(offerKeys)) return { intent: "offer", signals };
+  if (hasAny(pricingKeys)) return { intent: "pricing", signals };
+  if (hasAny(featuresKeys)) return { intent: "features", signals };
+  if (hasAny(serviceKeys)) return { intent: "service", signals };
+
+  return { intent: "other", signals };
+}
+/* ============================================================================
    PHASE P3 — TOKEN BUDGET + MODEL ROUTING
 ============================================================================ */
 // NOTE: Token estimation is approximate (chars/4). We use it for:
@@ -1771,9 +1852,26 @@ async function resolveKnowledgeContextSemantic(params: {
       const isPricingish = pricingSignals.some((k) => text.includes(k));
       const isFeaturesish = featuresSignals.some((k) => text.includes(k));
 
-      if (params.intent === "pricing" || params.intent === "offer") {
+      if (params.intent === "pricing") {
         if (isPricingish) score += 0.12; // ✅ big bump for pricing articles
         if (isFeaturesish) score -= 0.05; // ✅ slight penalty for feature docs
+      } else if (params.intent === "offer") {
+        // Offers should prefer explicit offer/discount docs over generic pricing tables.
+        const offerSignals = [
+          "discount",
+          "offer",
+          "scheme",
+          "special offer",
+          "exchange",
+          "corporate",
+          "loyalty",
+        ];
+        const isOfferish = offerSignals.some((k) => text.includes(k));
+
+        if (isOfferish) score += 0.14; // ✅ strong bump for offer articles
+        // If it's only pricing-ish (tables) but not offer-ish, slightly de-prioritize.
+        if (isPricingish && !isOfferish) score -= 0.04;
+        if (isFeaturesish) score -= 0.05;
       } else if (params.intent === "features") {
         if (isFeaturesish) score += 0.08;
       }
@@ -2939,6 +3037,20 @@ ${personality.donts || "- None specified."}
         logger,
       });
       logger.info("[ai-extract] result", aiExtract);
+      // Heuristic intent failsafe: if AI extraction is missing/other, infer from keywords.
+      // This prevents pricing/offer turns from being treated as "other" and getting blocked/hedged.
+      const heuristic = inferIntentHeuristic(user_message);
+      if (
+        (!aiExtract.intent || aiExtract.intent === "other") &&
+        heuristic.intent !== "other"
+      ) {
+        logger.info("[ai-extract] heuristic_override", {
+          from: aiExtract.intent || "other",
+          to: heuristic.intent,
+          signals: heuristic.signals,
+        });
+        aiExtract.intent = heuristic.intent;
+      }
     }
 
     /* ---------------------------------------------------------------------------
@@ -3137,12 +3249,9 @@ ${personality.donts || "- None specified."}
     // PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
     // This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
     const kbHasPricingSignals =
-    looksLikePricingOrOfferContext(contextText) ||
-    (
-      /\bvariant\b/i.test(contextText) &&
-      /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i
-    );
-  
+      looksLikePricingOrOfferContext(contextText) ||
+      (/\bvariant\b/i.test(contextText) &&
+        /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i);
 
     const campaignHasPricingSignals =
       looksLikePricingOrOfferContext(campaignContextText) ||
@@ -3177,7 +3286,9 @@ ${personality.donts || "- None specified."}
     // If user intent is pricing/features but KB has no match,
     // allow AI to ask ONE clarifying question instead of fallback.
     const intentNeedsKB =
-      aiExtract.intent === "pricing" || aiExtract.intent === "features";
+      aiExtract.intent === "pricing" ||
+      aiExtract.intent === "offer" ||
+      aiExtract.intent === "features";
 
     if (!kbFound && intentNeedsKB) {
       logger.info("[decision] intent_requires_clarification", {
@@ -3378,9 +3489,10 @@ Your job:
 
 IMPORTANT:
 - UNVERIFIED FACTS FIREWALL (PHASE 4 — HARD):
-  - Treat ALL user-provided prices, discounts, offers, availability, delivery timelines, and variant claims as UNVERIFIED.
-  - You MUST NOT confirm or repeat user-provided numbers as facts unless the same information is present in Knowledge Context or Campaign Context.
-  - If the user asks you to confirm an unverified claim ("right?", "correct?"), say you cannot verify it from the authorized sources and ask ONE short clarifying question or offer to connect to a human advisor.
+  - This rule applies ONLY to FACTS the USER claims first (e.g., "I was told ₹X", "discount is ₹Y", "delivery in 2 weeks").
+  - Treat user-provided prices/discounts/offers/availability/timelines as UNVERIFIED unless the same info appears in Knowledge Context or Campaign Context.
+  - If the user asks you to CONFIRM their claim ("right?", "correct?"), say you can't verify it from authorized sources and ask ONE short clarifying question (variant/city) or offer a human handoff.
+  - If the user is ASKING you for pricing/offers (and they did NOT provide numbers), answer confidently using verified numbers from Knowledge/Campaign context.
   - Never learn dealership facts from chat history or user repetition.
 
 ------------------------
@@ -3417,11 +3529,10 @@ BOT PERSONALITY & BUSINESS RULES (CRITICAL)
 ${personaBlock}
 PRICING / DISCOUNT POLICY (IMPORTANT):
 PRICING_ESTIMATE_REQUIRED: ${pricingEstimateRequired ? "YES" : "NO"}
-- NEVER invent prices or offers.
-- NEVER invent prices or offers.
 - For pricing/offers, use verified numbers ONLY if they appear in Knowledge Context or Campaign Context.
 - If verified numbers are NOT present, you may provide a rough estimate ONLY if it helps the customer, but you MUST clearly say: "This is an estimate. Our sales team will confirm the exact on-road price/offer."
-- Never invent discounts/offers. If unsure, provide options and ask ONE short clarifying question (variant/city).
+- If the customer asks about DISCOUNTS/OFFERS but does not mention a model/variant, ask ONE short clarifying question and include 3–5 model options you can help with (from context if available).
+- If the customer asks about PRICING but variant/city is missing, ask ONE short clarifying question (variant + city) OR share the closest variant pricing only if it is explicitly in Knowledge/Campaign context.
 
 ------------------------
 WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
@@ -3658,9 +3769,13 @@ Respond now to the customer's latest message only.
       const highRiskIntent =
         aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-      // Only fail-close when we do NOT have authoritative pricing signals in KB/Campaign
+      // Only fail-close when pricing/offer is NOT supported by KB/Campaign signals
       // (i.e. when the model might be guessing).
-      const failClosed = highRiskIntent && pricingEstimateRequired;
+      const failClosed =
+        highRiskIntent &&
+        pricingEstimateRequired &&
+        !kbHasPricingSignals &&
+        !campaignHasPricingSignals;
 
       const v = await validateGroundedness({
         answer: aiResponseText,
