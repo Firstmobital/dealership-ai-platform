@@ -102,6 +102,29 @@ type KBScoredRow = {
   score: number;
 };
 
+/* ==========================================================================
+   OFFER ARTICLE ANCHORING
+   Any "offer/discount" query should preferentially retrieve from the
+   dedicated offers article (Special Stock Offers / Limited Stock), to avoid
+   cross-model leakage and hallucinations.
+============================================================================ */
+
+const OFFER_ARTICLE_HINTS = [
+  "special stock offers",
+  "special offers",
+  "limited stock",
+  "discounted price",
+  "total discount",
+];
+
+function isOfferArticle(title: string, chunk: string): boolean {
+  const t = normalizeForMatch(title || "");
+  const c = normalizeForMatch(chunk || "");
+  const joined = `${t} ${c}`;
+  // Must contain at least one strong hint.
+  return OFFER_ARTICLE_HINTS.some((h) => joined.includes(normalizeForMatch(h)));
+}
+
 type KBCandidate = {
   id: string;
   article_id: string;
@@ -401,6 +424,69 @@ function buildOfferReply(entry: OfferEntry): string {
   bits.push(`If you want, I can also check availability for this exact color/year.`);
 
   return bits.join("\n");
+}
+
+function buildOfferListReply(params: {
+  entries: OfferEntry[];
+  model?: string | null;
+}): string {
+  const model = (params.model || "").trim();
+  const modelNorm = normalizeForMatch(model);
+
+  const filtered = modelNorm
+    ? params.entries.filter((e) => normalizeForMatch(e.model || "").includes(modelNorm))
+    : params.entries;
+
+  if (!filtered.length) {
+    return model
+      ? `I don’t have any active stock offers listed for ${model} right now.`
+      : "I don’t have any active stock offers listed right now.";
+  }
+
+  // Keep it human and scannable: show up to 6 variants, grouped by model when model not specified.
+  const lines: string[] = [];
+  if (modelNorm) {
+    lines.push(`Yes — there are stock offers on these ${model} variants:`);
+    for (const e of filtered.slice(0, 6)) {
+      const final = e.discounted_price ? formatRupee(e.discounted_price) : "";
+      const disc = e.total_discount ? formatRupee(e.total_discount) : "";
+      const suffixBits: string[] = [];
+      if (disc) suffixBits.push(`Discount ${disc}`);
+      if (final) suffixBits.push(`Final ${final}`);
+      const suffix = suffixBits.length ? ` — ${suffixBits.join(" | ")}` : "";
+      lines.push(`• ${e.variant}${suffix}`);
+    }
+    lines.push("Tell me the variant name and I’ll share the full breakup (original + discount + final) from the offer list.");
+    return lines.join("\n");
+  }
+
+  // No model specified: show a compact catalog grouped by model.
+  lines.push("Yes — currently the special stock offers are available on these variants (limited stock):");
+  const byModel = new Map<string, OfferEntry[]>();
+  for (const e of filtered) {
+    const k = (e.model || "Other").trim() || "Other";
+    if (!byModel.has(k)) byModel.set(k, []);
+    byModel.get(k)!.push(e);
+  }
+
+  const modelNames = [...byModel.keys()].sort((a, b) => a.localeCompare(b));
+  for (const m of modelNames) {
+    const list = byModel.get(m) || [];
+    lines.push(`\n${m}:`);
+    for (const e of list.slice(0, 4)) {
+      const final = e.discounted_price ? formatRupee(e.discounted_price) : "";
+      const disc = e.total_discount ? formatRupee(e.total_discount) : "";
+      const suffixBits: string[] = [];
+      if (disc) suffixBits.push(`Discount ${disc}`);
+      if (final) suffixBits.push(`Final ${final}`);
+      const suffix = suffixBits.length ? ` — ${suffixBits.join(" | ")}` : "";
+      lines.push(`• ${e.variant}${suffix}`);
+    }
+    if (list.length > 4) lines.push(`• +${list.length - 4} more`);
+  }
+
+  lines.push("\nWhich model are you checking? I’ll share the exact offer details for that one.");
+  return lines.join("\n");
 }
 
 
@@ -2116,6 +2202,12 @@ async function resolveKnowledgeContextSemantic(params: {
         if (containsPhrase(c, modelNorm)) score += 0.04;
       }
 
+      // 1.5) Offer anchor boost: when intent is "offer", aggressively
+      // prioritize the dedicated offers article so it outranks generic pricing.
+      if (params.intent === "offer" && isOfferArticle(params.title, params.chunk)) {
+        score += 0.25;
+      }
+
       // 2) Intent boost: force pricing queries to rank pricing docs higher
       const pricingSignals = [
         "price",
@@ -2257,6 +2349,27 @@ async function resolveKnowledgeContextSemantic(params: {
     }
 
     if (!viable.length) return null;
+
+    // ------------------------------------------------------------------
+    // OFFER ANCHOR: If the query is about offers/discounts and we have any
+    // candidates that look like they come from the dedicated offers article,
+    // restrict to those candidates to avoid cross-model leakage.
+    // ------------------------------------------------------------------
+    if (intent === "offer") {
+      const offerOnly = viable.filter((v) => isOfferArticle(v.title, v.chunk));
+      if (offerOnly.length) {
+        const dropped = viable.length - offerOnly.length;
+        if (dropped > 0) {
+          logger.info("[kb] offer_anchor_applied", {
+            kept: offerOnly.length,
+            dropped,
+            top_titles: [...new Set(offerOnly.slice(0, 3).map((x) => x.title))],
+          });
+        }
+        viable.length = 0;
+        viable.push(...offerOnly);
+      }
+    }
 
     // Sort by boosted score desc (tie-break by similarity)
     viable.sort(
@@ -3357,6 +3470,20 @@ ${personality.donts || "- None specified."}
           (lockedIntent as any) ??
           (lockedTopic === "offer_pricing" ? "pricing" : "other"),
       };
+
+      // 🔥 Offer intent must ALWAYS override a previously locked pricing intent.
+      // This fixes cases like: user asks price → then asks "any discount?" and
+      // the bot keeps searching pricing instead of the offers article.
+      const heuristic = inferIntentHeuristic(user_message);
+      if (heuristic.intent === "offer" && aiExtract.intent !== "offer") {
+        logger.info("[ai-extract] continuity_offer_override", {
+          from: aiExtract.intent,
+          to: "offer",
+          signals: heuristic.signals,
+        });
+        aiExtract.intent = "offer";
+      }
+
       logger.info("[ai-handler] follow-up continuity lock applied", {
         locked_topic: lockedTopic,
         locked_intent: aiExtract.intent,
@@ -3616,33 +3743,63 @@ ${personality.donts || "- None specified."}
 
       if (wantsOffer) {
         const entries = extractOfferEntriesFromText(contextText);
-        const picked = pickBestOfferEntry({
-          entries,
-          lockedModel: (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null,
-          lockedVariant: (nextEntitiesWithKb as any)?.variant ?? aiExtract.vehicle_variant ?? null,
-          lockedFuel: (nextEntitiesWithKb as any)?.fuel_type ?? aiExtract.fuel_type ?? null,
-          lockedTransmission: (nextEntitiesWithKb as any)?.transmission ?? aiExtract.transmission ?? null,
-          lockedYear: (nextEntitiesWithKb as any)?.manufacturing_year ?? aiExtract.manufacturing_year ?? null,
-        });
+        const lockedModel =
+          (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null;
+        const lockedVariant =
+          (nextEntitiesWithKb as any)?.variant ?? aiExtract.vehicle_variant ?? null;
 
-        if (picked) {
-          forcedReplyText = buildOfferReply(picked);
-
-          // Auto-lock exact match for follow-ups
-          (nextEntitiesWithKb as any).model = picked.model || (nextEntitiesWithKb as any).model;
-          (nextEntitiesWithKb as any).variant = picked.variant || (nextEntitiesWithKb as any).variant;
-          if (picked.fuel) (nextEntitiesWithKb as any).fuel_type = picked.fuel;
-          if (picked.transmission) (nextEntitiesWithKb as any).transmission = picked.transmission;
-          if (picked.manufacturing_year)
-            (nextEntitiesWithKb as any).manufacturing_year = picked.manufacturing_year;
-
-          logger.info("[offer] structured_reply_used", {
-            model: (nextEntitiesWithKb as any).model,
-            variant: (nextEntitiesWithKb as any).variant,
-            fuel: (nextEntitiesWithKb as any).fuel_type,
-            transmission: (nextEntitiesWithKb as any).transmission,
-            manufacturing_year: (nextEntitiesWithKb as any).manufacturing_year,
+        // If variant is known, reply with the exact offer for that variant.
+        if (lockedVariant) {
+          const picked = pickBestOfferEntry({
+            entries,
+            lockedModel,
+            lockedVariant,
+            lockedFuel: (nextEntitiesWithKb as any)?.fuel_type ?? aiExtract.fuel_type ?? null,
+            lockedTransmission:
+              (nextEntitiesWithKb as any)?.transmission ?? aiExtract.transmission ?? null,
+            lockedYear:
+              (nextEntitiesWithKb as any)?.manufacturing_year ?? aiExtract.manufacturing_year ?? null,
           });
+
+          if (picked) {
+            forcedReplyText = buildOfferReply(picked);
+
+            // Auto-lock exact match for follow-ups
+            (nextEntitiesWithKb as any).model = picked.model || (nextEntitiesWithKb as any).model;
+            (nextEntitiesWithKb as any).variant = picked.variant || (nextEntitiesWithKb as any).variant;
+            if (picked.fuel) (nextEntitiesWithKb as any).fuel_type = picked.fuel;
+            if (picked.transmission) (nextEntitiesWithKb as any).transmission = picked.transmission;
+            if (picked.manufacturing_year)
+              (nextEntitiesWithKb as any).manufacturing_year = picked.manufacturing_year;
+
+            logger.info("[offer] structured_reply_used", {
+              model: (nextEntitiesWithKb as any).model,
+              variant: (nextEntitiesWithKb as any).variant,
+              fuel: (nextEntitiesWithKb as any).fuel_type,
+              transmission: (nextEntitiesWithKb as any).transmission,
+              manufacturing_year: (nextEntitiesWithKb as any).manufacturing_year,
+            });
+          }
+        } else {
+          // No variant specified: list available offer variants (model-scoped if model is known).
+          forcedReplyText = buildOfferListReply({ entries, model: lockedModel });
+
+          // If model is known and there is only one offer variant, auto-lock it.
+          if (lockedModel) {
+            const modelNorm = normalizeForMatch(String(lockedModel));
+            const scoped = entries.filter((e) =>
+              normalizeForMatch(e.model || "").includes(modelNorm)
+            );
+            if (scoped.length === 1) {
+              const only = scoped[0];
+              (nextEntitiesWithKb as any).model = only.model || (nextEntitiesWithKb as any).model;
+              (nextEntitiesWithKb as any).variant = only.variant;
+              if (only.fuel) (nextEntitiesWithKb as any).fuel_type = only.fuel;
+              if (only.transmission) (nextEntitiesWithKb as any).transmission = only.transmission;
+              if (only.manufacturing_year)
+                (nextEntitiesWithKb as any).manufacturing_year = only.manufacturing_year;
+            }
+          }
         }
       }
     }
@@ -4222,9 +4379,23 @@ if (
 
       if (!v.grounded) {
         // Prefer grounded rewrite; if missing, fall back to safe clarification
-        aiResponseText =
-          v.revised_answer ||
-          "I can help — which exact variant (fuel + transmission) is this for? I’ll share the exact pricing from the knowledge base.";
+        // For offer/discount queries, never allow ungrounded numbers to pass through.
+        if (aiExtract.intent === "offer") {
+          aiResponseText =
+            v.revised_answer?.trim() ||
+            "I can share the active stock offers — which model are you checking (Nexon / Altroz / Harrier / Safari / Curvv)?";
+
+          // Extra safety: if the validator rewrite still contains currency/numbers,
+          // strip them and ask a single clarifying question.
+          if (/₹|\b\d{3,}\b/.test(aiResponseText)) {
+            aiResponseText =
+              "I can share the active stock offers — which model are you checking (Nexon / Altroz / Harrier / Safari / Curvv)?";
+          }
+        } else {
+          aiResponseText =
+            v.revised_answer ||
+            "I can help — which exact variant (fuel + transmission) is this for? I’ll share the exact pricing from the knowledge base.";
+        }
       }
     }
 
