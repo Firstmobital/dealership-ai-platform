@@ -1,5 +1,5 @@
 // supabase/functions/embed-article/index.ts
-// FINAL — FK-RACE SAFE + REAL ERROR LOGS (NO MORE RANDOM 500S)
+// FINAL — FK-RACE SAFE + REAL ERROR LOGS + RETRIES + BATCHING (NO MORE RANDOM 500S)
 // deno-lint-ignore-file no-explicit-any
 
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
@@ -12,6 +12,7 @@ import {
   requireOrgMembership,
   requireUser,
 } from "../_shared/auth.ts";
+
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -32,7 +33,8 @@ const supabase = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
 ===================================================================================== */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-request-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -56,18 +58,28 @@ function json(status: number, payload: Record<string, unknown>) {
 function createLogger(request_id: string, org_id?: string | null) {
   return {
     info(msg: string, extra: Record<string, any> = {}) {
-      console.log(JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }));
+      console.log(
+        JSON.stringify({ level: "info", request_id, org_id, msg, ...extra }),
+      );
     },
     warn(msg: string, extra: Record<string, any> = {}) {
-      console.warn(JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }));
+      console.warn(
+        JSON.stringify({ level: "warn", request_id, org_id, msg, ...extra }),
+      );
     },
     error(msg: string, extra: Record<string, any> = {}) {
-      console.error(JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }));
+      console.error(
+        JSON.stringify({ level: "error", request_id, org_id, msg, ...extra }),
+      );
     },
   };
 }
 
-function logSbError(logger: ReturnType<typeof createLogger>, label: string, error: any) {
+function logSbError(
+  logger: ReturnType<typeof createLogger>,
+  label: string,
+  error: any,
+) {
   logger.error(label, {
     message: error?.message ?? String(error),
     details: error?.details ?? null,
@@ -81,12 +93,49 @@ function sleep(ms: number) {
 }
 
 /* =====================================================================================
+   HELPERS
+===================================================================================== */
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/* =====================================================================================
    EMBEDDINGS
 ===================================================================================== */
 function isValidVector(v: any): v is number[] {
   return Array.isArray(v) && v.length === 1536 && v.every((x) => typeof x === "number");
 }
 
+async function fetchEmbeddingsOnce(
+  inputs: string[],
+): Promise<{ ok: boolean; status: number; bodyText: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+
+  try {
+    const resp = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: "text-embedding-3-small",
+        input: inputs,
+      }),
+    });
+
+    const bodyText = await resp.text();
+    return { ok: resp.ok, status: resp.status, bodyText };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Retries for OpenAI transient failures (429/5xx/timeout)
 async function safeEmbeddingsBatch(
   logger: ReturnType<typeof createLogger>,
   inputs: string[],
@@ -97,64 +146,79 @@ async function safeEmbeddingsBatch(
   }
   if (!inputs.length) return [];
 
-  try {
-    const resp = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "text-embedding-3-small",
-        input: inputs,
-      }),
-    });
+  const maxAttempts = 4;
 
-    const rawText = await resp.text();
-
-    let json: any;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      json = JSON.parse(rawText);
-    } catch {
-      logger.error("OPENAI_NON_JSON_RESPONSE", {
-        status: resp.status,
-        body: rawText.slice(0, 500),
-      });
-      return null;
-    }
+      const r = await fetchEmbeddingsOnce(inputs);
 
-    if (!resp.ok || !json?.data?.length) {
-      logger.error("OPENAI_EMBEDDINGS_ERROR", {
-        status: resp.status,
-        body: json,
-      });
-      return null;
-    }
+      let parsed: any = null;
+      try {
+        parsed = r.bodyText ? JSON.parse(r.bodyText) : null;
+      } catch {
+        logger.error("OPENAI_NON_JSON_RESPONSE", {
+          attempt,
+          status: r.status,
+          body: r.bodyText.slice(0, 500),
+        });
 
-    const vectors = json.data.map((d: any) => d?.embedding);
+        // non-json is usually transient gateway/proxy issue
+        if (attempt < maxAttempts) {
+          await sleep(300 * attempt);
+          continue;
+        }
+        return null;
+      }
 
-    if (vectors.length !== inputs.length) {
-      logger.error("EMBEDDINGS_COUNT_MISMATCH", {
-        expected: inputs.length,
-        got: vectors.length,
-      });
-      return null;
-    }
+      if (!r.ok || !parsed?.data?.length) {
+        logger.error("OPENAI_EMBEDDINGS_ERROR", {
+          attempt,
+          status: r.status,
+          body: parsed,
+        });
 
-    for (const v of vectors) {
-      if (!isValidVector(v)) {
-        logger.error("BAD_EMBEDDING_DIMENSION", {
-          length: Array.isArray(v) ? v.length : null,
+        const retryable = r.status === 429 || (r.status >= 500 && r.status <= 599);
+        if (retryable && attempt < maxAttempts) {
+          await sleep(400 * attempt);
+          continue;
+        }
+        return null;
+      }
+
+      const vectors = parsed.data.map((d: any) => d?.embedding);
+
+      if (vectors.length !== inputs.length) {
+        logger.error("EMBEDDINGS_COUNT_MISMATCH", {
+          expected: inputs.length,
+          got: vectors.length,
         });
         return null;
       }
-    }
 
-    return vectors;
-  } catch (err) {
-    logger.error("OPENAI_EMBEDDINGS_FATAL", { error: String(err) });
-    return null;
+      for (const v of vectors) {
+        if (!isValidVector(v)) {
+          logger.error("BAD_EMBEDDING_DIMENSION", {
+            length: Array.isArray(v) ? v.length : null,
+          });
+          return null;
+        }
+      }
+
+      return vectors as number[][];
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      logger.error("OPENAI_EMBEDDINGS_FATAL", { attempt, error: msg });
+
+      // AbortError / network error → retry
+      if (attempt < maxAttempts) {
+        await sleep(500 * attempt);
+        continue;
+      }
+      return null;
+    }
   }
+
+  return null;
 }
 
 /* =====================================================================================
@@ -199,12 +263,13 @@ serve(async (req: Request): Promise<Response> => {
   }
 
   const articleId = body?.article_id;
-  if (!articleId) return json(200, { skipped: true, reason: "article_id missing", request_id });
+  if (!articleId) {
+    return json(200, { skipped: true, reason: "article_id missing", request_id });
+  }
 
   logger.info("Embed article request", { articleId });
 
-  // ---- FK/commit race guard: wait a bit for article row to exist
-  // This solves: knowledge_chunks_article_id_fkey violations during fast saves.
+  // ---- FK/commit race guard: wait for article row to exist
   let article: any = null;
 
   for (let attempt = 1; attempt <= 4; attempt++) {
@@ -216,7 +281,6 @@ serve(async (req: Request): Promise<Response> => {
 
     if (error) {
       logSbError(logger, "SB_FETCH_ARTICLE_ERROR", error);
-      // If fetch itself errors, don't keep retrying blindly
       break;
     }
 
@@ -225,7 +289,6 @@ serve(async (req: Request): Promise<Response> => {
       break;
     }
 
-    // not found yet → retry
     await sleep(200 * attempt);
   }
 
@@ -235,14 +298,19 @@ serve(async (req: Request): Promise<Response> => {
   }
 
   const orgId = article.organization_id as string;
+  const orgLogger = createLogger(request_id, orgId);
 
   // AUTHZ:
   // - Normal path: user must belong to org
-  // - Internal path (background worker / cron): INTERNAL_API_KEY gating is handled by isInternalRequest
+  // - Internal path: isInternalRequest(req) gates background workers (your shared auth handles it)
   if (!isInternalRequest(req)) {
     try {
       const u = await requireUser(req);
-      await requireOrgMembership({ supabaseAdmin: supabase, userId: u.id, organizationId: orgId });
+      await requireOrgMembership({
+        supabaseAdmin: supabase,
+        userId: u.id,
+        organizationId: orgId,
+      });
     } catch {
       return json(403, { error: "Forbidden", request_id });
     }
@@ -255,25 +323,57 @@ serve(async (req: Request): Promise<Response> => {
     entity_id: articleId,
     metadata: { request_id },
   });
-  const orgLogger = createLogger(request_id, orgId);
 
   const content = (article.content || "").trim();
 
-  // Don't embed while typing / tiny content
+  // Don't embed tiny content
   if (content.length < 50) {
     orgLogger.info("Skipping embed (content too short)", { length: content.length });
     return json(200, { skipped: true, reason: "Content too short", request_id });
   }
 
   const chunks = chunkText(content, 180, 30);
-  if (!chunks.length) return json(200, { skipped: true, reason: "Chunking failed", request_id });
+  if (!chunks.length) {
+    return json(200, { skipped: true, reason: "Chunking failed", request_id });
+  }
 
   orgLogger.info("Chunking completed", { chunks: chunks.length });
 
-  const vectors = await safeEmbeddingsBatch(orgLogger, chunks);
-  if (!vectors) return json(500, { error: "Embedding failed", request_id });
+  // ---- Embeddings: batch to avoid payload/timeouts
+  const embeddingBatches = chunkArray(chunks, 80);
+  const vectorsAll: number[][] = [];
 
-  // ---- Delete old chunks (log real error details)
+  for (let i = 0; i < embeddingBatches.length; i++) {
+    const batch = embeddingBatches[i];
+    orgLogger.info("Embedding batch", { batch: i + 1, total: embeddingBatches.length, size: batch.length });
+
+    const vectors = await safeEmbeddingsBatch(orgLogger, batch);
+    if (!vectors) {
+      try {
+        await logAuditEvent(supabase, {
+          organization_id: orgId,
+          action: "kb_embed_failed",
+          entity_type: "knowledge_article",
+          entity_id: articleId,
+          metadata: { request_id, error: "Embedding failed" },
+        });
+      } catch {
+        // ignore
+      }
+      return json(500, { error: "Embedding failed", request_id });
+    }
+    vectorsAll.push(...vectors);
+  }
+
+  if (vectorsAll.length !== chunks.length) {
+    orgLogger.error("EMBEDDINGS_TOTAL_MISMATCH", {
+      expected: chunks.length,
+      got: vectorsAll.length,
+    });
+    return json(500, { error: "Embedding failed", request_id });
+  }
+
+  // ---- Delete old chunks
   {
     const { error } = await supabase
       .from("knowledge_chunks")
@@ -291,14 +391,19 @@ serve(async (req: Request): Promise<Response> => {
     article_id: articleId,
     chunk_index: i,
     chunk,
-    embedding: vectors[i],
+    embedding: vectorsAll[i],
   }));
 
-  // ---- Insert new chunks (log real error details)
-  {
+  // ---- Insert new chunks: batch insert to avoid Supabase/PG limits
+  const insertBatches = chunkArray(records, 200);
+
+  for (let i = 0; i < insertBatches.length; i++) {
+    const batch = insertBatches[i];
+    orgLogger.info("Inserting chunks batch", { batch: i + 1, total: insertBatches.length, size: batch.length });
+
     const { error } = await supabase
       .from("knowledge_chunks")
-      .insert(records, { returning: "minimal" });
+      .insert(batch, { returning: "minimal" });
 
     if (error) {
       logSbError(orgLogger, "SB_INSERT_CHUNKS_ERROR", error);
@@ -310,7 +415,7 @@ serve(async (req: Request): Promise<Response> => {
           entity_id: articleId,
           metadata: { request_id, error: "Failed to insert chunks" },
         });
-      } catch (_) {
+      } catch {
         // ignore
       }
       return json(500, { error: "Failed to insert chunks", request_id });

@@ -193,8 +193,6 @@ function safeText(v: any): string {
   return typeof v === "string" ? v : "";
 }
 
-// Dealership default city (business rule)
-const DEFAULT_CITY = "Jaipur";
 /* ============================================================================
    INTENT HEURISTICS (FAILSAFE)
 ============================================================================ */
@@ -763,7 +761,7 @@ async function validateGroundedness(params: {
       return {
         grounded: false,
         revised_answer:
-          "I can help — please confirm the exact variant and city, and I’ll share the correct details. If you want, I can connect you to a sales advisor to confirm the latest info.",
+          "I can help — please confirm the exact variant (fuel + transmission), and I’ll share the correct details. If you want, I can connect you to a sales advisor to confirm the latest info.",
         issues: ["validator_error_fail_closed"],
       };
     }
@@ -1635,13 +1633,21 @@ async function resolveKnowledgeContextSemantic(params: {
 } | null> {
   const { userMessage, organizationId, logger } = params;
 
+  const intent = params.intent || "other";
+
   // Phase 2: Keep KB *strict* to reduce hallucinations.
   // - First pass: higher threshold.
   // - Fallback: slightly lower, but still requires a hard minimum similarity.
-  const INITIAL_THRESHOLD = 0.58;
-  const FALLBACK_THRESHOLD = 0.5;
-  const HARD_MIN_SIMILARITY = 0.48; // anything below this is treated as noise
-  const SOFT_MIN_SIMILARITY = 0.55; // below this we avoid presenting as authoritative
+  // NOTE: Offer/pricing queries are often phrased generically ("offers running?"),
+  // so we allow a bit more recall and let reranking + scoring handle precision.
+  const INITIAL_THRESHOLD =
+    intent === "offer" ? 0.50 : intent === "pricing" ? 0.55 : 0.58;
+  const FALLBACK_THRESHOLD =
+    intent === "offer" ? 0.40 : intent === "pricing" ? 0.45 : 0.50;
+  const HARD_MIN_SIMILARITY =
+    intent === "offer" ? 0.30 : intent === "pricing" ? 0.36 : 0.48;
+  const SOFT_MIN_SIMILARITY =
+    intent === "offer" ? 0.48 : intent === "pricing" ? 0.52 : 0.55;
 
   try {
     // 1) Create embedding for user query (Phase 5: cache by org+model+text_hash)
@@ -1652,7 +1658,18 @@ async function resolveKnowledgeContextSemantic(params: {
       .replace(/\bsmart\+/gi, "smart plus")
       .replace(/\+/g, " plus ");
 
-    const textHash = await sha256Hex(normalized.toLowerCase());
+          // Short-query expansion (embedding only):
+          // If query is very short and intent is pricing/offer, embeddings can be weak.
+          // Expand with stable pricing/offer tokens to improve recall without changing user-visible behavior.
+          const isShort =
+            normalized.length < 18 || normalized.split(/\s+/).filter(Boolean).length < 3;
+      
+          const embedInput =
+            (intent === "pricing" || intent === "offer") && isShort
+              ? `${normalized} on-road price breakup ex-showroom insurance rto tcs discount offer scheme variant`
+              : normalized;
+      
+          const textHash = await sha256Hex(embedInput.toLowerCase());
 
     // Cache lookup (service-role table; never blocks if it fails)
     let embedding: number[] | null = null;
@@ -1675,7 +1692,7 @@ async function resolveKnowledgeContextSemantic(params: {
     if (!embedding) {
       const embeddingResp = await openai.embeddings.create({
         model: EMBED_MODEL,
-        input: normalized,
+        input: embedInput,
       });
 
       const e = embeddingResp.data?.[0]?.embedding;
@@ -1766,7 +1783,7 @@ async function resolveKnowledgeContextSemantic(params: {
         title: String(r.article_title || "KB"),
         chunk: String(r.chunk || ""),
         similarity: sim,
-        score: combinedScore(sim, undefined),
+        score: combinedScore(sim, undefined, intent),
       });
     }
 
@@ -1776,7 +1793,7 @@ async function resolveKnowledgeContextSemantic(params: {
       const existing = merged.get(id);
       if (existing) {
         existing.rank = rank;
-        existing.score = combinedScore(existing.similarity, rank);
+        existing.score = combinedScore(existing.similarity, rank, intent);
       } else {
         merged.set(id, {
           id,
@@ -1784,7 +1801,7 @@ async function resolveKnowledgeContextSemantic(params: {
           title: String(r.article_title || "KB"),
           chunk: String(r.chunk || ""),
           rank,
-          score: combinedScore(undefined, rank),
+          score: combinedScore(undefined, rank, intent),
         });
       }
     }
@@ -1950,7 +1967,6 @@ async function resolveKnowledgeContextSemantic(params: {
       const sim = typeof r.similarity === "number" ? r.similarity : undefined;
       const rank = typeof r.rank === "number" ? r.rank : undefined;
 
-      const intent = params.intent || "other";
       const baseScore = combinedScore(sim, rank, intent);
 
       viable.push({
@@ -2024,7 +2040,6 @@ async function resolveKnowledgeContextSemantic(params: {
 
     // 4) Build compact context from top rows with dedupe
     // 4) Pack context by budget (dynamic, no sim metadata)
-    const intent = params.intent || "other";
     const pricingMode = intent === "pricing" || intent === "offer";
 
     // 🔒 Pricing requires full-article coverage
@@ -2035,12 +2050,6 @@ async function resolveKnowledgeContextSemantic(params: {
         byArticle.get(r.article_id)!.push(r);
       }
 
-      // Prefer articles with many pricing rows (variant tables)
-      viable.sort((a, b) => {
-        const ac = byArticle.get(a.article_id)?.length ?? 0;
-        const bc = byArticle.get(b.article_id)?.length ?? 0;
-        return bc - ac;
-      });
     }
 
     const packed = packKbContext({
@@ -3075,14 +3084,6 @@ ${personality.donts || "- None specified."}
       });
       logger.info("[ai-extract] result", aiExtract);
 
-      // Business rule: we always quote Jaipur unless specified otherwise (but UX: don't ask)
-      // If you don't have a city field in aiExtract, you can skip this block safely.
-      if (
-        (aiExtract as any).city == null ||
-        String((aiExtract as any).city).trim() === ""
-      ) {
-        (aiExtract as any).city = DEFAULT_CITY;
-      }
       // Heuristic intent failsafe: if AI extraction is missing/other, infer from keywords.
       // This prevents pricing/offer turns from being treated as "other" and getting blocked/hedged.
       const heuristic = inferIntentHeuristic(user_message);
@@ -3296,8 +3297,15 @@ ${personality.donts || "- None specified."}
     // This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
     const kbHasPricingSignals =
   looksLikePricingOrOfferContext(contextText) ||
+  // strong pricing-table heuristic: multiple big numbers + pricing column keywords
+  (
+    (/(ex[-\s]?showroom|on[-\s]?road|insurance|rto|tcs)/i.test(contextText)) &&
+    ((contextText.match(/\b\d{5,}\b/g) || []).length >= 3)
+  ) ||
+  // your existing variant+keyword rule
   (/\bvariant\b/i.test(contextText) &&
     /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i.test(contextText));
+
 
     const campaignHasPricingSignals =
       looksLikePricingOrOfferContext(campaignContextText) ||
@@ -3537,7 +3545,7 @@ IMPORTANT:
 - UNVERIFIED FACTS FIREWALL (PHASE 4 — HARD):
   - This rule applies ONLY to FACTS the USER claims first (e.g., "I was told ₹X", "discount is ₹Y", "delivery in 2 weeks").
   - Treat user-provided prices/discounts/offers/availability/timelines as UNVERIFIED unless the same info appears in Knowledge Context or Campaign Context.
-  - If the user asks you to CONFIRM their claim ("right?", "correct?"), say you can't verify it from authorized sources and ask ONE short clarifying question (variant/city) or offer a human handoff.
+  - If the user asks you to CONFIRM their claim ("right?", "correct?"), say you can't verify it from authorized sources and ask ONE short clarifying question (variant) or offer a human handoff.
   - If the user is ASKING you for pricing/offers (and they did NOT provide numbers), answer confidently using verified numbers from Knowledge/Campaign context.
   - HARD DO-NOT-SAY:
   - Do NOT say "I can't verify", "I cannot verify", "can't confirm", "mujhe verify nahi", "मैं verify नहीं कर सकती" unless the USER first provided a specific number/claim you are being asked to confirm.
@@ -3546,7 +3554,7 @@ IMPORTANT:
  - PRICING RESPONSE FORMAT (WHEN KB HAS VERIFIED NUMBERS):
    - If the user asked for pricing and verified numbers exist in KB/Campaign context:
      1) First line MUST be:
-        "<Model> <Variant> (<Fuel/Transmission>) – On-road Jaipur: ₹<OnRoad>"
+        "<Model> <Variant> (<Fuel/Transmission>) – On-road: ₹<OnRoad>"
      2) Second line MUST be:
         "Breakup: Ex-showroom ₹…, Insurance ₹…, RTO ₹…, TCS ₹…"
         (Include only fields present in sources)
@@ -3592,7 +3600,7 @@ PRICING_ESTIMATE_REQUIRED: ${pricingEstimateRequired ? "YES" : "NO"}
 - For pricing/offers, use verified numbers ONLY if they appear in Knowledge Context or Campaign Context.
 - If verified numbers are NOT present, you may provide a rough estimate ONLY if it helps the customer, but you MUST clearly say: "This is an estimate. Our sales team will confirm the exact on-road price/offer."
 - If the customer asks about DISCOUNTS/OFFERS but does not mention a model/variant, ask ONE short clarifying question and include 3–5 model options you can help with (from context if available).
-- If the customer asks about PRICING but variant/city is missing, ask ONE short clarifying question (variant + city) OR share the closest variant pricing only if it is explicitly in Knowledge/Campaign context.
+- If the customer asks about PRICING but variant is missing, ask ONE short clarifying question (variant) OR share the closest variant pricing only if it is explicitly in Knowledge/Campaign context.
 
 ------------------------
 WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
@@ -3673,7 +3681,7 @@ ENTITY SAFETY RULE (CRITICAL)
 ------------------------
 - If a vehicle model is locked, keep using it.
 - For pricing/offers, do NOT assume numbers. Require verified pricing/offer signals in KB or Campaign Context.
-- If variant/city changes the quote and is not known, ask ONE short clarifying question.
+- If variant changes the quote and is not known, ask ONE short clarifying question.
 - If intent is unclear, ask ONE clarifying question.
 - Do NOT invent prices or discounts.
 
@@ -3818,12 +3826,43 @@ Respond now to the customer's latest message only.
     let aiResponseText = forcedReplyText ?? aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
+    // If user asked pricing and KB has pricing signals, but the model didn't output any numbers,
+// show the KB options instead of only asking "confirm variant".
+if (
+  aiExtract.intent === "pricing" &&
+  kbHasPricingSignals &&
+  !/\d/.test(aiResponseText) &&
+  /variant|confirm|which/i.test(aiResponseText)
+) {
+  const lines = (contextText || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => /on[- ]?road|ex[- ]?showroom|insurance|rto|tcs|₹/i.test(l))
+    .slice(0, 12);
+
+  if (lines.length) {
+    aiResponseText =
+      `Here’s what I have in the knowledge base:\n` +
+      lines.map((l) => `• ${l}`).join("\n") +
+      `\n\nWhich exact variant (fuel + transmission) should I quote for you?`;
+  }
+}
+
+    const looksLikeClarification =
+  /\?\s*$/.test(aiResponseText.trim()) &&
+  !/\d/.test(aiResponseText) &&
+  !/₹/.test(aiResponseText);
+
+
     // ------------------------------------------------------------------
     // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
     // ------------------------------------------------------------------
     const shouldValidate =
-      Boolean(contextText?.trim() || campaignContextText?.trim()) &&
-      aiResponseText !== fallbackMessage;
+  Boolean(contextText?.trim() || campaignContextText?.trim()) &&
+  aiResponseText !== fallbackMessage &&
+  !looksLikeClarification;
+
 
     if (shouldValidate) {
       const highRiskIntent =
@@ -3850,7 +3889,7 @@ Respond now to the customer's latest message only.
         // Prefer grounded rewrite; if missing, fall back to safe clarification
         aiResponseText =
           v.revised_answer ||
-          "I can help — just confirm the exact variant (fuel + transmission) and I’ll share the correct pricing from the knowledge base.";
+          "I can help — which exact variant (fuel + transmission) is this for? I’ll share the exact pricing from the knowledge base.";
       }
     }
 
@@ -3879,8 +3918,29 @@ Respond now to the customer's latest message only.
         });
 
         aiResponseText =
-          "I can help — just confirm the exact variant (fuel + transmission) and I’ll share the correct quote from the knowledge base.";
+          "I can help — which exact variant (fuel + transmission) is this for? I’ll share the exact quote from the knowledge base.";
       }
+    }
+
+    
+    // ------------------------------------------------------------------
+    // HARD DO-NOT-SAY ENFORCEMENT:
+    // Do not say "can't verify/can't confirm" unless user provided a numeric claim.
+    // ------------------------------------------------------------------
+    const userProvidedNumber = /\d|₹/.test(user_message || "");
+    const containsCantVerify =
+      /\b(can'?t|cannot)\s+(verify|confirm)\b/i.test(aiResponseText) ||
+      /verify\s+nahi/i.test(aiResponseText) ||
+      /मैं\s+verify/i.test(aiResponseText);
+
+    if (!userProvidedNumber && containsCantVerify) {
+      logger.warn("[validator] removed cant-verify phrasing (no user numeric claim)", {
+        intent: aiExtract.intent,
+      });
+
+      // Replace with one short clarifying question (variant only).
+      aiResponseText =
+        "Sure — which exact variant (fuel + transmission) should I quote for?";
     }
 
     // 14) Wallet debit + AI usage log (only if AI was actually called)

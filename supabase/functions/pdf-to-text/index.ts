@@ -5,15 +5,17 @@
 //
 // Expected request body (recommended):
 //   { "article_id": "uuid" }
-//
-// Optional (legacy, validated against DB):
-//   { "organization_id": "uuid", "bucket": "kb", "path": "orgs/.../file.pdf" }
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import { logAuditEvent } from "../_shared/audit.ts";
-import { getRequestId, requireOrgMembership, requireUser } from "../_shared/auth.ts";
+import {
+  getRequestId,
+  isInternalRequest,
+  requireOrgMembership,
+  requireUser,
+} from "../_shared/auth.ts";
 
 /* --------------------------------------------------
    CORS
@@ -21,7 +23,7 @@ import { getRequestId, requireOrgMembership, requireUser } from "../_shared/auth
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-internal-api-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -40,9 +42,7 @@ const PROJECT_URL = Deno.env.get("PROJECT_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
 
 if (!OPENAI_API_KEY || !PROJECT_URL || !SERVICE_ROLE_KEY) {
-  console.error(
-    "[pdf-to-text] Missing env: OPENAI_API_KEY / PROJECT_URL / SERVICE_ROLE_KEY",
-  );
+  console.error("[pdf-to-text] Missing env: OPENAI_API_KEY / PROJECT_URL / SERVICE_ROLE_KEY");
 }
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -91,7 +91,6 @@ async function safeMarkProcessing(
   organizationId: string,
   patch: Record<string, unknown>,
 ) {
-  // Best-effort; never throw from this helper.
   try {
     await supabaseAdmin
       .from("knowledge_articles")
@@ -134,7 +133,6 @@ serve(async (req) => {
   let used_ocr = false;
 
   try {
-    // Parse JSON safely
     try {
       body = (await req.json()) as ReqBody;
     } catch {
@@ -151,141 +149,108 @@ serve(async (req) => {
       return json(400, { error: "article_id is required", request_id });
     }
 
-    /* --------------------------------------------------
-       PHASE 0 / P0: AUTH + ORG DERIVATION FROM DB (NOT REQUEST BODY)
-    -------------------------------------------------- */
-    const user = await requireUser(req as Request);
-
     // Load article FIRST (authoritative org_id + storage path)
     const { data: article, error: articleErr } = await supabaseAdmin
       .from("knowledge_articles")
-      .select(
-        "id, organization_id, title, status, source_type, file_bucket, file_path, file_mime_type",
-      )
+      .select("id, organization_id, title, status, source_type, file_bucket, file_path, file_mime_type")
       .eq("id", article_id)
       .maybeSingle();
 
-    if (articleErr) {
-      throw new Error(`Failed to load knowledge_article: ${articleErr.message}`);
-    }
-    if (!article) {
-      return json(404, { error: "knowledge_article not found", request_id });
-    }
+    if (articleErr) throw new Error(`Failed to load knowledge_article: ${articleErr.message}`);
+    if (!article) return json(404, { error: "knowledge_article not found", request_id });
 
     const a = article as KnowledgeArticleRow;
     organization_id = a.organization_id;
     bucket = a.file_bucket;
     path = a.file_path;
 
-    if (!organization_id) {
-      throw new Error("knowledge_article.organization_id is missing");
-    }
+    if (!organization_id) throw new Error("knowledge_article.organization_id is missing");
     if (!bucket || !path) {
-      throw new Error(
-        "knowledge_article.file_bucket / file_path missing (cannot extract PDF)",
-      );
+      throw new Error("knowledge_article.file_bucket / file_path missing (cannot extract PDF)");
     }
 
-    // Validate membership against the derived org_id (tenant boundary)
-    await requireOrgMembership({
-      supabaseAdmin,
-      userId: user.id,
-      organizationId: organization_id,
-    });
+    // AUTHZ:
+    // - normal user request: require user + org membership
+    // - internal worker request: bypass user auth (isInternalRequest handles internal key gating)
+    if (!isInternalRequest(req as Request)) {
+      const user = await requireUser(req as Request);
+      await requireOrgMembership({
+        supabaseAdmin,
+        userId: user.id,
+        organizationId: organization_id,
+      });
+    }
 
     // Backward-compat validation: if request passed org/bucket/path, they MUST match DB.
     if (req_org_id && req_org_id !== organization_id) {
       return json(403, {
-        error:
-          "organization_id mismatch (request body does not match article org)",
+        error: "organization_id mismatch (request body does not match article org)",
         request_id,
       });
     }
     if (req_bucket && req_bucket !== bucket) {
-      return json(400, {
-        error: "bucket mismatch (request body does not match article bucket)",
-        request_id,
-      });
+      return json(400, { error: "bucket mismatch (request body does not match article bucket)", request_id });
     }
     if (req_path && req_path !== path) {
-      return json(400, {
-        error: "path mismatch (request body does not match article path)",
-        request_id,
-      });
+      return json(400, { error: "path mismatch (request body does not match article path)", request_id });
     }
 
-    /* --------------------------------------------------
-       MARK PROCESSING STARTED (BEST PRACTICE)
-    -------------------------------------------------- */
+    // Mark processing started
     await safeMarkProcessing(article_id, organization_id, {
       processing_status: "processing",
       processing_error: null,
       last_processed_at: new Date().toISOString(),
     });
 
-    logAuditEvent(supabaseAdmin, {
-      organization_id,
-      action: "kb_extract_started",
-      entity_type: "knowledge_article",
-      entity_id: article_id,
-      metadata: {
-        request_id,
-        bucket,
-        path,
-        mime_type: a.file_mime_type ?? "application/pdf",
-      },
-    });
+    // audit: started (awaited)
+    try {
+      await logAuditEvent(supabaseAdmin, {
+        organization_id,
+        action: "kb_extract_started",
+        entity_type: "knowledge_article",
+        entity_id: article_id,
+        metadata: {
+          request_id,
+          bucket,
+          path,
+          mime_type: a.file_mime_type ?? "application/pdf",
+        },
+      });
+    } catch (e) {
+      console.warn("[pdf-to-text] audit failed: kb_extract_started", String(e));
+    }
 
-    /* --------------------------------------------------
-       1) Download PDF from Supabase Storage (SERVICE ROLE)
-       - But tenant safety is enforced by article-derived org + membership above.
-    -------------------------------------------------- */
+    // Download PDF
     const { data: fileData, error: dlErr } = await supabaseAdmin.storage
       .from(bucket)
       .download(path);
 
     if (dlErr || !fileData) {
-      throw new Error(
-        `Failed to download PDF from storage: ${dlErr?.message ?? "unknown"}`,
-      );
+      throw new Error(`Failed to download PDF from storage: ${dlErr?.message ?? "unknown"}`);
     }
 
     const pdfBytes = new Uint8Array(await fileData.arrayBuffer());
 
-    // Basic sanity: avoid accidental huge files blowing memory / costs (tune as needed)
     const MAX_BYTES = 20 * 1024 * 1024; // 20MB
-    if (pdfBytes.byteLength === 0) {
-      throw new Error("Downloaded file is empty");
-    }
+    if (pdfBytes.byteLength === 0) throw new Error("Downloaded file is empty");
     if (pdfBytes.byteLength > MAX_BYTES) {
-      throw new Error(
-        `PDF too large (${pdfBytes.byteLength} bytes). Max allowed: ${MAX_BYTES} bytes.`,
-      );
+      throw new Error(`PDF too large (${pdfBytes.byteLength} bytes). Max allowed: ${MAX_BYTES} bytes.`);
     }
 
-    /* --------------------------------------------------
-       2) EDGE-SAFE: pass the PDF directly to Responses API
-       - DO NOT use openai.files.create() (not reliable in Edge/ESM)
-    -------------------------------------------------- */
     const pdfFile = bytesToFile(
       pdfBytes,
       "source.pdf",
       a.file_mime_type ?? "application/pdf",
     );
 
-    /* --------------------------------------------------
-       3) DIGITAL TEXT EXTRACTION (fast path)
-    -------------------------------------------------- */
+    // 1) digital text extraction
     const extractResp = await openai.responses.create({
       model: "gpt-4o-mini",
       input: [
         {
           role: "user",
           content: [
-            {
-              type: "input_file",
-              file: pdfFile,
-            },
+            { type: "input_file", file: pdfFile },
             {
               type: "input_text",
               text:
@@ -299,10 +264,7 @@ serve(async (req) => {
 
     let text = extractResp.output_text?.trim() ?? "";
 
-    /* --------------------------------------------------
-       4) OCR FALLBACK (scanned PDFs)
-       - Same file, different instruction.
-    -------------------------------------------------- */
+    // 2) OCR fallback
     if (text.length < 200) {
       used_ocr = true;
 
@@ -312,10 +274,7 @@ serve(async (req) => {
           {
             role: "user",
             content: [
-              {
-                type: "input_file",
-                file: pdfFile,
-              },
+              { type: "input_file", file: pdfFile },
               {
                 type: "input_text",
                 text:
@@ -331,13 +290,9 @@ serve(async (req) => {
       text = ocrResp.output_text?.trim() ?? "";
     }
 
-    if (!text) {
-      throw new Error("No text could be extracted from this PDF");
-    }
+    if (!text) throw new Error("No text could be extracted from this PDF");
 
-    /* --------------------------------------------------
-       5) Save extracted text to knowledge_articles
-    -------------------------------------------------- */
+    // Save extracted text
     const { error: updateErr } = await supabaseAdmin
       .from("knowledge_articles")
       .update({
@@ -350,11 +305,9 @@ serve(async (req) => {
       .eq("id", article_id)
       .eq("organization_id", organization_id);
 
-    if (updateErr) {
-      throw new Error(`Failed to update article content: ${updateErr.message}`);
-    }
+    if (updateErr) throw new Error(`Failed to update article content: ${updateErr.message}`);
 
-    // P1: enqueue embedding as a background job (best-effort).
+    // enqueue embed job (best-effort)
     try {
       await supabaseAdmin.from("background_jobs").insert({
         organization_id,
@@ -364,20 +317,21 @@ serve(async (req) => {
         run_at: new Date().toISOString(),
       });
     } catch (e) {
-      console.warn("[pdf-to-text] failed to enqueue embed_article job", e);
+      console.warn("[pdf-to-text] failed to enqueue embed_article job", String(e));
     }
 
-    logAuditEvent(supabaseAdmin, {
-      organization_id,
-      action: "kb_extract_completed",
-      entity_type: "knowledge_article",
-      entity_id: article_id,
-      metadata: {
-        request_id,
-        extracted_chars: text.length,
-        used_ocr,
-      },
-    });
+    // audit: completed (awaited)
+    try {
+      await logAuditEvent(supabaseAdmin, {
+        organization_id,
+        action: "kb_extract_completed",
+        entity_type: "knowledge_article",
+        entity_id: article_id,
+        metadata: { request_id, extracted_chars: text.length, used_ocr },
+      });
+    } catch (e) {
+      console.warn("[pdf-to-text] audit failed: kb_extract_completed", String(e));
+    }
 
     return json(200, {
       success: true,
@@ -390,7 +344,6 @@ serve(async (req) => {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
 
-    // Persist processing failure (best-effort)
     if (organization_id && article_id) {
       await safeMarkProcessing(article_id, organization_id, {
         processing_status: "error",
@@ -400,7 +353,7 @@ serve(async (req) => {
     }
 
     try {
-      logAuditEvent(supabaseAdmin, {
+      await logAuditEvent(supabaseAdmin, {
         organization_id: organization_id ?? "unknown",
         action: "kb_extract_failed",
         entity_type: "knowledge_article",
@@ -408,7 +361,7 @@ serve(async (req) => {
         metadata: { request_id, error: msg },
       });
     } catch {
-      // ignore audit failures
+      // ignore
     }
 
     console.error("[pdf-to-text] fatal", msg);
