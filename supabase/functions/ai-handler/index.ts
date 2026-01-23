@@ -1083,9 +1083,11 @@ const MODEL_CHARGED_PRICE: Record<string, number> = {
   "gemini-1.5-flash": 2.0,
 };
 
-function getChargedAmountForModel(model: string): number {
-  return MODEL_CHARGED_PRICE[model] ?? 2.5;
+function getChargedAmountForModel(model?: string | null): number {
+  const key = (model || "").trim();
+  return MODEL_CHARGED_PRICE[key] ?? 2.5;
 }
+
 
 function estimateActualCost(params: {
   provider: "openai" | "gemini";
@@ -1613,13 +1615,13 @@ async function resolveKnowledgeContextSemantic(params: {
     used: {
       id: string;
       article_id: string;
-      similarity: number;
+      similarity?: number;
       title: string;
     }[];
     rejected: {
       id: string;
       article_id: string;
-      similarity: number;
+      similarity?: number;
       title: string;
       reason: string;
     }[];
@@ -3900,9 +3902,13 @@ if (
     const highRiskIntent =
       aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-    // Block pricing-style answers ONLY when pricing is truly unsupported by KB or campaign
+      const pricingIsActuallyAvailable =
+      (kbFound && kbHasPricingSignals) || campaignHasPricingSignals;    
+    
+      // Block pricing-style answers ONLY when pricing is truly unsupported by KB or campaign
     if (
       highRiskIntent &&
+      !pricingIsActuallyAvailable &&  
       pricingEstimateRequired &&
       !kbHasPricingSignals &&
       !campaignHasPricingSignals
