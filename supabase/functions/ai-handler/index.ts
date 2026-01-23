@@ -303,12 +303,30 @@ function extractOfferEntriesFromText(text: string): OfferEntry[] {
       const manufacturing_year =
         (rest.match(/\bManufacturing Year\s*:\s*(\d{4})\b/i)?.[1] || "").trim() || null;
 
-      const original_price =
-        (rest.match(/\bOriginal Price\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
-      const discounted_price =
-        (rest.match(/\bDiscounted Price\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
-      const total_discount =
-        (rest.match(/\bTotal Discount\s*:\s*([^\n]+)\n?/i)?.[1] || "").trim() || null;
+      // Offers article variants are often written as:
+      // - Original Ex-Showroom Price
+      // - Discount Amount
+      // - Final Discounted Ex-Showroom Price
+      // Keep the field names flexible so the parser works even if wording changes slightly.
+      const original_price = (
+        rest.match(/\bOriginal(?:\s+Ex-Showroom)?\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
+        rest.match(/\bOriginal\s*Ex\s*-?\s*Showroom\s*Price\s*:\s*([^\n]+)\n/i)?.[1] ||
+        rest.match(/\bOriginal\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
+        ""
+      ).trim() || null;
+
+      const discounted_price = (
+        rest.match(/\bFinal\s+Discounted(?:\s+Ex-Showroom)?\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
+        rest.match(/\bFinal\s+Discounted\s*Ex\s*-?\s*Showroom\s*Price\s*:\s*([^\n]+)\n/i)?.[1] ||
+        rest.match(/\bDiscounted\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
+        ""
+      ).trim() || null;
+
+      const total_discount = (
+        rest.match(/\bDiscount\s+Amount\s*:\s*([^\n]+)\n?/i)?.[1] ||
+        rest.match(/\bTotal\s+Discount\s*:\s*([^\n]+)\n?/i)?.[1] ||
+        ""
+      ).trim() || null;
 
       entries.push({
         model: model || "",
@@ -416,9 +434,9 @@ function buildOfferReply(entry: OfferEntry): string {
 
   // Human-like, but complete
   if (head) bits.push(`${head} ✅`);
-  if (final) bits.push(`Final (after offer): ${final}`);
-  if (original) bits.push(`Original: ${original}`);
-  if (discount) bits.push(`Discount: ${discount}`);
+  if (final) bits.push(`Final Offer Ex-Showroom: ${final}`);
+  if (original) bits.push(`Original Ex-Showroom: ${original}`);
+  if (discount) bits.push(`Discount Amount: ${discount}`);
 
   // Soft next step (human)
   bits.push(`If you want, I can also check availability for this exact color/year.`);
@@ -450,13 +468,15 @@ function buildOfferListReply(params: {
     for (const e of filtered.slice(0, 6)) {
       const final = e.discounted_price ? formatRupee(e.discounted_price) : "";
       const disc = e.total_discount ? formatRupee(e.total_discount) : "";
+      const orig = e.original_price ? formatRupee(e.original_price) : "";
       const suffixBits: string[] = [];
+      if (orig) suffixBits.push(`Original ${orig}`);
       if (disc) suffixBits.push(`Discount ${disc}`);
-      if (final) suffixBits.push(`Final ${final}`);
+      if (final) suffixBits.push(`Offer Ex-Showroom ${final}`);
       const suffix = suffixBits.length ? ` — ${suffixBits.join(" | ")}` : "";
       lines.push(`• ${e.variant}${suffix}`);
     }
-    lines.push("Tell me the variant name and I’ll share the full breakup (original + discount + final) from the offer list.");
+    lines.push("Tell me the variant name and I’ll share the full breakup (original ex-showroom + discount + offer ex-showroom) from the offer list.");
     return lines.join("\n");
   }
 
@@ -476,9 +496,11 @@ function buildOfferListReply(params: {
     for (const e of list.slice(0, 4)) {
       const final = e.discounted_price ? formatRupee(e.discounted_price) : "";
       const disc = e.total_discount ? formatRupee(e.total_discount) : "";
+      const orig = e.original_price ? formatRupee(e.original_price) : "";
       const suffixBits: string[] = [];
+      if (orig) suffixBits.push(`Original ${orig}`);
       if (disc) suffixBits.push(`Discount ${disc}`);
-      if (final) suffixBits.push(`Final ${final}`);
+      if (final) suffixBits.push(`Offer Ex-Showroom ${final}`);
       const suffix = suffixBits.length ? ` — ${suffixBits.join(" | ")}` : "";
       lines.push(`• ${e.variant}${suffix}`);
     }
