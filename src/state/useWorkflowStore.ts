@@ -227,9 +227,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
      ADD STEP
   ===================================================== */
   addStep: async (workflowId, action) => {
+
+     const { activeOrganization } = useOrganizationStore.getState();
+    if (!activeOrganization?.id) {
+      set({ error: "No active organization selected." });
+      return;
+    }
+
     const stepOrder = (get().steps[workflowId]?.length ?? 0) + 1;
 
     const { error } = await supabase.from("workflow_steps").insert({
+      organization_id: activeOrganization.id,
       workflow_id: workflowId,
       step_order: stepOrder,
       action,
@@ -331,6 +339,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (wfSteps?.length) {
       await supabase.from("workflow_steps").insert(
         wfSteps.map((s: any) => ({
+          organization_id: wf.organization_id,
           workflow_id: newWF.id,
           step_order: s.step_order,
           action: s.action,
@@ -399,6 +408,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (Array.isArray(wf.steps)) {
       await supabase.from("workflow_steps").insert(
         wf.steps.map((s: any, i: number) => ({
+          organization_id: activeOrganization.id,
           workflow_id: workflowId,
           step_order: i + 1,
           action: {
