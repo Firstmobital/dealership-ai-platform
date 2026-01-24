@@ -125,6 +125,113 @@ function isOfferArticle(title: string, chunk: string): boolean {
   return OFFER_ARTICLE_HINTS.some((h) => joined.includes(normalizeForMatch(h)));
 }
 
+async function fetchOfferCatalogText(params: {
+  organizationId: string;
+  logger: ReturnType<typeof createLogger>;
+  model?: string | null;
+}): Promise<string | null> {
+  const { organizationId, logger } = params;
+  const model = (params.model || "").trim();
+
+  // 1) Find likely offers articles by title (deterministic)
+  const articles = await safeSupabase<{ id: string; title: string }[]>(
+    "fetch_offer_articles",
+    logger,
+    async () => {
+      return await supabase
+        .from("knowledge_articles")
+        .select("id,title")
+        .eq("organization_id", organizationId)
+        .ilike("title", "%stock%offer%")
+        .limit(5);
+    }
+  );
+
+  let articleIds = (articles || []).map((a) => String((a as any).id));
+
+  // 1.5) Fallback: if title doesn't match, locate by chunk signals (MODEL: + Discount Amount)
+  if (!articleIds.length) {
+    const chunkHits = await safeSupabase<any[]>(
+      "fetch_offer_articles_by_chunk",
+      logger,
+      async () => {
+        return await supabase
+          .from("knowledge_chunks")
+          .select("article_id")
+          .eq("organization_id", organizationId)
+          .ilike("chunk", "%MODEL:%")
+          .ilike("chunk", "%Discount Amount%")
+          .limit(10);
+      }
+    );
+
+    articleIds = [...new Set((chunkHits || []).map((r) => String(r.article_id)))];
+  }
+
+  if (!articleIds.length) return null;
+
+  // 2) Pull all chunks for those articles
+  let query = supabase
+    .from("knowledge_chunks")
+    .select("id,article_id,chunk,chunk_index,knowledge_articles(title)")
+    .eq("organization_id", organizationId)
+    .in("article_id", articleIds)
+    .order("chunk_index", { ascending: true })
+    .limit(250);
+
+  // If model is specified, try to filter chunks down to only those that mention the model.
+  // (Still best-effort; if filtering returns nothing, we fall back to full article.)
+  if (model) {
+    const modelNorm = model.replace(/[\s]+/g, " ").trim();
+    query = query.ilike("chunk", `%${modelNorm}%`);
+  }
+
+  const modelFiltered = await safeSupabase<any[]>(
+    "fetch_offer_catalog_chunks",
+    logger,
+    async () => await query
+  );
+
+  let rows = modelFiltered || [];
+
+  // If model-filtered fetch returned nothing, fetch full catalog.
+  if (!rows.length && model) {
+    const allRows = await safeSupabase<any[]>(
+      "fetch_offer_catalog_chunks_all",
+      logger,
+      async () => {
+        return await supabase
+          .from("knowledge_chunks")
+          .select("id,article_id,chunk,chunk_index,knowledge_articles(title)")
+          .eq("organization_id", organizationId)
+          .in("article_id", articleIds)
+          .order("chunk_index", { ascending: true })
+          .limit(250);
+      }
+    );
+    rows = allRows || [];
+  }
+
+  if (!rows.length) return null;
+
+  // 3) Concatenate, prioritizing obvious offer-like chunks.
+  const chunks = rows
+    .map((r) => String(r.chunk || "").trim())
+    .filter(Boolean);
+
+  const joined = chunks.join("\n\n").trim();
+  if (!joined) return null;
+
+  logger.info("[offer] offer_catalog_fetched", {
+    article_ids: articleIds,
+    chunks: chunks.length,
+    model: model || null,
+  });
+
+  return joined;
+}
+
+
 type KBCandidate = {
   id: string;
   article_id: string;
@@ -248,89 +355,84 @@ function extractOfferEntriesFromText(text: string): OfferEntry[] {
   const t = (text || "").trim();
   if (!t) return [];
 
-  // Normalize some common formatting differences
+  // Normalize formatting (we can't rely on newlines because KB chunks may be single-line)
   const normalized = t
     .replace(/\r/g, "")
     .replace(/\t/g, " ")
-    .replace(/[ ]{2,}/g, " ");
+    .replace(/[ ]{2,}/g, " ")
+    .trim();
 
-  // Split into MODEL blocks if present
-  const parts = normalized.split(/\n\s*MODEL\s*:\s*/i);
   const entries: OfferEntry[] = [];
 
-  for (let i = 0; i < parts.length; i++) {
-    const block = parts[i].trim();
-    if (!block) continue;
+  // Helper: extract field value until the next known label or end
+  const pick = (src: string, label: string): string | null => {
+    const re = new RegExp(
+      `\\b${label}\\s*:\\s*([^]+?)\\s*(?=\\bVariant\\s*:|\\bMODEL\\s*:|\\bFuel\\s*:|\\bTransmission\\s*:|\\bColor(?: Options)?\\s*:|\\bManufacturing Year\\s*:|\\bPricing\\s*:|\\bOriginal(?:\\s+Ex-Showroom)?\\s+Price\\s*:|\\bDiscount Amount\\s*:|\\bFinal(?:\\s+Discounted)?(?:\\s+Ex-Showroom)?\\s+Price\\s*:|$)`,
+      "i"
+    );
+    const m = src.match(re);
+    return (m?.[1] || "").trim() || null;
+  };
 
+  const hasModelMarkers = /\bMODEL\s*:/i.test(normalized);
+
+  // Split into MODEL blocks if present; otherwise treat whole text as a single block
+  const modelBlocks = hasModelMarkers
+    ? normalized.split(/\bMODEL\s*:\s*/i).map((p) => p.trim()).filter(Boolean)
+    : [normalized];
+
+  for (const mb of modelBlocks) {
     let model = "";
-    let body = block;
+    let body = mb;
 
-    if (i === 0 && !/^\w+/i.test(block)) continue;
-
-    if (i > 0) {
-      const firstLineBreak = block.indexOf("\n");
-      if (firstLineBreak >= 0) {
-        model = block.slice(0, firstLineBreak).trim();
-        body = block.slice(firstLineBreak + 1);
+    if (hasModelMarkers) {
+      // model name is before the first "Variant:" (or before a newline if present)
+      const idxVar = body.search(/\bVariant\s*:\s*/i);
+      if (idxVar >= 0) {
+        model = body.slice(0, idxVar).trim();
+        body = body.slice(idxVar);
       } else {
-        model = block.trim();
-        body = "";
+        // If no variants, skip
+        continue;
       }
     } else {
-      // If no MODEL headings exist, try to infer model from "MODEL:" lines inside
-      const m = block.match(/\bMODEL\s*:\s*([^\n]+)\n/i);
-      if (m) model = (m[1] || "").trim();
+      // Try to infer model from an inline "MODEL:" marker (rare) or leave blank
+      model = (pick(body, "MODEL") || "").trim();
     }
 
-    // Find variants inside the body (multiple variants per model)
-    const variantSplits = body.split(/\n\s*Variant\s*:\s*/i);
-    if (variantSplits.length <= 1) continue;
+    // Split variants inside the model body
+    const vparts = body.split(/\bVariant\s*:\s*/i).map((p) => p.trim());
+    if (vparts.length <= 1) continue;
 
-    for (let j = 1; j < variantSplits.length; j++) {
-      const vb = variantSplits[j];
-      const endIdx = vb.search(/\n\s*Variant\s*:\s*/i);
-      const vblock = (endIdx >= 0 ? vb.slice(0, endIdx) : vb).trim();
+    for (let j = 1; j < vparts.length; j++) {
+      const vraw = vparts[j];
 
-      const firstLineBreak = vblock.indexOf("\n");
-      const variant = (firstLineBreak >= 0 ? vblock.slice(0, firstLineBreak) : vblock).trim();
-      const rest = firstLineBreak >= 0 ? vblock.slice(firstLineBreak + 1) : "";
+      // Variant name is the text up to the next known label
+      const variantName =
+        (vraw.match(/^([^]+?)(?=\bFuel\s*:|\bTransmission\s*:|\bColor(?: Options)?\s*:|\bManufacturing Year\s*:|\bPricing\s*:|\bOriginal(?:\s+Ex-Showroom)?\s+Price\s*:|\bDiscount Amount\s*:|\bFinal(?:\s+Discounted)?(?:\s+Ex-Showroom)?\s+Price\s*:|\bVariant\s*:|\bMODEL\s*:|$)/i)?.[1] || "")
+          .replace(/\s+/g, " ")
+          .trim();
 
-      const fuel = (rest.match(/\bFuel\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
-      const transmission =
-        (rest.match(/\bTransmission\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
-      const color =
-        (rest.match(/\bColor(?: Options)?\s*:\s*([^\n]+)\n/i)?.[1] || "").trim() || null;
-      const manufacturing_year =
-        (rest.match(/\bManufacturing Year\s*:\s*(\d{4})\b/i)?.[1] || "").trim() || null;
+      const fuel = pick(vraw, "Fuel");
+      const transmission = pick(vraw, "Transmission");
+      const color = pick(vraw, "Color Options") ?? pick(vraw, "Color");
+      const manufacturing_year = pick(vraw, "Manufacturing Year");
 
-      // Offers article variants are often written as:
-      // - Original Ex-Showroom Price
-      // - Discount Amount
-      // - Final Discounted Ex-Showroom Price
-      // Keep the field names flexible so the parser works even if wording changes slightly.
-      const original_price = (
-        rest.match(/\bOriginal(?:\s+Ex-Showroom)?\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
-        rest.match(/\bOriginal\s*Ex\s*-?\s*Showroom\s*Price\s*:\s*([^\n]+)\n/i)?.[1] ||
-        rest.match(/\bOriginal\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
-        ""
-      ).trim() || null;
+      const original_price =
+        pick(vraw, "Original Ex-Showroom Price") ?? pick(vraw, "Original Price");
+      const total_discount = pick(vraw, "Discount Amount");
+      const discounted_price =
+        pick(vraw, "Final Discounted Ex-Showroom Price") ??
+        pick(vraw, "Final Discounted Price") ??
+        pick(vraw, "Final Ex-Showroom Price") ??
+        pick(vraw, "Final Price");
 
-      const discounted_price = (
-        rest.match(/\bFinal\s+Discounted(?:\s+Ex-Showroom)?\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
-        rest.match(/\bFinal\s+Discounted\s*Ex\s*-?\s*Showroom\s*Price\s*:\s*([^\n]+)\n/i)?.[1] ||
-        rest.match(/\bDiscounted\s+Price\s*:\s*([^\n]+)\n/i)?.[1] ||
-        ""
-      ).trim() || null;
-
-      const total_discount = (
-        rest.match(/\bDiscount\s+Amount\s*:\s*([^\n]+)\n?/i)?.[1] ||
-        rest.match(/\bTotal\s+Discount\s*:\s*([^\n]+)\n?/i)?.[1] ||
-        ""
-      ).trim() || null;
+      const modelFinal = (model || "").replace(/\s+/g, " ").trim();
+      if (!modelFinal || !variantName) continue;
 
       entries.push({
-        model: model || "",
-        variant,
+        model: modelFinal,
+        variant: variantName,
         fuel,
         transmission,
         manufacturing_year,
@@ -342,7 +444,7 @@ function extractOfferEntriesFromText(text: string): OfferEntry[] {
     }
   }
 
-  return entries.filter((e) => e.variant && (e.original_price || e.discounted_price || e.total_discount));
+  return entries;
 }
 
 function pickBestOfferEntry(params: {
@@ -456,9 +558,10 @@ function buildOfferListReply(params: {
     : params.entries;
 
   if (!filtered.length) {
+    // Be careful: "no offers" is rarely definitive. Use a softer fallback and offer a human follow-up.
     return model
-      ? `I don’t have any active stock offers listed for ${model} right now.`
-      : "I don’t have any active stock offers listed right now.";
+      ? `I don’t have a confirmed stock-offer entry for ${model} in my system right now. A sales executive can quickly verify the latest discounts for you — want me to connect you?`
+      : "I don’t have any confirmed stock-offer entries in my system right now. A sales executive can verify the latest discounts — want me to connect you?";
   }
 
   // Keep it human and scannable: show up to 6 variants, grouped by model when model not specified.
@@ -2088,7 +2191,19 @@ async function resolveKnowledgeContextSemantic(params: {
 } | null> {
   const { userMessage, organizationId, logger } = params;
 
-  const intent = params.intent || "other";
+    let intent = params.intent || "other";
+
+  // Heuristic upgrade: ai-extract can miss short discount/price queries ("smart discount").
+  // If the user message clearly signals pricing/offers, force the right KB mode so we pack the full article.
+  const um = (userMessage || "").toLowerCase();
+  const looksOffer = /\b(discount|offer|offers|scheme|stock offer|stock offers|deal|deals)\b/.test(um);
+  const looksPricing = /\b(price|pricing|on[- ]?road|ex[- ]?showroom|quotation|quote|emi)\b/.test(um);
+
+  if (intent === "other") {
+    if (looksOffer) intent = "offer";
+    else if (looksPricing) intent = "pricing";
+  }
+
 
   // Phase 2: Keep KB *strict* to reduce hallucinations.
   // - First pass: higher threshold.
@@ -3840,11 +3955,34 @@ ${personality.donts || "- None specified."}
         /\b(discount|offer|scheme|deal)\b/i.test(user_message);
 
       if (wantsOffer) {
-        const entries = extractOfferEntriesFromText(contextText);
+        let entries = extractOfferEntriesFromText(contextText);
+
         const lockedModel =
           (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null;
         const lockedVariant =
           (nextEntitiesWithKb as any)?.variant ?? aiExtract.vehicle_variant ?? null;
+
+        // If we didn't retrieve the offers catalog chunk(s) (common when chunking split by word-count
+        // or retrieval missed the model block), fetch the offers catalog deterministically.
+        const modelNormForCheck = normalizeForMatch(String(lockedModel || ""));
+        const modelMissingInEntries =
+          !!modelNormForCheck &&
+          entries.length > 0 &&
+          !entries.some((e) => normalizeForMatch(e.model || "").includes(modelNormForCheck));
+
+        if (!entries.length || modelMissingInEntries) {
+          const offerCatalog = await fetchOfferCatalogText({
+            organizationId: organizationId,
+            logger,
+            model: lockedModel,
+          });
+
+          if (offerCatalog) {
+            entries = extractOfferEntriesFromText(offerCatalog);
+            // Also override contextText so any downstream logging/debug reflects the catalog.
+            contextText = offerCatalog;
+          }
+        }
 
         // If variant is known, reply with the exact offer for that variant.
         if (lockedVariant) {
