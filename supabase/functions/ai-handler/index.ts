@@ -924,82 +924,6 @@ function looksLikePricingOrOfferContext(text: string): boolean {
   return hasLargeNumber || hasKNotation;
 }
 
-function looksLikeOfferTableOrOfferContext(text: string): boolean {
-  const src = (text || "").trim();
-  if (!src) return false;
-  const t = src.toLowerCase();
-
-  // Strong structural signals (your verified offers article format)
-  if (/(^|\n)\s*model\s*:\s*[^\n]+/i.test(src)) return true;
-  if (/(^|\n)\s*variant\s*:\s*[^\n]+/i.test(src)) return true;
-  if (/(^|\n)\s*discount\s*amount\s*:\s*[^\n]+/i.test(src)) return true;
-  if (/(^|\n)\s*final\s+discounted/i.test(src)) return true;
-
-  // Soft signals (still offer-related even if the chunk is intro)
-  const offerKeywords = [
-    "discount",
-    "offer",
-    "scheme",
-    "limited availability",
-    "limited stock",
-    "special stock",
-    "final discounted",
-    "ex-showroom",
-  ];
-  return offerKeywords.some((k) => t.includes(k));
-}
-
-async function fetchMoreChunksForOfferArticles(params: {
-  organizationId: string;
-  articleIds: string[];
-  logger: ReturnType<typeof createLogger>;
-  alreadyHaveText: string;
-  limitChunksPerArticle?: number;
-}): Promise<string> {
-  const {
-    organizationId,
-    articleIds,
-    logger,
-    alreadyHaveText,
-    limitChunksPerArticle = 12,
-  } = params;
-
-  const unique = [...new Set((articleIds || []).filter(Boolean))];
-  if (!unique.length) return "";
-
-  const existing = (alreadyHaveText || "").trim();
-
-  const out: string[] = [];
-  for (const article_id of unique.slice(0, 3)) {
-    const rows = await safeSupabase<{ chunk: string | null }[]>(
-      "kb_fetch_more_chunks_for_offer_article",
-      logger,
-      () =>
-        supabase
-          .from("knowledge_chunks")
-          .select("chunk")
-          .eq("organization_id", organizationId)
-          .eq("article_id", article_id)
-          .order("created_at", { ascending: true })
-          .limit(limitChunksPerArticle)
-    );
-
-    if (!rows?.length) continue;
-
-    for (const r of rows) {
-      const c = (r?.chunk || "").trim();
-      if (!c) continue;
-      // Avoid exact duplicates (best-effort)
-      if (existing && existing.includes(c.slice(0, Math.min(120, c.length)))) {
-        continue;
-      }
-      out.push(c);
-    }
-  }
-
-  return out.length ? out.join("\n\n") : "";
-}
-
 function redactUserProvidedPricing(text: string): string {
   // PHASE 4 — Unverified facts firewall:
   // For pricing/offers intents, user-provided numbers are never authoritative.
@@ -1022,6 +946,82 @@ function redactUserProvidedPricing(text: string): string {
     t = `[USER_UNVERIFIED_PRICING_CLAIM] ${t}`;
   }
 
+  return t;
+}
+
+
+/* ============================================================================
+   WORKFLOW ENFORCEMENT HELPERS (QUALIFICATION FLOWS)
+============================================================================ */
+
+function isQualificationWorkflowInstruction(text: string): boolean {
+  const t = (text || '').toLowerCase();
+  return (
+    t.includes('ask the user') ||
+    t.includes('fuel type') ||
+    t.includes('transmission preference') ||
+    t.includes('which fuel') ||
+    t.includes('which model') ||
+    t.includes('model or segment') ||
+    t.includes('which segment') ||
+    t.includes('one question')
+  );
+}
+
+type WorkflowQuestionType = 'fuel' | 'transmission' | 'model' | 'confirm' | null;
+
+function detectWorkflowQuestionType(instruction: string): WorkflowQuestionType {
+  const t = (instruction || '').toLowerCase();
+  if (t.includes('fuel') && t.includes('ask')) return 'fuel';
+  if (t.includes('transmission') && t.includes('ask')) return 'transmission';
+  if ((t.includes('which model') || t.includes('model or segment') || t.includes('segment')) && t.includes('ask')) return 'model';
+  if (t.includes('confirm') || t.includes('preferences have been noted')) return 'confirm';
+  return null;
+}
+
+function hasUserAnsweredFuel(userMsg: string): boolean {
+  const u = (userMsg || '').toLowerCase();
+  return /\b(petrol|diesel|ev|electric|cng)\b/.test(u);
+}
+
+function hasUserAnsweredTransmission(userMsg: string): boolean {
+  const u = (userMsg || '').toLowerCase();
+  return /\b(manual|automatic|amt|dca|at)\b/.test(u);
+}
+
+function hasUserAnsweredModel(userMsg: string): boolean {
+  const u = (userMsg || '').toLowerCase();
+  return /\b(nexon|punch|harrier|safari|curvv|altroz|tiago|tigor)\b/.test(u);
+}
+
+function buildQualificationQuestion(
+  qtype: Exclude<WorkflowQuestionType, null>,
+  locked: Record<string, any>,
+): string {
+  if (qtype === 'fuel') {
+    return 'Sure — which fuel do you prefer: Petrol, Diesel, EV, or Not sure?';
+  }
+  if (qtype === 'transmission') {
+    return 'Got it — transmission preference: Manual, Automatic, or Either?';
+  }
+  if (qtype === 'model') {
+    if (locked?.model) {
+      return 'Noted. Anything else you prefer — budget range or use-case (city/highway/family)?';
+    }
+    return 'Which model/segment are you interested in? (e.g., Nexon, Punch, Harrier, Safari, Curvv)';
+  }
+  return 'Perfect — noted. I’m checking the best available stock options with applicable offers. Anything specific you want: budget or model?';
+}
+
+function enforceTechwheelsOnlyCTA(text: string): string {
+  let t = text || '';
+  const replacements: Array<[RegExp, string]> = [
+    [/\bcontact (?:your|the) (?:nearest )?dealer(?:ship)?\b/gi, 'contact the Techwheels team'],
+    [/\bvisit (?:your|the) (?:nearest )?dealer(?:ship)?\b/gi, 'visit Techwheels'],
+    [/\breach out to (?:your|the) dealer(?:ship)?\b/gi, 'reach out to Techwheels'],
+    [/\bdealer(?:ship)?\b/gi, 'Techwheels'],
+  ];
+  for (const [rx, rep] of replacements) t = t.replace(rx, rep);
   return t;
 }
 
@@ -3553,7 +3553,7 @@ ${personality.donts || "- None specified."}
       (isShortFollowupMessage(user_message) ||
         // Pricing/offer follow-ups often aren't "short" but still refer to the same vehicle
         looksLikePricingOrOfferContext(user_message) ||
-        /(final|total|on\s*road|on-?road|discount|offer|scheme|breakup)/i.test(
+        /\b(final|total|on\s*road|on-?road|discount|offer|scheme|breakup)\b/i.test(
           user_message
         ));
 
@@ -3654,43 +3654,6 @@ ${personality.donts || "- None specified."}
         .order("created_at", { ascending: true })
         .limit(20)
     );
-
-    // ------------------------------------------------------------------
-    // FIX D — CAMPAIGN TOPIC CONTINUITY (NO SCHEMA CHANGE)
-    // If the user sends a short follow-up ("yes", "ok", "tell") right after
-    // a campaign / bot message mentioning discounts/offers, lock intent/topic
-    // to offer mode so KB retrieval + deterministic offer listing runs.
-    // ------------------------------------------------------------------
-    if (
-      aiExtract.intent === "other" &&
-      isShortFollowupMessage(user_message) &&
-      !isExplicitTopicChange(user_message)
-    ) {
-      const tail = (recentMessages ?? []).slice(-6);
-      const lastBotOfferish = [...tail]
-        .reverse()
-        .find((m) => (m.sender || "").toLowerCase() === "bot" &&
-          /\b(discount|offer|scheme|deal|special stock|limited stock)\b/i.test(m.text || ""));
-
-      // Also consider conversation.campaign_context as a hint source.
-      const campaignCtxText = JSON.stringify(conv.campaign_context ?? {});
-      const campaignCtxOfferish = /\b(discount|offer|scheme|deal|special stock|limited stock)\b/i.test(
-        campaignCtxText
-      );
-
-      if (lastBotOfferish || campaignCtxOfferish) {
-        logger.info("[ai-extract] campaign_offer_continuity_override", {
-          from: "other",
-          to: "offer",
-          bot_offerish: Boolean(lastBotOfferish),
-          campaign_context_offerish: campaignCtxOfferish,
-        });
-        aiExtract.intent = "offer";
-        // Keep continuity sticky for subsequent turns
-        (nextEntities as any).intent = "offer";
-        (nextEntities as any).topic = "offer_pricing";
-      }
-    }
 
     const historyMessages = buildChatMessagesFromHistory(
       (recentMessages ?? []).map((m) => ({ sender: m.sender, text: m.text })),
@@ -3871,53 +3834,13 @@ ${personality.donts || "- None specified."}
     // If KB context contains a structured offers table, respond deterministically
     // and auto-lock the exact variant until the user mentions a new model/variant.
     // ------------------------------------------------------------------
-    // FIX B — Offer parsing should NOT be blocked by strict pricing-signal gating.
-    // Offers chunks can be intro-only (no ₹), yet still must lead to the offers table.
-    const kbLooksOfferish = looksLikeOfferTableOrOfferContext(contextText);
-
-    if (!forcedReplyText && contextText.trim() && (kbLooksOfferish || kbHasPricingSignals)) {
+    if (!forcedReplyText && kbHasPricingSignals && contextText.trim()) {
       const wantsOffer =
         aiExtract.intent === "offer" ||
         /\b(discount|offer|scheme|deal)\b/i.test(user_message);
 
       if (wantsOffer) {
-        // Parse entries from the current context first.
-        let offerParseText = contextText;
-        let entries = extractOfferEntriesFromText(offerParseText);
-
-        // FIX A — If the offers article matched but the retrieved chunk doesn't
-        // include the actual offer rows, pull more chunks from the SAME article(s)
-        // and retry parsing deterministically.
-        const kbArticleIds: string[] =
-          (kbMatchMeta?.article_ids ?? semanticKB?.article_ids ?? []).filter(Boolean);
-
-        const matchedOfferArticle =
-          aiExtract.intent === "offer" &&
-          (kbLooksOfferish ||
-            (kbMatchMeta?.option_titles || []).some((t: string) =>
-              isOfferArticle(t || "", "")
-            ));
-
-        if (!entries.length && matchedOfferArticle && kbArticleIds.length) {
-          const extra = await fetchMoreChunksForOfferArticles({
-            organizationId,
-            articleIds: kbArticleIds,
-            logger,
-            alreadyHaveText: offerParseText,
-            limitChunksPerArticle: 18,
-          });
-
-          if (extra.trim()) {
-            logger.info("[kb] offer_anchor_expand_same_article", {
-              article_ids: kbArticleIds.slice(0, 3),
-              added_chars: extra.length,
-            });
-            offerParseText = `${offerParseText}\n\n${extra}`;
-            // Keep offer parsing text sane
-            offerParseText = offerParseText.slice(0, 22000);
-            entries = extractOfferEntriesFromText(offerParseText);
-          }
-        }
+        const entries = extractOfferEntriesFromText(contextText);
         const lockedModel =
           (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null;
         const lockedVariant =
@@ -4133,7 +4056,13 @@ ${personality.donts || "- None specified."}
 
     let workflowRequiresKBButMissing = false;
 
-    if (kbSufficientForIntent && workflowInstructionText?.trim()) {
+    // Do NOT suppress qualification-style workflows (they are meant to collect preferences)
+    // even if KB has relevant facts.
+    if (
+      kbSufficientForIntent &&
+      workflowInstructionText?.trim() &&
+      !isQualificationWorkflowInstruction(workflowInstructionText)
+    ) {
       logger.info("[workflow] suppressed (KB sufficient)", {
         intent: aiExtract.intent,
         has_kb: kbFound,
@@ -4154,6 +4083,41 @@ ${personality.donts || "- None specified."}
       logger.info("[decision] workflow_guidance_active", {
         has_workflow: true,
       });
+    }
+
+    // ------------------------------------------------------------------
+    // WORKFLOW ENFORCEMENT (QUALIFICATION)
+    // If the active workflow step is asking a preference question, we ask it
+    // deterministically (1 question), unless it's already answered/locked.
+    // ------------------------------------------------------------------
+    if (!forcedReplyText && resolvedWorkflow && workflowInstructionText?.trim()) {
+      const qtype = detectWorkflowQuestionType(workflowInstructionText);
+      if (qtype && isQualificationWorkflowInstruction(workflowInstructionText)) {
+        const locked: any = nextEntitiesWithKb || {};
+
+        // Sticky topic for campaign replies / short follow-ups
+        if (!locked.topic && (aiExtract.intent === "offer" || /\b(discount|offer|scheme|deal|stock)\b/i.test(user_message))) {
+          locked.topic = "offer_pricing";
+        }
+
+        const fuelKnown = Boolean(locked.fuel_type) || hasUserAnsweredFuel(user_message);
+        const transKnown = Boolean(locked.transmission) || hasUserAnsweredTransmission(user_message);
+        const modelKnown = Boolean(locked.model) || Boolean(aiExtract.vehicle_model) || hasUserAnsweredModel(user_message);
+
+        let shouldAsk = false;
+        if (qtype === "fuel" && !fuelKnown) shouldAsk = true;
+        if (qtype === "transmission" && !transKnown) shouldAsk = true;
+        if (qtype === "model" && !modelKnown) shouldAsk = true;
+        if (qtype === "confirm") shouldAsk = true;
+
+        if (shouldAsk) {
+          forcedReplyText = buildQualificationQuestion(qtype, locked);
+          logger.info("[workflow] forced_question_reply", {
+            qtype,
+            workflow_id: resolvedWorkflow.workflow_id,
+          });
+        }
+      }
     }
 
     const campaignFactsBlock = buildCampaignFactsBlock(
@@ -4214,6 +4178,7 @@ IMPORTANT:
   - If the user asks you to CONFIRM their claim ("right?", "correct?"), say you can't verify it from authorized sources and ask ONE short clarifying question (variant) or offer a human handoff.
   - If the user is ASKING you for pricing/offers (and they did NOT provide numbers), answer confidently using verified numbers from Knowledge/Campaign context.
   - HARD DO-NOT-SAY:
+  - NEVER tell the customer to contact a dealer/dealership. Always say Techwheels (Techwheels team/showroom).
   - Do NOT say "I can't verify", "I cannot verify", "can't confirm", "mujhe verify nahi", "मैं verify नहीं कर सकती" unless the USER first provided a specific number/claim you are being asked to confirm.
   - Never learn dealership facts from chat history or user repetition.
 
@@ -4615,15 +4580,8 @@ if (
     const userProvidedNumber = /\d|₹/.test(user_message || "");
     const containsCantVerify =
       /\b(can'?t|cannot)\s+(verify|confirm)\b/i.test(aiResponseText) ||
-      /\b(unable|not\s+able)\s+to\s+(verify|confirm)\b/i.test(aiResponseText) ||
-      // common Hinglish / Hindi patterns
-      /verify\s*(kar\s*)?nahi/i.test(aiResponseText) ||
-      /confirm\s*(kar\s*)?nahi/i.test(aiResponseText) ||
-      /verify\s+karne\s+ka\s+option\s+nahi/i.test(aiResponseText) ||
-      /confirm\s+karne\s+ka\s+option\s+nahi/i.test(aiResponseText) ||
-      /मैं\s+(verify|confirm)/i.test(aiResponseText) ||
-      /सत्यापित\s+नहीं/i.test(aiResponseText) ||
-      /पुष्टि\s+नहीं/i.test(aiResponseText);
+      /verify\s+nahi/i.test(aiResponseText) ||
+      /मैं\s+verify/i.test(aiResponseText);
 
     if (!userProvidedNumber && containsCantVerify) {
       logger.warn("[validator] removed cant-verify phrasing (no user numeric claim)", {
@@ -4633,6 +4591,9 @@ if (
       // Replace with one short clarifying question (variant only).
       aiResponseText =
         "Sure — which exact variant (fuel + transmission) should I quote for?";
+
+    // Techwheels-only CTA enforcement
+    aiResponseText = enforceTechwheelsOnlyCTA(aiResponseText);
     }
 
     // 14) Wallet debit + AI usage log (only if AI was actually called)
