@@ -924,6 +924,82 @@ function looksLikePricingOrOfferContext(text: string): boolean {
   return hasLargeNumber || hasKNotation;
 }
 
+function looksLikeOfferTableOrOfferContext(text: string): boolean {
+  const src = (text || "").trim();
+  if (!src) return false;
+  const t = src.toLowerCase();
+
+  // Strong structural signals (your verified offers article format)
+  if (/(^|\n)\s*model\s*:\s*[^\n]+/i.test(src)) return true;
+  if (/(^|\n)\s*variant\s*:\s*[^\n]+/i.test(src)) return true;
+  if (/(^|\n)\s*discount\s*amount\s*:\s*[^\n]+/i.test(src)) return true;
+  if (/(^|\n)\s*final\s+discounted/i.test(src)) return true;
+
+  // Soft signals (still offer-related even if the chunk is intro)
+  const offerKeywords = [
+    "discount",
+    "offer",
+    "scheme",
+    "limited availability",
+    "limited stock",
+    "special stock",
+    "final discounted",
+    "ex-showroom",
+  ];
+  return offerKeywords.some((k) => t.includes(k));
+}
+
+async function fetchMoreChunksForOfferArticles(params: {
+  organizationId: string;
+  articleIds: string[];
+  logger: ReturnType<typeof createLogger>;
+  alreadyHaveText: string;
+  limitChunksPerArticle?: number;
+}): Promise<string> {
+  const {
+    organizationId,
+    articleIds,
+    logger,
+    alreadyHaveText,
+    limitChunksPerArticle = 12,
+  } = params;
+
+  const unique = [...new Set((articleIds || []).filter(Boolean))];
+  if (!unique.length) return "";
+
+  const existing = (alreadyHaveText || "").trim();
+
+  const out: string[] = [];
+  for (const article_id of unique.slice(0, 3)) {
+    const rows = await safeSupabase<{ chunk: string | null }[]>(
+      "kb_fetch_more_chunks_for_offer_article",
+      logger,
+      () =>
+        supabase
+          .from("knowledge_chunks")
+          .select("chunk")
+          .eq("organization_id", organizationId)
+          .eq("article_id", article_id)
+          .order("created_at", { ascending: true })
+          .limit(limitChunksPerArticle)
+    );
+
+    if (!rows?.length) continue;
+
+    for (const r of rows) {
+      const c = (r?.chunk || "").trim();
+      if (!c) continue;
+      // Avoid exact duplicates (best-effort)
+      if (existing && existing.includes(c.slice(0, Math.min(120, c.length)))) {
+        continue;
+      }
+      out.push(c);
+    }
+  }
+
+  return out.length ? out.join("\n\n") : "";
+}
+
 function redactUserProvidedPricing(text: string): string {
   // PHASE 4 — Unverified facts firewall:
   // For pricing/offers intents, user-provided numbers are never authoritative.
@@ -3579,6 +3655,43 @@ ${personality.donts || "- None specified."}
         .limit(20)
     );
 
+    // ------------------------------------------------------------------
+    // FIX D — CAMPAIGN TOPIC CONTINUITY (NO SCHEMA CHANGE)
+    // If the user sends a short follow-up ("yes", "ok", "tell") right after
+    // a campaign / bot message mentioning discounts/offers, lock intent/topic
+    // to offer mode so KB retrieval + deterministic offer listing runs.
+    // ------------------------------------------------------------------
+    if (
+      aiExtract.intent === "other" &&
+      isShortFollowupMessage(user_message) &&
+      !isExplicitTopicChange(user_message)
+    ) {
+      const tail = (recentMessages ?? []).slice(-6);
+      const lastBotOfferish = [...tail]
+        .reverse()
+        .find((m) => (m.sender || "").toLowerCase() === "bot" &&
+          /\b(discount|offer|scheme|deal|special stock|limited stock)\b/i.test(m.text || ""));
+
+      // Also consider conversation.campaign_context as a hint source.
+      const campaignCtxText = JSON.stringify(conv.campaign_context ?? {});
+      const campaignCtxOfferish = /\b(discount|offer|scheme|deal|special stock|limited stock)\b/i.test(
+        campaignCtxText
+      );
+
+      if (lastBotOfferish || campaignCtxOfferish) {
+        logger.info("[ai-extract] campaign_offer_continuity_override", {
+          from: "other",
+          to: "offer",
+          bot_offerish: Boolean(lastBotOfferish),
+          campaign_context_offerish: campaignCtxOfferish,
+        });
+        aiExtract.intent = "offer";
+        // Keep continuity sticky for subsequent turns
+        (nextEntities as any).intent = "offer";
+        (nextEntities as any).topic = "offer_pricing";
+      }
+    }
+
     const historyMessages = buildChatMessagesFromHistory(
       (recentMessages ?? []).map((m) => ({ sender: m.sender, text: m.text })),
       user_message
@@ -3758,13 +3871,53 @@ ${personality.donts || "- None specified."}
     // If KB context contains a structured offers table, respond deterministically
     // and auto-lock the exact variant until the user mentions a new model/variant.
     // ------------------------------------------------------------------
-    if (!forcedReplyText && kbHasPricingSignals && contextText.trim()) {
+    // FIX B — Offer parsing should NOT be blocked by strict pricing-signal gating.
+    // Offers chunks can be intro-only (no ₹), yet still must lead to the offers table.
+    const kbLooksOfferish = looksLikeOfferTableOrOfferContext(contextText);
+
+    if (!forcedReplyText && contextText.trim() && (kbLooksOfferish || kbHasPricingSignals)) {
       const wantsOffer =
         aiExtract.intent === "offer" ||
         /\b(discount|offer|scheme|deal)\b/i.test(user_message);
 
       if (wantsOffer) {
-        const entries = extractOfferEntriesFromText(contextText);
+        // Parse entries from the current context first.
+        let offerParseText = contextText;
+        let entries = extractOfferEntriesFromText(offerParseText);
+
+        // FIX A — If the offers article matched but the retrieved chunk doesn't
+        // include the actual offer rows, pull more chunks from the SAME article(s)
+        // and retry parsing deterministically.
+        const kbArticleIds: string[] =
+          (kbMatchMeta?.article_ids ?? semanticKB?.article_ids ?? []).filter(Boolean);
+
+        const matchedOfferArticle =
+          aiExtract.intent === "offer" &&
+          (kbLooksOfferish ||
+            (kbMatchMeta?.option_titles || []).some((t: string) =>
+              isOfferArticle(t || "", "")
+            ));
+
+        if (!entries.length && matchedOfferArticle && kbArticleIds.length) {
+          const extra = await fetchMoreChunksForOfferArticles({
+            organizationId,
+            articleIds: kbArticleIds,
+            logger,
+            alreadyHaveText: offerParseText,
+            limitChunksPerArticle: 18,
+          });
+
+          if (extra.trim()) {
+            logger.info("[kb] offer_anchor_expand_same_article", {
+              article_ids: kbArticleIds.slice(0, 3),
+              added_chars: extra.length,
+            });
+            offerParseText = `${offerParseText}\n\n${extra}`;
+            // Keep offer parsing text sane
+            offerParseText = offerParseText.slice(0, 22000);
+            entries = extractOfferEntriesFromText(offerParseText);
+          }
+        }
         const lockedModel =
           (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null;
         const lockedVariant =
@@ -4462,8 +4615,15 @@ if (
     const userProvidedNumber = /\d|₹/.test(user_message || "");
     const containsCantVerify =
       /\b(can'?t|cannot)\s+(verify|confirm)\b/i.test(aiResponseText) ||
-      /verify\s+nahi/i.test(aiResponseText) ||
-      /मैं\s+verify/i.test(aiResponseText);
+      /\b(unable|not\s+able)\s+to\s+(verify|confirm)\b/i.test(aiResponseText) ||
+      // common Hinglish / Hindi patterns
+      /verify\s*(kar\s*)?nahi/i.test(aiResponseText) ||
+      /confirm\s*(kar\s*)?nahi/i.test(aiResponseText) ||
+      /verify\s+karne\s+ka\s+option\s+nahi/i.test(aiResponseText) ||
+      /confirm\s+karne\s+ka\s+option\s+nahi/i.test(aiResponseText) ||
+      /मैं\s+(verify|confirm)/i.test(aiResponseText) ||
+      /सत्यापित\s+नहीं/i.test(aiResponseText) ||
+      /पुष्टि\s+नहीं/i.test(aiResponseText);
 
     if (!userProvidedNumber && containsCantVerify) {
       logger.warn("[validator] removed cant-verify phrasing (no user numeric claim)", {
