@@ -40,6 +40,7 @@ function json(status: number, payload: Record<string, unknown>) {
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
 const PROJECT_URL = Deno.env.get("PROJECT_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
+const INTERNAL_API_KEY = Deno.env.get("INTERNAL_API_KEY") ?? "";
 
 if (!OPENAI_API_KEY || !PROJECT_URL || !SERVICE_ROLE_KEY) {
   console.error("[pdf-to-text] Missing env: OPENAI_API_KEY / PROJECT_URL / SERVICE_ROLE_KEY");
@@ -50,6 +51,35 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const supabaseAdmin = createClient(PROJECT_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+
+function getFunctionUrl(fnName: string) {
+  const base = PROJECT_URL.replace(/\/$/, "");
+  return `${base}/functions/v1/${fnName}`;
+}
+
+async function invokeInternal(fnName: string, body: Record<string, unknown>) {
+  if (!INTERNAL_API_KEY) {
+    throw new Error("INTERNAL_API_KEY not set");
+  }
+
+  const url = getFunctionUrl(fnName);
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-internal-api-key": INTERNAL_API_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await resp.text();
+  let parsed: any = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = { raw: text };
+  }
+  return { ok: resp.ok, status: resp.status, data: parsed };
+}
 
 /* --------------------------------------------------
    TYPES
@@ -307,7 +337,22 @@ serve(async (req) => {
 
     if (updateErr) throw new Error(`Failed to update article content: ${updateErr.message}`);
 
-    // enqueue embed job (best-effort)
+    // P0: Embed immediately AFTER extraction completes.
+    // This avoids frontend race-conditions and removes reliance on an external cron.
+    try {
+      const res = await invokeInternal("embed-article", { article_id });
+      if (!res.ok) {
+        console.warn(
+          "[pdf-to-text] embed-article internal invoke failed",
+          res.status,
+          JSON.stringify(res.data).slice(0, 500),
+        );
+      }
+    } catch (e) {
+      console.warn("[pdf-to-text] embed-article internal invoke error", String(e));
+    }
+
+    // enqueue embed job (best-effort fallback)
     try {
       await supabaseAdmin.from("background_jobs").insert({
         organization_id,

@@ -260,9 +260,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         });
       }
 
-      await supabase.functions.invoke("embed-article", {
-        body: { article_id: article.id },
-      });
+      // IMPORTANT:
+      // - PDFs: `pdf-to-text` is responsible for embedding AFTER extraction completes.
+      // - Excel/CSV: `ai-generate-kb` embeds internally.
+      // Calling embed-article here causes race-conditions (empty content) and double-embedding.
 
       await get().fetchArticles();
       set({ uploading: false });
@@ -335,9 +336,10 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         });
       }
 
-      await supabase.functions.invoke("embed-article", {
-        body: { article_id: article.id },
-      });
+      // IMPORTANT:
+      // - PDFs: `pdf-to-text` is responsible for embedding AFTER extraction completes.
+      // - Excel/CSV: `ai-generate-kb` embeds internally.
+      // Calling embed-article here causes race-conditions (empty content) and double-embedding.
 
       await get().fetchArticles();
       set({ uploading: false });

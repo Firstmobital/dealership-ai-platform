@@ -275,7 +275,7 @@ serve(async (req: Request): Promise<Response> => {
   for (let attempt = 1; attempt <= 4; attempt++) {
     const { data, error } = await supabase
       .from("knowledge_articles")
-      .select("id, organization_id, content")
+      .select("id, organization_id, content, processing_status, last_processed_at")
       .eq("id", articleId)
       .maybeSingle();
 
@@ -324,11 +324,32 @@ serve(async (req: Request): Promise<Response> => {
     metadata: { request_id },
   });
 
-  const content = (article.content || "").trim();
+  // ---- Content readiness guard (P0)
+  // If a caller triggers embedding before extraction has finished, wait briefly.
+  // This is especially important for PDFs where extraction is async.
+  let content = (article.content || "").trim();
+  let processingStatus = (article.processing_status || "").toString();
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    if (content.length >= 50) break;
+    if (processingStatus === "completed" || processingStatus === "error") break;
+
+    await sleep(250 * attempt);
+    const { data } = await supabase
+      .from("knowledge_articles")
+      .select("content, processing_status")
+      .eq("id", articleId)
+      .maybeSingle();
+
+    content = (data?.content || "").trim();
+    processingStatus = (data?.processing_status || "").toString();
+  }
 
   // Don't embed tiny content
   if (content.length < 50) {
-    orgLogger.info("Skipping embed (content too short)", { length: content.length });
+    orgLogger.info("Skipping embed (content too short)", {
+      length: content.length,
+      processing_status: processingStatus,
+    });
     return json(200, { skipped: true, reason: "Content too short", request_id });
   }
 

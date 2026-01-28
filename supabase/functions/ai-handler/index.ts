@@ -2814,49 +2814,48 @@ async function detectWorkflowTrigger(
 
   const lowerMsg = user_message.toLowerCase();
 
-  for (const wf of workflows) {
-    const trigger = wf.trigger ?? {};
-    const triggerType = trigger.type ?? "always";
+  // P0: Deterministic priority.
+  // 1) keyword matches
+  // 2) intent matches
+  // 3) always (fallback)
+  const keywordWorkflows = workflows.filter((wf) => (wf.trigger?.type ?? "always") === "keyword");
+  const intentWorkflows = workflows.filter((wf) => (wf.trigger?.type ?? "always") === "intent");
+  const alwaysWorkflows = workflows.filter((wf) => (wf.trigger?.type ?? "always") === "always");
 
-    if (triggerType === "keyword") {
-      const keywords: string[] = trigger.keywords ?? [];
-      if (
-        keywords.some((k) =>
-          lowerMsg.includes((k ?? "").toString().toLowerCase())
-        )
-      ) {
-        logger.info("[workflow] keyword trigger matched", {
-          workflow_id: wf.id,
-          trigger_keywords: keywords,
-        });
-        return wf;
-      }
+  for (const wf of keywordWorkflows) {
+    const keywords: string[] = wf.trigger?.keywords ?? [];
+    if (keywords.some((k) => lowerMsg.includes((k ?? "").toString().toLowerCase()))) {
+      logger.info("[workflow] keyword trigger matched", {
+        workflow_id: wf.id,
+        trigger_keywords: keywords,
+      });
+      return wf;
     }
+  }
 
-    if (triggerType === "intent") {
-      const intents: string[] = trigger.intents ?? [];
+  if (intentWorkflows.length) {
+    const { provider, model } = await resolveAISettings({ organizationId, logger });
+
+    for (const wf of intentWorkflows) {
+      const intents: string[] = wf.trigger?.intents ?? [];
       if (!intents.length) continue;
 
       try {
-        const resp = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          temperature: 0,
-          messages: [
-            {
-              role: "system",
-              content: `Classify user intent into EXACTLY one of: ${intents.join(
-                ", "
-              )}. Return only that word.`,
-            },
-            { role: "user", content: user_message },
-          ],
+        const systemPrompt = `Classify the user's intent into EXACTLY one of: ${intents.join(", ")}.\nReturn ONLY the intent word (no punctuation, no extra text).`;
+        const resp = await runAICompletion({
+          provider,
+          model,
+          systemPrompt,
+          historyMessages: [{ role: "user", content: user_message }],
+          logger,
         });
 
-        const intent =
-          resp.choices?.[0]?.message?.content?.trim().toLowerCase() ?? "";
+        const intent = (resp?.text ?? "").trim().toLowerCase();
         logger.debug("[workflow] intent classification result", {
           intent,
           intents,
+          provider,
+          model,
         });
 
         if (intents.map((i) => i.toLowerCase()).includes(intent)) {
@@ -2870,11 +2869,12 @@ async function detectWorkflowTrigger(
         logger.error("[workflow] intent classification error", { error: err });
       }
     }
+  }
 
-    if (triggerType === "always") {
-      logger.info("[workflow] always trigger matched", { workflow_id: wf.id });
-      return wf;
-    }
+  if (alwaysWorkflows.length) {
+    // Keep existing DB order for fallback.
+    logger.info("[workflow] always trigger matched", { workflow_id: alwaysWorkflows[0].id });
+    return alwaysWorkflows[0];
   }
 
   logger.debug("[workflow] no workflows matched");

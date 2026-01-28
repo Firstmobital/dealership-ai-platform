@@ -777,3 +777,44 @@ Mapped Meta PAUSED → local approved (no paused state locally).
 ### New / updated environment variables
 - `SUPABASE_ANON_KEY` (Edge Functions that need user-scoped reads)
 - `WHATSAPP_APP_SECRET` (WhatsApp inbound signature verification)
+
+
+# codex-logs.md
+
+## 2026-01-28 — P0 KB + Workflow Reliability Fixes
+
+### Summary
+This change-set fixes the two most common failure modes you were seeing:
+
+1. **Knowledge Base not being used** because embeddings were frequently created **before** PDF extraction completed (race) or were **double-created** for Excel/CSV uploads.
+2. **Workflows not being followed** because an `always` workflow could hijack selection, and intent routing was hardcoded to OpenAI even when the org is configured for Gemini.
+
+### Code changes
+- **Frontend KB workflow**
+  - Removed the unconditional `embed-article` call after file upload and file replacement.
+  - Added comments clarifying the single-owner responsibility:
+    - PDFs: `pdf-to-text` embeds **after** extraction.
+    - Excel/CSV: `ai-generate-kb` embeds internally.
+
+- **PDF extraction → embedding**
+  - `pdf-to-text` now invokes `embed-article` **internally** immediately after saving extracted text.
+  - The existing background job enqueue remains as a best-effort fallback.
+
+- **Workflow trigger selection**
+  - Made selection deterministic with priority:
+    1) keyword workflows
+    2) intent workflows
+    3) always workflows (fallback)
+  - Intent classification now uses the org’s configured AI provider/model via `resolveAISettings` + `runAICompletion`.
+
+### Files changed
+- `src/state/useKnowledgeBaseStore.ts`
+- `supabase/functions/pdf-to-text/index.ts`
+- `supabase/functions/ai-handler/index.ts`
+
+### No database changes
+- No tables/columns/RLS/policies were modified in this change-set.
+
+### Operational notes
+- `pdf-to-text` now requires `INTERNAL_API_KEY` to be set (same as `background-worker`).
+- If `INTERNAL_API_KEY` is missing, PDF extraction still completes, and embedding will still be enqueued as a background job (fallback), but immediate embedding will not run.
