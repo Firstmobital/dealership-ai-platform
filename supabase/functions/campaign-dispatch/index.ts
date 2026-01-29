@@ -561,13 +561,16 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
     .select(
       "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
     )
-    .in("status", ["scheduled", "sending"])
-    .lte("scheduled_at", nowIso)
+    // ✅ include:
+    // 1) scheduled campaigns that are due (scheduled_at <= now)
+    // 2) ALL sending campaigns even if scheduled_at is NULL
+    .or(`and(status.eq.scheduled,scheduled_at.lte.${nowIso}),status.eq.sending`)
     .limit(MAX_CAMPAIGNS_PER_RUN);
 
   if (error) throw error;
   return (data ?? []) as Campaign[];
 }
+
 
 /* ============================================================
    FETCH PENDING MESSAGES
