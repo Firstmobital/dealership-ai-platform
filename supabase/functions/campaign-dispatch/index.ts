@@ -561,10 +561,8 @@ async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
     .select(
       "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
     )
-    // ✅ include:
-    // 1) scheduled campaigns that are due (scheduled_at <= now)
-    // 2) ALL sending campaigns even if scheduled_at is NULL
-    .or(`and(status.eq.scheduled,scheduled_at.lte.${nowIso}),status.eq.sending`)
+    // sending should always be eligible; scheduled must be due
+    .or(`status.eq.sending,and(status.eq.scheduled,scheduled_at.lte.${nowIso})`)
     .limit(MAX_CAMPAIGNS_PER_RUN);
 
   if (error) throw error;
@@ -1208,21 +1206,14 @@ serve(async (req: Request) => {
     });
   }
   const internalKey = req.headers.get("x-internal-api-key") ?? "";
+const auth = req.headers.get("authorization") ?? "";
+const bearer = auth.replace(/^Bearer\s+/i, "");
 
-  // allow either internal header OR service role bearer
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const bearer = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
-  
-  // ✅ INTERNAL if:
-  // - header matches INTERNAL_API_KEY (your current logic)
-  // OR
-  // - bearer equals SERVICE_ROLE_KEY (pg_cron / server-to-server)
-  const isInternal =
-    (!!INTERNAL_API_KEY && internalKey === INTERNAL_API_KEY) ||
-    (bearer && bearer === SERVICE_ROLE_KEY);
-  
-  // PHASE 1 AUTHZ: internal-only worker endpoint
-  const actor = { type: isInternal ? "internal" : "external" };
+const isServiceRole = !!bearer && bearer === SERVICE_ROLE_KEY;
+const isInternalKeyOk = !!INTERNAL_API_KEY && internalKey === INTERNAL_API_KEY;
+
+const isInternal = isServiceRole || isInternalKeyOk;
+const actor = { type: isInternal ? "internal" : "external" };
   
 
   try {
