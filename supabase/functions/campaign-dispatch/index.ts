@@ -1204,12 +1204,23 @@ serve(async (req: Request) => {
       },
     });
   }
-const internalKey = req.headers.get("x-internal-api-key") ?? "";
+  const internalKey = req.headers.get("x-internal-api-key") ?? "";
 
-const isInternal = !!INTERNAL_API_KEY && internalKey === INTERNAL_API_KEY;
-
+  // allow either internal header OR service role bearer
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const bearer = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
+  
+  // ✅ INTERNAL if:
+  // - header matches INTERNAL_API_KEY (your current logic)
+  // OR
+  // - bearer equals SERVICE_ROLE_KEY (pg_cron / server-to-server)
+  const isInternal =
+    (!!INTERNAL_API_KEY && internalKey === INTERNAL_API_KEY) ||
+    (bearer && bearer === SERVICE_ROLE_KEY);
+  
   // PHASE 1 AUTHZ: internal-only worker endpoint
   const actor = { type: isInternal ? "internal" : "external" };
+  
 
   try {
     const nowIso = new Date().toISOString();

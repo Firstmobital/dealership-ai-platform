@@ -333,9 +333,15 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         read_at: null,
         error: null,
         whatsapp_message_id: null,
+        send_attempts: 0,
+        next_retry_at: null,
+        locked_at: null,
+        locked_by: null,
+        last_attempt_at: null,
       })
       .eq("campaign_id", campaignId)
-      .eq("status", "failed");  
+      .eq("status", "failed");
+      
 
     if (error) {
       console.error("[useCampaignStore] retryFailedMessages error", error);
@@ -352,6 +358,6 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
       await get().fetchCampaignMessages(campaignId);
     }
 
-    toast.success("Retry queued");
+    toast.success("Retry failed triggered");
   },
 }));
