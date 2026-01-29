@@ -55,10 +55,10 @@ const corsHeaders = {
 /* ============================================================
    DISPATCH LIMITS
 ============================================================ */
-const GLOBAL_MAX_MESSAGES_PER_RUN = 100;
-const MAX_MESSAGES_PER_CAMPAIGN_PER_RUN = 50;
-const ORG_RATE_LIMIT_PER_RUN = 30;
-const MAX_CAMPAIGNS_PER_RUN = 20;
+const GLOBAL_MAX_MESSAGES_PER_RUN = 10000;
+const MAX_MESSAGES_PER_CAMPAIGN_PER_RUN = 2000;
+const ORG_RATE_LIMIT_PER_RUN = 2000;
+const MAX_CAMPAIGNS_PER_RUN = 2000;
 
 // Phase 3 — bounded retries + DLQ
 const MAX_SEND_ATTEMPTS = 3;
