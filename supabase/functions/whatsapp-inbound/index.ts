@@ -632,6 +632,16 @@ async function processInboundMessage(
   /* ============================================================
      INSERT MESSAGE
   ============================================================ */
+  const waTsIso = (() => {
+    try {
+      const ts = Number((msg as any).timestamp);
+      if (!Number.isFinite(ts) || ts <= 0) return null;
+      return new Date(ts * 1000).toISOString();
+    } catch {
+      return null;
+    }
+  })();
+
 
   const { error: insertErr } = await supabase.from("messages").insert({
     conversation_id: conversationId,
@@ -642,7 +652,7 @@ async function processInboundMessage(
     media_url: mediaUrl,
     mime_type: mimeType,
     whatsapp_message_id: msg.id,
-    wa_received_at: new Date().toISOString(),
+    wa_received_at: waTsIso ?? new Date().toISOString(),
     metadata: replySheetTab ? { reply_sheet_tab: replySheetTab } : null,
   });
 

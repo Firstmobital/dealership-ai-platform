@@ -2786,6 +2786,7 @@ type WorkflowLogRow = {
   current_step_number: number | null;
   variables: Record<string, any>;
   completed: boolean;
+  created_at?: string | null;
 };
 
 /* ============================================================================
@@ -2887,30 +2888,64 @@ async function detectWorkflowTrigger(
 async function loadActiveWorkflow(
   conversationId: string,
   organizationId: string,
-  logger: ReturnType<typeof createLogger>
+  logger: ReturnType<typeof createLogger>,
+  preferredWorkflowId?: string | null
 ): Promise<WorkflowLogRow | null> {
-  const data = await safeSupabase<WorkflowLogRow>(
-    "load_active_workflow",
+  // Deterministic: prefer conversation-pinned workflow (campaign / manual attach).
+  // Avoid maybeSingle() because multiple open workflow logs can exist.
+
+  const selectCols =
+    "id, workflow_id, conversation_id, current_step_number, variables, completed, created_at";
+
+  if (preferredWorkflowId) {
+    const preferred = await safeSupabase<WorkflowLogRow>(
+      "load_active_workflow_preferred",
+      logger,
+      () =>
+        supabase
+          .from("workflow_logs")
+          .select(selectCols)
+          .eq("conversation_id", conversationId)
+          .eq("organization_id", organizationId)
+          .eq("completed", false)
+          .eq("workflow_id", preferredWorkflowId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+    );
+
+    if (preferred) {
+      return {
+        ...preferred,
+        current_step_number: preferred.current_step_number ?? 1,
+        variables: (preferred as any).variables ?? {},
+        completed: (preferred as any).completed ?? false,
+      };
+    }
+  }
+
+  const latest = await safeSupabase<WorkflowLogRow>(
+    "load_active_workflow_latest",
     logger,
     () =>
       supabase
         .from("workflow_logs")
-        .select(
-          "id, workflow_id, conversation_id, current_step_number, variables, completed"
-        )
+        .select(selectCols)
         .eq("conversation_id", conversationId)
         .eq("organization_id", organizationId)
         .eq("completed", false)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle()
   );
 
-  if (!data) return null;
+  if (!latest) return null;
 
   return {
-    ...data,
-    current_step_number: data.current_step_number ?? 1,
-    variables: data.variables ?? {},
-    completed: data.completed ?? false,
+    ...latest,
+    current_step_number: latest.current_step_number ?? 1,
+    variables: (latest as any).variables ?? {},
+    completed: (latest as any).completed ?? false,
   };
 }
 
@@ -4116,7 +4151,8 @@ ${personality.donts || "- None specified."}
     const activeWorkflow = await loadActiveWorkflow(
       conversation_id,
       organizationId,
-      logger
+      logger,
+      conv.workflow_id ?? null
     );
     resolvedWorkflow = activeWorkflow;
 

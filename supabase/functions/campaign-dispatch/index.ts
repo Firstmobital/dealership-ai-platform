@@ -1085,23 +1085,6 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         conversationId,
       });
 
-      await supabaseAdmin.from("messages").insert({
-        conversation_id: conversationId,
-        sender: "bot",
-        channel: "whatsapp",
-        message_type: "campaign",
-        text: renderedText,
-        campaign_id: msg.campaign_id,
-        campaign_message_id: msg.id,
-        metadata: {
-          source: "campaign-dispatch",
-          template_name: template.name,
-        },
-        whatsapp_status: "queued",
-        sent_at: new Date().toISOString(),
-      });
-      
-
       const waId = await sendWhatsappTemplate({
         organizationId: msg.organization_id,
         contactId,
@@ -1396,6 +1379,23 @@ if (mode === "scheduled" && actor.type !== "internal") {
             // ignore
           }
 
+
+          // ✅ Ensure conversation exists and campaign context/workflow is attached BEFORE sending
+          const conversationId = await ensureConversationForContact({
+            organizationId: msg.organization_id,
+            contactId,
+            channel: 'whatsapp',
+          });
+
+          await linkMessageToConversationAndPsf({
+            msg,
+            contactId,
+            campaign,
+            phoneDigits,
+            renderedText,
+            conversationId,
+          });
+
           // Phase 2.4: media templates must have media attached
           const headerType = String(template.header_type ?? "").toUpperCase();
           const needsMedia =
@@ -1442,7 +1442,6 @@ if (mode === "scheduled" && actor.type !== "internal") {
               attempt: Number(msg.send_attempts ?? 1),
             },
           });
-
           const waId = await sendWhatsappTemplate({
             organizationId: msg.organization_id,
             contactId,
