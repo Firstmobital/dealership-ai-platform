@@ -48,7 +48,7 @@ async function logDeliveryEvent(params: {
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "authorization, x-client-info, apikey, content-type, x-internal-api-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -78,7 +78,7 @@ function normalizeWorkflowKey(input: string): string {
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, " ")
-    .replace(/(workflow|flows|flow|tab|sheet)/g, " ")
+    .replace(/\b(workflow|flows|flow|tab|sheet)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -86,9 +86,20 @@ function normalizeWorkflowKey(input: string): string {
 function workflowMatches(replyTab: string, workflowName: string): boolean {
   const tab = normalizeWorkflowKey(replyTab);
   const name = normalizeWorkflowKey(workflowName);
-  if (!tab || !name) return false;  // placeholder
+  if (!tab || !name) return false;
+
+  // exact match after normalization
+  if (tab === name) return true;
+
+  // common: "sales" vs "sales workflow"
+  if (name.startsWith(tab) || tab.startsWith(name)) return true;
+
+  // last resort: contains match
+  if (name.includes(tab) || tab.includes(name)) return true;
+
   return false;
 }
+
 
 
 /* ============================================================
@@ -115,8 +126,6 @@ type Campaign = {
     is_psf?: boolean;
   } | null;
   reply_sheet_tab: string | null;
-  campaign_id: string;
-  campaign_message_id: string;
 };
 
 type CampaignMessageStatus =
@@ -606,19 +615,17 @@ async function fetchEligibleCampaigns(nowIso: string, campaignId?: string | null
 /* ============================================================
    FETCH PENDING MESSAGES
 ============================================================ */
-async function fetchMessages(campaignId: string): Promise<CampaignMessage[]> {
-  // Phase 3: atomic claim via RPC (prevents duplicates across concurrent runs)
+async function fetchMessages(campaignId: string, limit: number): Promise<CampaignMessage[]> {
   const workerId = `campaign-dispatch:${campaignId}`;
 
   const { data, error } = await supabaseAdmin.rpc("claim_campaign_messages", {
     p_campaign_id: campaignId,
-    p_limit: MAX_MESSAGES_PER_CAMPAIGN_PER_RUN,
+    p_limit: limit,
     p_worker_id: workerId,
     p_lock_ttl_seconds: 300,
   });
 
   if (error) throw error;
-
   return (data ?? []) as CampaignMessage[];
 }
 
@@ -711,7 +718,7 @@ async function markFailed(id: string, err: string) {
 
 async function scheduleRetry(id: string, err: string, attempt: number) {
   const delay = Math.min(
-    BASE_RETRY_DELAY_SECONDS * Math.pow(2, Math.max(attempt - 1, 0)),
+    BASE_RETRY_DELAY_SECONDS * Math.pow(2, Math.max(attempt - 2, 0)),
     60 * 60
   );
   const next = new Date(Date.now() + delay * 1000).toISOString();
@@ -883,21 +890,12 @@ async function linkMessageToConversationAndPsf(params: {
         .eq("organization_id", params.msg.organization_id)
         .eq("is_active", true);
 
-      const tabKey = normalizeWorkflowKey(tab);
-
-      // Strategy:
-      // 1) exact key match
-      // 2) tabKey is prefix of workflowKey ("sales" matches "sales-workflow")
-      // 3) one contains the other (last resort)
-      const match = (wfs ?? []).find((w: any) => {
-        const wfKey = normalizeWorkflowKey(String(w.name ?? ""));
-        if (!wfKey) return false;
-        if (wfKey === tabKey) return true;
-        if (wfKey.startsWith(tabKey) || tabKey.startsWith(wfKey)) return true;
-        if (wfKey.includes(tabKey) || tabKey.includes(wfKey)) return true;
-        return false;
-      });
-      if (match?.id) matchedWorkflowId = match.id;
+        const match = (wfs ?? []).find((w: any) => {
+          const wfName = String(w.name ?? "");
+          return workflowMatches(tab, wfName);
+        });
+        
+        if (match?.id) matchedWorkflowId = match.id;        
     }
   } catch {
     // best-effort only
@@ -1022,7 +1020,7 @@ if (campaign.status === "completed" || campaign.status === "cancelled")
     body_variable_indices: template.body_variable_indices,
   };
 
-  const messages = await fetchMessages(campaign.id);
+  const messages = await fetchMessages(campaign.id, opts.maxToSend);
   // ✅ PSF STEP 2 — create PSF cases before sending
   await createPsfCasesForCampaign({
     campaign,
@@ -1198,7 +1196,11 @@ if (campaign.status === "completed" || campaign.status === "cancelled")
           payload: { error: err, attempt },
         });
       } else {
+        // ✅ IMPORTANT:
+        // Do NOT update send_attempts here. RPC already increments on claim.
+        // Just schedule the retry and keep the current attempt number for logging.
         await scheduleRetry(msg.id, err, attempt);
+      
         await logDeliveryEvent({
           organization_id: msg.organization_id,
           campaign_message_id: msg.id,
@@ -1206,7 +1208,7 @@ if (campaign.status === "completed" || campaign.status === "cancelled")
           source: "campaign-dispatch",
           payload: { error: err, attempt },
         });
-      }
+      }           
     }
   }
 
@@ -1389,7 +1391,8 @@ if (mode === "scheduled" && actor.type !== "internal") {
         body_variable_indices: template.body_variable_indices,
       };
 
-      const messages = await fetchMessages(campaign.id);
+      const remaining = Math.max(0, batchLimit - globalSent);
+const messages = await fetchMessages(campaign.id, Math.min(remaining, MAX_MESSAGES_PER_CAMPAIGN_PER_RUN));
       for (const m of messages) {
         await logDeliveryEvent({
           organization_id: m.organization_id,
@@ -1526,6 +1529,9 @@ if (mode === "scheduled" && actor.type !== "internal") {
             messageType,
           });
 
+          await sleep(PER_MESSAGE_DELAY_MS);
+
+
           if (!waId) {
             await markFailed(msg.id, "meta_rejected_message");
             continue;
@@ -1544,26 +1550,29 @@ if (mode === "scheduled" && actor.type !== "internal") {
           sentPerOrg[msg.organization_id] = orgCount + 1;
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
-          const attempt = Math.max(Number(msg.send_attempts ?? 1), 1);
+const attempt = Math.max(Number(msg.send_attempts ?? 1), 1);
 
-          if (attempt >= MAX_SEND_ATTEMPTS) {
-            await markFailed(msg.id, err);
-            await writeDlq({
-              organizationId: msg.organization_id,
-              entityId: msg.id,
-              reason: `max_attempts_exceeded:${attempt}`,
-              payload: { error: err, attempt },
-            });
-          } else {
-            await scheduleRetry(msg.id, err, attempt);
-            await logDeliveryEvent({
-              organization_id: msg.organization_id,
-              campaign_message_id: msg.id,
-              event_type: "retried",
-              source: "campaign-dispatch",
-              payload: { error: err, attempt },
-            });
-          }
+if (attempt >= MAX_SEND_ATTEMPTS) {
+  await markFailed(msg.id, err);
+  await writeDlq({
+    organizationId: msg.organization_id,
+    entityId: msg.id,
+    reason: `max_attempts_exceeded:${attempt}`,
+    payload: { error: err, attempt },
+  });
+} else {
+  // ✅ IMPORTANT:
+  // Do NOT update send_attempts here. RPC already increments on claim.
+  await scheduleRetry(msg.id, err, attempt);
+
+  await logDeliveryEvent({
+    organization_id: msg.organization_id,
+    campaign_message_id: msg.id,
+    event_type: "retried",
+    source: "campaign-dispatch",
+    payload: { error: err, attempt },
+  });
+}
         }
       }
 
