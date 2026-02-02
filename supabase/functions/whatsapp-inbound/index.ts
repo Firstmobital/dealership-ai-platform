@@ -258,6 +258,7 @@ async function classifyIntent(text: string) {
   }
 }
 
+
 async function triggerAIHandler(params: {
   conversationId: string;
   userMessage: string;
@@ -278,15 +279,62 @@ async function triggerAIHandler(params: {
       }),
     });
 
+    const bodyText = await res.text().catch(() => "");
+
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
       params.logger.error("AI_TRIGGER_FAILED", {
         status: res.status,
-        body: body?.slice(0, 500),
+        body: bodyText?.slice(0, 500),
       });
     }
+
+    return { ok: res.ok, status: res.status, body: bodyText };
   } catch (err) {
     params.logger.error("AI_TRIGGER_FAILED", { error: String(err) });
+    return { ok: false, status: 0, body: String(err) };
+  }
+}
+
+async function enqueueAiReplyRetry(params: {
+  organizationId: string;
+  conversationId: string;
+  userMessage: string;
+  inboundWhatsappMessageId?: string | null;
+  logger: ReturnType<typeof createLogger>;
+}) {
+  try {
+    // De-dupe by inboundWhatsappMessageId when present (best-effort)
+    if (params.inboundWhatsappMessageId) {
+      const { data: existing } = await supabase
+        .from("background_jobs")
+        .select("id")
+        .eq("organization_id", params.organizationId)
+        .eq("job_type", "ai_reply_retry")
+        .eq("payload->>inbound_whatsapp_message_id", params.inboundWhatsappMessageId)
+        .in("status", ["queued", "running"])
+        .limit(1);
+      if (existing && existing.length > 0) return;
+    }
+
+    const runAt = new Date(Date.now() + 30_000).toISOString();
+    const { error } = await supabase.from("background_jobs").insert({
+      organization_id: params.organizationId,
+      job_type: "ai_reply_retry",
+      payload: {
+        conversation_id: params.conversationId,
+        user_message: params.userMessage,
+        inbound_whatsapp_message_id: params.inboundWhatsappMessageId ?? null,
+      },
+      status: "queued",
+      run_at: runAt,
+      max_attempts: 8,
+    });
+
+    if (error) {
+      params.logger.error("AI_RETRY_ENQUEUE_FAILED", { error: error.message });
+    }
+  } catch (err) {
+    params.logger.error("AI_RETRY_ENQUEUE_FAILED", { error: String(err) });
   }
 }
 
@@ -715,11 +763,23 @@ if (text && replySheetTab) {
 
   if (text) {
     const safeText = text.slice(0, MAX_TEXT_LENGTH);
-    await triggerAIHandler({
+    const aiRes = await triggerAIHandler({
       conversationId,
       userMessage: safeText,
       logger: convLogger,
     });
+
+    // P0: if AI is rate-limited or temporarily failing, enqueue a retry so the customer still gets a reply.
+    // We only retry for transient statuses.
+    if (!aiRes.ok && [429, 500, 502, 503, 504].includes(aiRes.status)) {
+      await enqueueAiReplyRetry({
+        organizationId: orgId,
+        conversationId,
+        userMessage: safeText,
+        inboundWhatsappMessageId: msg.id,
+        logger: convLogger,
+      });
+    }
 
     // Phase 5: audit AI trigger (non-blocking)
     logAuditEvent(supabase, {

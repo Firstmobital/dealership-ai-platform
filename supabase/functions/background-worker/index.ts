@@ -8,6 +8,8 @@
 // Job types implemented:
 // - embed_article: calls embed-article Edge Function internally
 // - whatsapp_retry_send: calls whatsapp-send Edge Function internally
+// - ai_reply_retry: calls ai-handler Edge Function internally
+// - campaign_dispatch_tick: calls campaign-dispatch Edge Function internally (scheduled batches)
 
 import { serve } from "https://deno.land/std@0.182.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
@@ -167,6 +169,53 @@ serve(async (req) => {
         }
         await markJobCompleted(jobId);
         processed.push({ id: jobId, type: jobType, status: "completed" });
+        continue;
+      }
+
+      if (jobType === "ai_reply_retry") {
+        // Expected payload: { conversation_id, user_message }
+        const conversation_id = typeof payload.conversation_id === "string" ? payload.conversation_id : null;
+        const user_message = typeof payload.user_message === "string" ? payload.user_message : null;
+        if (!conversation_id || !user_message) throw new Error("ai_reply_retry payload requires conversation_id and user_message");
+
+        const res = await invokeInternal("ai-handler", {
+          conversation_id,
+          user_message,
+          mode: "reply",
+          retry: true,
+        });
+        if (!res.ok) {
+          throw new Error("ai-handler failed (" + res.status + "): " + JSON.stringify(res.data).slice(0, 500));
+        }
+        await markJobCompleted(jobId);
+        processed.push({ id: jobId, type: jobType, status: "completed" });
+        continue;
+      }
+
+      if (jobType === "campaign_dispatch_tick") {
+        // Expected payload: { campaign_id?: string, limit?: number }
+        const campaign_id = typeof payload.campaign_id === "string" ? payload.campaign_id : null;
+        const limit = typeof payload.limit === "number" ? payload.limit : 50;
+
+        const res = await invokeInternal("campaign-dispatch", {
+          mode: "scheduled",
+          campaign_id,
+          limit,
+        });
+        if (!res.ok) {
+          throw new Error("campaign-dispatch failed (" + res.status + "): " + JSON.stringify(res.data).slice(0, 500));
+        }
+
+        // campaign-dispatch returns { more: boolean }. If more, keep job queued; else complete.
+        const more = Boolean((res.data as any)?.more);
+        if (more) {
+          const nextRun = new Date(Date.now() + 10_000).toISOString();
+          await markJobFailed(jobId, "more_work", nextRun);
+          processed.push({ id: jobId, type: jobType, status: "queued", next_run_at: nextRun });
+        } else {
+          await markJobCompleted(jobId);
+          processed.push({ id: jobId, type: jobType, status: "completed" });
+        }
         continue;
       }
 

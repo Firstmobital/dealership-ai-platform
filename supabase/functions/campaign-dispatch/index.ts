@@ -61,8 +61,35 @@ const ORG_RATE_LIMIT_PER_RUN = 2000;
 const MAX_CAMPAIGNS_PER_RUN = 2000;
 
 // Phase 3 — bounded retries + DLQ
-const MAX_SEND_ATTEMPTS = 3;
-const BASE_RETRY_DELAY_SECONDS = 60;
+const MAX_SEND_ATTEMPTS = 5;
+const BASE_RETRY_DELAY_SECONDS = 120;
+
+// P0: prevent Edge Function timeouts and Meta burst throttling
+const DEFAULT_BATCH_LIMIT = 50;
+const TIME_BUDGET_MS = 25_000;
+const PER_MESSAGE_DELAY_MS = 250;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeWorkflowKey(input: string): string {
+  return String(input || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/(workflow|flows|flow|tab|sheet)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function workflowMatches(replyTab: string, workflowName: string): boolean {
+  const tab = normalizeWorkflowKey(replyTab);
+  const name = normalizeWorkflowKey(workflowName);
+  if (!tab || !name) return false;  // placeholder
+  return false;
+}
+
 
 /* ============================================================
    TYPES
@@ -555,15 +582,21 @@ async function fetchCampaignById(campaignId: string): Promise<Campaign | null> {
 /* ============================================================
    FETCH ELIGIBLE CAMPAIGNS (scheduled runner)
 ============================================================ */
-async function fetchEligibleCampaigns(nowIso: string): Promise<Campaign[]> {
-  const { data, error } = await supabaseAdmin
+async function fetchEligibleCampaigns(nowIso: string, campaignId?: string | null): Promise<Campaign[]> {
+  let query = supabaseAdmin
     .from("campaigns")
     .select(
       "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
-    )
+    );
+
+  if (campaignId) {
+    query = query.eq("id", campaignId);
+  } else {
     // sending should always be eligible; scheduled must be due
-    .or(`status.eq.sending,and(status.eq.scheduled,scheduled_at.lte.${nowIso})`)
-    .limit(MAX_CAMPAIGNS_PER_RUN);
+    query = query.or(`status.eq.sending,and(status.eq.scheduled,scheduled_at.lte.${nowIso})`);
+  }
+
+  const { data, error } = await query.limit(MAX_CAMPAIGNS_PER_RUN);
 
   if (error) throw error;
   return (data ?? []) as Campaign[];
@@ -850,12 +883,20 @@ async function linkMessageToConversationAndPsf(params: {
         .eq("organization_id", params.msg.organization_id)
         .eq("is_active", true);
 
-      const match = (wfs ?? []).find(
-        (w: any) =>
-          String(w.name ?? "")
-            .trim()
-            .toLowerCase() === tab
-      );
+      const tabKey = normalizeWorkflowKey(tab);
+
+      // Strategy:
+      // 1) exact key match
+      // 2) tabKey is prefix of workflowKey ("sales" matches "sales-workflow")
+      // 3) one contains the other (last resort)
+      const match = (wfs ?? []).find((w: any) => {
+        const wfKey = normalizeWorkflowKey(String(w.name ?? ""));
+        if (!wfKey) return false;
+        if (wfKey === tabKey) return true;
+        if (wfKey.startsWith(tabKey) || tabKey.startsWith(wfKey)) return true;
+        if (wfKey.includes(tabKey) || tabKey.includes(wfKey)) return true;
+        return false;
+      });
       if (match?.id) matchedWorkflowId = match.id;
     }
   } catch {
@@ -968,10 +1009,10 @@ function assertTemplateVariablesPresent(params: {
 /* ============================================================
    DISPATCH SINGLE CAMPAIGN (IMMEDIATE MODE)
 ============================================================ */
-async function dispatchCampaignImmediate(campaign: Campaign) {
-  if (!campaign.whatsapp_template_id) return;
-  if (campaign.status === "completed" || campaign.status === "cancelled")
-    return;
+async function dispatchCampaignImmediate(campaign: Campaign, opts: { maxToSend: number; deadlineMs: number; }): Promise<{ sent: number; more: boolean }> {
+  if (!campaign.whatsapp_template_id) return { sent: 0, more: false };
+if (campaign.status === "completed" || campaign.status === "cancelled")
+  return { sent: 0, more: false };
 
   const template = await fetchTemplate(campaign.whatsapp_template_id);
   const schema = {
@@ -989,10 +1030,12 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
   });
 
   let sentGlobal = 0;
+  let more = false;
   const sentPerOrg: Record<string, number> = {};
 
   for (const msg of messages) {
-    if (sentGlobal >= GLOBAL_MAX_MESSAGES_PER_RUN) break;
+    if (sentGlobal >= opts.maxToSend) { more = true; break; }
+    if (Date.now() > opts.deadlineMs) { more = true; break; }
 
     const orgCount = sentPerOrg[msg.organization_id] ?? 0;
     if (orgCount >= ORG_RATE_LIMIT_PER_RUN) continue;
@@ -1107,6 +1150,9 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
         messageType,
       });
 
+      // P0: throttle to avoid Meta burst rate-limits
+      await sleep(PER_MESSAGE_DELAY_MS);
+
       // keep your current behavior
       if (!waId) {
         await markFailed(msg.id, "meta_rejected_message");
@@ -1171,7 +1217,11 @@ async function dispatchCampaignImmediate(campaign: Campaign) {
     .in("status", ["pending", "queued"]);
 
   if (error) throw error;
-  if ((count ?? 0) === 0) await markCampaignCompleted(campaign.id);
+  const stillPending = (count ?? 0) > 0;
+  if (!stillPending) await markCampaignCompleted(campaign.id);
+  if (stillPending) more = true;
+
+  return { sent: sentGlobal, more };
 }
 
 /* ============================================================
@@ -1211,6 +1261,9 @@ const actor = { type: isInternal ? "internal" : "external" };
 
     const mode: DispatchMode = body?.mode ?? "scheduled";
     const immediateCampaignId: string | undefined = body?.campaign_id;
+    const batchLimit = Number.isFinite(body?.limit) ? Math.max(1, Math.min(Number(body.limit), GLOBAL_MAX_MESSAGES_PER_RUN)) : DEFAULT_BATCH_LIMIT;
+    const deadlineMs = Date.now() + TIME_BUDGET_MS;
+
 
     // 🔐 HARD SECURITY BOUNDARY — scheduled runner is INTERNAL ONLY
 if (mode === "scheduled" && actor.type !== "internal") {
@@ -1254,9 +1307,9 @@ if (mode === "scheduled" && actor.type !== "internal") {
       }
 
 
-      if (campaign.status === "sending" || campaign.status === "completed") {
+      if (campaign.status === "completed" || campaign.status === "cancelled") {
         return new Response(
-          JSON.stringify({ error: "Campaign already sent or in progress" }),
+          JSON.stringify({ error: "Campaign already completed/cancelled" }),
           {
             status: 400,
             headers: {
@@ -1267,15 +1320,20 @@ if (mode === "scheduled" && actor.type !== "internal") {
         );
       }
 
-      await markCampaignSending(campaign.id, true);
+      // If it's not already sending, mark as sending. If it is sending, we are continuing a batched dispatch.
+      if (campaign.status !== "sending") {
+        await markCampaignSending(campaign.id, true);
+      }
 
       try {
-        await dispatchCampaignImmediate({ ...campaign, status: "sending" });
+        const result = await dispatchCampaignImmediate({ ...campaign, status: "sending" }, { maxToSend: batchLimit, deadlineMs });
         return new Response(
           JSON.stringify({
             success: true,
             mode: "immediate",
             campaign_id: campaign.id,
+            sent: result.sent,
+            more: result.more,
           }),
           {
             status: 200,
@@ -1306,14 +1364,17 @@ if (mode === "scheduled" && actor.type !== "internal") {
     /* ===========================
        SCHEDULED MODE (Runner)
     ============================ */
-    const campaigns = await fetchEligibleCampaigns(nowIso);
+    const campaigns = await fetchEligibleCampaigns(nowIso, (immediateCampaignId ?? null));
 
     let globalSent = 0;
+    let more = false;
     const sentPerOrg: Record<string, number> = {};
     let campaignsProcessed = 0;
 
     for (const campaign of campaigns) {
       if (campaignsProcessed >= MAX_CAMPAIGNS_PER_RUN) break;
+      if (globalSent >= batchLimit) { more = true; break; }
+      if (Date.now() > deadlineMs) { more = true; break; }
       if (!campaign.whatsapp_template_id) continue;
 
       if (campaign.status === "scheduled") {
@@ -1345,7 +1406,8 @@ if (mode === "scheduled" && actor.type !== "internal") {
       });
 
       for (const msg of messages) {
-        if (globalSent >= GLOBAL_MAX_MESSAGES_PER_RUN) break;
+        if (globalSent >= batchLimit) { more = true; break; }
+        if (Date.now() > deadlineMs) { more = true; break; }
 
         const orgCount = sentPerOrg[msg.organization_id] ?? 0;
         if (orgCount >= ORG_RATE_LIMIT_PER_RUN) continue;
@@ -1512,7 +1574,11 @@ if (mode === "scheduled" && actor.type !== "internal") {
         .in("status", ["pending", "queued"]);
 
       if (error) throw error;
-      if ((count ?? 0) === 0) await markCampaignCompleted(campaign.id);
+      if ((count ?? 0) === 0) {
+        await markCampaignCompleted(campaign.id);
+      } else {
+        more = true;
+      }
 
       campaignsProcessed++;
     }
@@ -1523,6 +1589,7 @@ if (mode === "scheduled" && actor.type !== "internal") {
         mode: "scheduled",
         campaigns_processed: campaignsProcessed,
         messages_dispatched: globalSent,
+        more,
       }),
       {
         status: 200,
