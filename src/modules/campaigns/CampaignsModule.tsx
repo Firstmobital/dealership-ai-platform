@@ -791,24 +791,46 @@ alert("🚀 Campaign sent immediately");
   
     setRetrying(true);
     try {
-      // FULL RESET — REQUIRED
-      await supabase
+      // 1) Move campaign back to SENDING (critical if it was completed)
+      const { error: campErr } = await supabase
+        .from("campaigns")
+        .update({
+          status: "sending",
+          completed_at: null,
+          // optional: if you want to reflect retry start time
+          started_at: new Date().toISOString(),
+        })
+        .eq("id", selectedCampaign.id);
+  
+      if (campErr) throw campErr;
+  
+      // 2) Reset messages into QUEUED and wipe failure remarks
+      //    Include both failed + queued (because you said queued ones also have error text now)
+      const { error: msgErr } = await supabase
         .from("campaign_messages")
         .update({
-          status: "pending",
+          status: "queued",
           error: null,
+          next_retry_at: null,
+          locked_at: null,
+          locked_by: null,
           whatsapp_message_id: null,
           dispatched_at: null,
+          last_attempt_at: null,
+          // optional: only if you want manual retry to fully restart attempts
+          // send_attempts: 0,
         })
         .eq("campaign_id", selectedCampaign.id)
-        .eq("status", "failed");
+        .in("status", ["failed", "queued"]);
   
-      // Trigger dispatcher immediately
+      if (msgErr) throw msgErr;
+  
+      // 3) Trigger dispatcher immediately
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token;
       if (!token) throw new Error("Not authenticated");
   
-      await fetch(
+      const res = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/campaign-dispatch`,
         {
           method: "POST",
@@ -819,14 +841,20 @@ alert("🚀 Campaign sent immediately");
           body: JSON.stringify({
             mode: "immediate",
             campaign_id: selectedCampaign.id,
+            limit: 50, // optional: keep small to avoid Meta burst issues
           }),
         }
       );
   
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json?.error ?? json?.details ?? "Dispatch failed");
+      }
+  
       await fetchCampaignMessages(selectedCampaign.id);
       await fetchCampaigns(activeOrganization.id);
   
-      alert("✅ Failed messages retried");
+      alert("✅ Retried: campaign set to sending, messages queued, errors cleared");
     } catch (e: any) {
       console.error("[CampaignsModule] retry failed error", e);
       alert(e?.message ?? "Failed to retry messages");
