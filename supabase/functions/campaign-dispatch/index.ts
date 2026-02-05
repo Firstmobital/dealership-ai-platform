@@ -622,7 +622,7 @@ async function fetchMessages(campaignId: string, limit: number): Promise<Campaig
     p_campaign_id: campaignId,
     p_limit: limit,
     p_worker_id: workerId,
-    p_lock_ttl_seconds: 300,
+    p_lock_ttl_seconds: 60,
   });
 
   if (error) throw error;
