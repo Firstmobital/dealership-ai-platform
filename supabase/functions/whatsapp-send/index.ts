@@ -6,6 +6,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 
 import { logAuditEvent } from "../_shared/audit.ts";
 import { isInternalRequest } from "../_shared/auth.ts";
+import { corsPreflight, withCors } from "../_shared/cors.ts";
+
 /* ===========================================================================
    ENV
 =========================================================================== */
@@ -318,7 +320,7 @@ function buildWhatsappPayload(body: SendBody) {
    MAIN HANDLER
 =========================================================================== */
 
-serve(async (req: Request) => {
+async function handleRequest(req: Request): Promise<Response> {
   const request_id = crypto.randomUUID();
   try {
     if (req.method !== "POST") {
@@ -951,4 +953,11 @@ if (!waPayload) {
       status: 500,
     });
   }
+}
+
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return corsPreflight(req);
+
+  const res = await handleRequest(req);
+  return withCors(req, res);
 });
