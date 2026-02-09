@@ -1617,6 +1617,65 @@ function isExplicitTopicChange(msg: string): boolean {
   return patterns.some((p) => p.test(t));
 }
 
+
+/* ============================================================================
+   RESPONSE SCHEMA ENFORCER (Behavior-level)
+   - Ensures dealership-executive style
+   - Ensures ONLY ONE question
+============================================================================ */
+function enforceDealershipReplySchema(params: {
+  text: string;
+  intentBucket: string; // sales | service | finance | accessories
+  extractedIntent: string;
+}): string {
+  let t = (params.text || '').trim();
+  if (!t) return t;
+
+  // Normalize whitespace
+  t = t.replace(/\r\n/g, "\n").replace(/[ \t]+/g, ' ');
+
+  // If multiple questions, keep first question mark; convert others to periods.
+  const qmPositions: number[] = [];
+  for (let i = 0; i < t.length; i++) if (t[i] === '?') qmPositions.push(i);
+  if (qmPositions.length > 1) {
+    const first = qmPositions[0];
+    const before = t.slice(0, first + 1);
+    const after = t.slice(first + 1).replace(/\?/g, '.');
+    t = (before + after).trim();
+  }
+
+  // Ensure there's a clear next step if the message has no question.
+  const hasQuestion = /\?\s*$/.test(t) || t.includes('?');
+  if (!hasQuestion) {
+    if (params.intentBucket === 'service') {
+      t += "\n\nPlease share your vehicle number and preferred slot (date/time).";
+    } else if (params.intentBucket === 'finance') {
+      t += "\n\nWhich model and variant are you checking, and is it self or company purchase?";
+    } else if (params.intentBucket === 'accessories') {
+      t += "\n\nWhich model/variant is your car, and which accessory are you looking for?";
+    } else {
+      // sales
+      if (params.extractedIntent === 'pricing' || params.extractedIntent === 'offer') {
+        t += "\n\nWhich exact model + variant (fuel + transmission) should I check for you?";
+      } else {
+        t += "\n\nWhich model are you considering?";
+      }
+    }
+
+    // Re-run one-question enforcement after appending.
+    const qm2: number[] = [];
+    for (let i = 0; i < t.length; i++) if (t[i] === '?') qm2.push(i);
+    if (qm2.length > 1) {
+      const first = qm2[0];
+      const before = t.slice(0, first + 1);
+      const after = t.slice(first + 1).replace(/\?/g, '.');
+      t = (before + after).trim();
+    }
+  }
+
+  return t.trim();
+}
+
 /* ============================================================================
    SEMANTIC QUERY REWRITE (FOLLOW-UP AWARE)
 ============================================================================ */
@@ -3243,6 +3302,16 @@ serve(async (req: Request): Promise<Response> => {
       ai_mode: AiMode | null;
       ai_summary: string | null;
       ai_last_entities: Record<string, any> | null;
+      // Behavior-level persisted AI state
+      ai_state?: Record<string, any> | null;
+      funnel_stage?: string | null;
+      intent_confidence?: number | null;
+      intent_updated_at?: string | null;
+      last_workflow_id?: string | null;
+      last_workflow_run_at?: string | null;
+      last_kb_hit_count?: number | null;
+      last_kb_article_ids?: string[] | null;
+      last_kb_match_confidence?: string | null;
       campaign_id?: string | null;
       workflow_id?: string | null;
       campaign_context?: Record<string, any> | null;
@@ -3260,6 +3329,15 @@ serve(async (req: Request): Promise<Response> => {
           ai_mode,
           ai_summary,
           ai_last_entities,
+          ai_state,
+          funnel_stage,
+          intent_confidence,
+          intent_updated_at,
+          last_workflow_id,
+          last_workflow_run_at,
+          last_kb_hit_count,
+          last_kb_article_ids,
+          last_kb_match_confidence,
           ai_locked,
           ai_locked_by,
           ai_locked_at,
@@ -3644,11 +3722,12 @@ ${personality.donts || "- None specified."}
         metadata: { request_id, trace_id, kind: "greeting" },
       });
 
-      // Update conversation timestamp
+      // Update conversation timestamp (keep this block independent — conversationUpdate is defined later)
       await supabase
         .from("conversations")
         .update({ last_message_at: new Date().toISOString() })
-        .eq("id", conversation_id);
+        .eq("id", conversation_id)
+        .eq("organization_id", organizationId);
 
       // Send WhatsApp reply if WhatsApp
       if (channel === "whatsapp" && contactPhone) {
@@ -3754,7 +3833,8 @@ ${personality.donts || "- None specified."}
       await supabase
         .from("conversations")
         .update({ last_message_at: new Date().toISOString() })
-        .eq("id", conversation_id);
+        .eq("id", conversation_id)
+        .eq("organization_id", organizationId);
 
       if (channel === "whatsapp" && contactPhone) {
         await safeWhatsAppSend(logger, {
@@ -3933,9 +4013,9 @@ ${personality.donts || "- None specified."}
     const msgLower = (user_message || "").toLowerCase();
     const isServiceIntent =
       aiExtract.intent === "service" ||
-      /b(service|servicing|workshop|maintenance|periodic|appointment|pickup|drop|jobs*card|complaint|warranty|rsa|breakdown|repair)b/i.test(user_message);
-    const isFinanceIntent = /b(emi|loan|finance|downs*payment|dp|interest|tenure|bank|mileages*loan)b/i.test(user_message);
-    const isAccessoriesIntent = /b(accessor|accessories|seats*cover|floors*mat|alloy|dashcam|infotainment|musics*system)b/i.test(user_message);
+      /\b(service|servicing|workshop|maintenance|periodic|appointment|pickup|drop|jobs*card|complaint|warranty|rsa|breakdown|repair)\b/i.test(user_message);
+    const isFinanceIntent = /\b(emi|loan|finance|downs*payment|dp|interest|tenure|bank|mileages*loan)\b/i.test(user_message);
+    const isAccessoriesIntent = /\b(accessor|accessories|seats*cover|floors*mat|alloy|dashcam|infotainment|musics*system)\b/i.test(user_message);
 
     const conversationIntent = (isServiceIntent
       ? "service"
@@ -3945,11 +4025,18 @@ ${personality.donts || "- None specified."}
       ? "accessories"
       : "sales") as any;
 
+    // Back-compat variable used across the handler (schema enforcement + ai_state persistence)
+    const intentBucket = conversationIntent as
+      | "sales"
+      | "service"
+      | "finance"
+      | "accessories";
+
     const funnelStage = isServiceIntent
       ? "post_purchase"
-      : /b(book|booking|confirm|buy|purchase|delivery|ready|tests*drive|schedule|visit)b/i.test(user_message)
+      : /\b(book|booking|confirm|buy|purchase|delivery|ready|tests*drive|schedule|visit)\b/i.test(user_message)
       ? "decision"
-      : /b(price|pricing|ons*road|variant|variants|feature|features|compare|brochure|mileage|range)b/i.test(user_message)
+      : /\b(price|pricing|ons*road|variant|variants|feature|features|compare|brochure|mileage|range)\b/i.test(user_message)
       ? "consideration"
       : "awareness";
 
@@ -5032,7 +5119,38 @@ if (
         .eq("id", usage.id);
     }
 
-    // 15) NO-REPLY handling (do NOT save message / do NOT send)
+    
+    // 14.9) Persist behavior-level conversation state (intent/stage/workflow/KB)
+    const nowIso = new Date().toISOString();
+
+    const kbArticleIds: string[] = (kbMatchMeta?.article_ids ?? []) as any;
+    const mergedAiState: Record<string, any> = {
+      ...((conv as any).ai_state || {}),
+      last_intent: aiExtract.intent || 'other',
+      last_intent_bucket: intentBucket,
+      funnel_stage: funnelStage,
+      intent_confidence: intentConfidence,
+      intent_at: nowIso,
+      last_workflow_id: resolvedWorkflow?.workflow_id ?? null,
+      last_workflow_run_at: resolvedWorkflow ? nowIso : null,
+      last_kb: kbFound ? (nextEntitiesWithKb?.last_kb ?? null) : null,
+    };
+
+    const conversationUpdate: Record<string, any> = {
+      ai_last_entities: nextEntitiesWithKb,
+      ai_state: mergedAiState,
+      funnel_stage: funnelStage,
+      intent_confidence: intentConfidence,
+      intent_updated_at: nowIso,
+      last_workflow_id: resolvedWorkflow?.workflow_id ?? null,
+      last_workflow_run_at: resolvedWorkflow ? nowIso : null,
+      last_kb_hit_count: kbFound ? (kbArticleIds.length || 0) : 0,
+      last_kb_article_ids: kbFound ? kbArticleIds : [],
+      last_kb_match_confidence: kbMatchMeta?.confidence ?? null,
+      last_message_at: nowIso,
+    };
+
+// 15) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
       if (resolvedWorkflow) {
         logger.warn("[ai-handler] NO_REPLY blocked due to active workflow", {
@@ -5062,8 +5180,9 @@ if (
 
         await supabase
           .from("conversations")
-          .update({ last_message_at: new Date().toISOString() })
-          .eq("id", conversation_id);
+          .update(conversationUpdate)
+          .eq("id", conversation_id)
+          .eq("organization_id", organizationId);
 
         return new Response(
           JSON.stringify({ conversation_id, no_reply: true, request_id }),
@@ -5094,7 +5213,15 @@ if (
       );
     }
 
-    // 16) Phase 6.3 — Log unanswered question
+    
+    // 15.5) Enforce dealership response schema (single question, clear next step)
+    aiResponseText = enforceDealershipReplySchema({
+      text: aiResponseText,
+      intentBucket,
+      extractedIntent: aiExtract.intent || 'other',
+    });
+
+// 16) Phase 6.3 — Log unanswered question
     // - Classic fallback
     // - OR kb_only blocked reply (P2)
     const shouldLogUnanswered =
@@ -5150,18 +5277,11 @@ if (
       metadata: { request_id, trace_id, kb: kbMatchMeta ?? null },
     });
 
-    // 🔒 Persist locked entities (Issue 4)
     await supabase
-      .from("conversations")
-      .update({
-        ai_last_entities: nextEntitiesWithKb,
-      })
-      .eq("id", conversation_id);
-
-    await supabase
-      .from("conversations")
-      .update({ last_message_at: new Date().toISOString() })
-      .eq("id", conversation_id);
+          .from("conversations")
+          .update(conversationUpdate)
+          .eq("id", conversation_id)
+          .eq("organization_id", organizationId);
 
     // 18) WhatsApp send
     if (channel === "whatsapp" && contactPhone) {
