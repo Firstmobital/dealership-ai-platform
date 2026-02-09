@@ -72,6 +72,20 @@ export type Conversation = {
 
   intent?: ConversationIntent | null;
   intent_source?: "ai" | "manual" | null;
+  intent_confidence?: number | null;
+  intent_updated_at?: string | null;
+
+  funnel_stage?: string | null;
+  ai_state?: Record<string, unknown> | null;
+
+  last_workflow_id?: UUID | null;
+  last_workflow_run_at?: string | null;
+  last_kb_hit_count?: number | null;
+  last_kb_article_ids?: UUID[] | null;
+  last_kb_match_confidence?: string | null;
+
+
+
 
   // ✅ AI mode (phase 1)
   ai_mode?: "auto" | "suggest" | "off" | null;

@@ -767,6 +767,109 @@ function inferIntentHeuristic(userMessage: string): {
 
   return { intent: "other", signals };
 }
+
+/* ============================================================================
+   CONVERSATION INTENT + FUNNEL STAGE (DETERMINISTIC FIRST)
+   - Locks high-level intent: sales vs service (plus finance/accessories/general)
+   - Produces a funnel stage for better continuity
+   - LLM is allowed only as a LOW-CONFIDENCE fallback elsewhere
+============================================================================ */
+type DeterministicIntentResult = {
+  high_level_intent: "sales" | "service" | "finance" | "accessories" | "general";
+  stage: "awareness" | "consideration" | "decision" | "post_purchase";
+  confidence: number;
+  reasons: string[];
+};
+
+function classifyDeterministicConversationIntent(params: {
+  userMessage: string;
+  lockedIntent?: string | null;
+}): DeterministicIntentResult {
+  const msg = (params.userMessage || "").toLowerCase();
+  const reasons: string[] = [];
+
+  const hasAny = (arr: string[]) => arr.some((k) => msg.includes(k));
+
+  const serviceKeys = [
+    "service", "servicing", "maintenance", "workshop", "pickup", "drop", "appointment",
+    "schedule", "schedule service", "service booking", "service due", "oil", "engine oil",
+    "brake", "clutch", "battery", "tyre", "tire", "ac", "aircon", "noise", "issue", "problem",
+    "check", "diagnose", "warranty", "claim", "insurance claim", "accident", "repair",
+    "estimate", "job card", "invoice", "bill", "RSA", "roadside",
+    "सर्विस", "मेंटेनेंस", "वर्कशॉप", "अपॉइंटमेंट", "रिपेयर", "समस्या", "वारंटी"
+  ];
+
+  const financeKeys = [
+    "emi", "loan", "finance", "down payment", "dp", "interest", "tenure", "bank", "approval",
+    "quotation", "quote", "on-road", "on road", "ex-showroom", "ex showroom",
+    "ईएमआई", "लोन", "फाइनेंस", "डाउन पेमेंट", "बैंक"
+  ];
+
+  const accessoriesKeys = [
+    "accessory", "accessories", "mats", "seat cover", "seat covers", "dashcam", "music system",
+    "alloy", "alloys", "fog lamp", "spoiler", "wrap", "coating", "ppf", "ceramic",
+    "एक्सेसरी", "मैट", "सीट कवर"
+  ];
+
+  const salesKeys = [
+    "price", "pricing", "discount", "offer", "deal", "scheme", "variant", "variants", "features",
+    "brochure", "test drive", "book", "booking", "delivery", "waiting", "availability",
+    "color", "colour", "mileage", "range", "top speed", "safety",
+    "कीमत", "दाम", "ऑफर", "डिस्काउंट", "बुक", "टेस्ट ड्राइव", "वेरिएंट"
+  ];
+
+  const isService = hasAny(serviceKeys);
+  const isFinance = hasAny(financeKeys);
+  const isAccessories = hasAny(accessoriesKeys);
+  const isSales = hasAny(salesKeys);
+
+  let high: DeterministicIntentResult["high_level_intent"] = "general";
+  let confidence = 0.5;
+
+  // Priority: explicit service > finance > accessories > sales > general
+  if (isService) {
+    high = "service";
+    confidence = 0.9;
+    reasons.push("service_keywords");
+  } else if (isFinance) {
+    high = "finance";
+    confidence = 0.85;
+    reasons.push("finance_keywords");
+  } else if (isAccessories) {
+    high = "accessories";
+    confidence = 0.85;
+    reasons.push("accessories_keywords");
+  } else if (isSales) {
+    high = "sales";
+    confidence = 0.75;
+    reasons.push("sales_keywords");
+  }
+
+  // Stage: simple heuristic
+  let stage: DeterministicIntentResult["stage"] = "consideration";
+  if (/b(hi|hello|hey|namaste|info|details|brochure|variants|features|mileage|range)b/i.test(msg)) {
+    stage = "awareness";
+  }
+  if (/b(price|ons*-?road|quotation|quote|discount|offer|tests*drive|visit)b/i.test(msg)) {
+    stage = "consideration";
+  }
+  if (/b(book|booking|confirm|final|buy|purchase|deliver|delivery|ready|pay)b/i.test(msg)) {
+    stage = "decision";
+  }
+  if (high === "service" && /b(done|completed|status|when|pickup|drop|bill|invoice)b/i.test(msg)) {
+    stage = "post_purchase";
+  }
+
+  // If the conversation already has a locked high-level intent, don't flip easily
+  const locked = (params.lockedIntent || "").toLowerCase();
+  if (locked && locked !== high && confidence < 0.9) {
+    reasons.push("locked_intent_preferred");
+    confidence = Math.min(confidence, 0.65);
+  }
+
+  return { high_level_intent: high, stage, confidence, reasons };
+}
+
 /* ============================================================================
    PHASE P3 — TOKEN BUDGET + MODEL ROUTING
 ============================================================================ */
@@ -3821,6 +3924,40 @@ ${personality.donts || "- None specified."}
               : m
           )
         : historyMessages;
+
+    // ------------------------------------------------------------------
+    // PHASE 0.5 — HIGH-LEVEL INTENT + FUNNEL STAGE (DETERMINISTIC)
+    // Purpose: persist "sales vs service" continuity across turns and
+    // let workflows / UI route conversations more reliably.
+    // ------------------------------------------------------------------
+    const msgLower = (user_message || "").toLowerCase();
+    const isServiceIntent =
+      aiExtract.intent === "service" ||
+      /b(service|servicing|workshop|maintenance|periodic|appointment|pickup|drop|jobs*card|complaint|warranty|rsa|breakdown|repair)b/i.test(user_message);
+    const isFinanceIntent = /b(emi|loan|finance|downs*payment|dp|interest|tenure|bank|mileages*loan)b/i.test(user_message);
+    const isAccessoriesIntent = /b(accessor|accessories|seats*cover|floors*mat|alloy|dashcam|infotainment|musics*system)b/i.test(user_message);
+
+    const conversationIntent = (isServiceIntent
+      ? "service"
+      : isFinanceIntent
+      ? "finance"
+      : isAccessoriesIntent
+      ? "accessories"
+      : "sales") as any;
+
+    const funnelStage = isServiceIntent
+      ? "post_purchase"
+      : /b(book|booking|confirm|buy|purchase|delivery|ready|tests*drive|schedule|visit)b/i.test(user_message)
+      ? "decision"
+      : /b(price|pricing|ons*road|variant|variants|feature|features|compare|brochure|mileage|range)b/i.test(user_message)
+      ? "consideration"
+      : "awareness";
+
+    const intentConfidence = isServiceIntent || isFinanceIntent || isAccessoriesIntent
+      ? 0.85
+      : aiExtract.intent && aiExtract.intent !== "other"
+      ? 0.7
+      : 0.55;
 
     // 9) Campaign context (best-effort; fixed schema)
     let campaignContextText = "";
