@@ -4750,18 +4750,21 @@ let workflowSaySchema: {
             step as any,
             (nextEntitiesWithKb as any) || {}
           );
+        
           workflowDirectiveAction = directive.action;
-
+        
           if (directive.action === "ask" || directive.action === "escalate") {
             // Deterministic reply; do NOT rely on the LLM.
             forcedReplyText = enforceDirective(directive as any);
-
+        
             // Hold step on ask; end workflow on escalate.
             const nextStepNum =
               directive.action === "ask"
                 ? resolvedWorkflow.current_step_number ?? 1
                 : workflowStepsCount + 1;
+        
             const completed = directive.action === "escalate";
+        
             await saveWorkflowProgress(
               resolvedWorkflow.id,
               organizationId,
@@ -4770,25 +4773,22 @@ let workflowSaySchema: {
               completed,
               logger
             );
-
+        
             // Do not inject workflow guidance into prompts when we already produced the enforced reply.
             workflowInstructionText = "";
           }
+        
+          // ✅ Phase 1: engine-enforced SAY (seed + schema)
+          if (!forcedReplyText && directive.action === "say") {
+            workflowSayMessage = safeText((directive as any).message_seed ?? "");
+            workflowSaySchema = (directive as any).schema ?? null;
+        
+            // Do not rely on prompt guidance for correctness
+            workflowInstructionText = "";
+          }
         } catch (err) {
-          logger.error("[workflow] directive build/enforce error", {
-            error: err,
-          });
-        }
-
-        if (!forcedReplyText && workflowDirectiveAction === "say") {
-          // Engine-enforced SAY: capture deterministic message seed; validator will fallback to this if needed.
-          workflowSayMessage = safeText(
-            (step as any).instruction_text ?? step.action?.instruction_text
-          );
-
-          // Do not rely on prompt guidance for correctness
-          workflowInstructionText = "";
-        }
+          logger.error("[workflow] directive build/enforce error", { error: err });
+        }        
       }
     }
 
@@ -5241,7 +5241,9 @@ Respond now to the customer's latest message only.
       verifiedNumbersAvailable,
       allowedNumbers: allowedNumbersForOutput,
       workflowSayMessage,
+      saySchema: workflowSaySchema,
     });
+    
 
     if (!val.ok) {
       logger.warn("[ai-validator] violations", {

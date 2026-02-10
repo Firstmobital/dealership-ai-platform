@@ -27,18 +27,14 @@ export type WorkflowDirective =
     };
 
 function parseRequiredEntities(step: any): string[] {
-  // Prefer metadata.required_entities if present
   const meta = step?.metadata ?? {};
   const fromMeta = Array.isArray(meta.required_entities)
     ? meta.required_entities
     : null;
-
   if (fromMeta && fromMeta.length) return fromMeta.map((x: any) => String(x));
 
-  // Fallback: expected_user_input as comma-separated keys (e.g., "model,variant,city")
   const exp = (step?.expected_user_input ?? "").toString().trim();
   if (!exp) return [];
-
   return exp
     .split(",")
     .map((s) => s.trim())
@@ -47,16 +43,12 @@ function parseRequiredEntities(step: any): string[] {
 
 function parseSaySchema(step: any): SaySchema {
   const meta = step?.metadata ?? {};
-
-  // Defaults: safe dealership behavior
   const allow_numbers =
     typeof meta.allow_numbers === "boolean" ? meta.allow_numbers : false;
-
   const max_questions =
     typeof meta.max_questions === "number" && meta.max_questions > 0
       ? meta.max_questions
       : 1;
-
   const forbidden_phrases: string[] = Array.isArray(meta.forbidden_phrases)
     ? meta.forbidden_phrases.map((x: any) => String(x)).filter(Boolean)
     : ["contact dealer", "contact dealership"];
@@ -70,7 +62,6 @@ export function buildDirective(
 ): WorkflowDirective {
   const stepOrder = Number(step?.step_order ?? step?.stepOrder ?? 0) || 0;
 
-  // Normalize instruction text
   const instruction =
     (
       step?.instruction_text ??
@@ -85,12 +76,10 @@ export function buildDirective(
     .toString()
     .trim();
 
-  // "ask_question" steps are enforced deterministically
   if (aiAction === "ask_question") {
     const required = parseRequiredEntities(step);
     const missing = required.filter((k) => !entities?.[k]);
 
-    // Always ask if required entities are missing OR required set is empty (generic ask step)
     if (missing.length || required.length === 0) {
       return {
         action: "ask",
@@ -100,7 +89,6 @@ export function buildDirective(
       };
     }
 
-    // Nothing missing → allow advancement by returning a no-op SAY seed
     return {
       action: "say",
       message_seed: "",
@@ -109,7 +97,6 @@ export function buildDirective(
     };
   }
 
-  // Explicit end
   if (aiAction === "end") {
     return {
       action: "say",
@@ -119,7 +106,6 @@ export function buildDirective(
     };
   }
 
-  // Escalation (if you have such steps)
   if (aiAction === "escalate") {
     return {
       action: "escalate",
@@ -128,7 +114,6 @@ export function buildDirective(
     };
   }
 
-  // Branching not supported yet; keep deterministic by treating as SAY
   if (aiAction === "branch") {
     return {
       action: "say",
@@ -138,7 +123,6 @@ export function buildDirective(
     };
   }
 
-  // Default: treat as SAY with schema
   return {
     action: "say",
     message_seed: instruction,

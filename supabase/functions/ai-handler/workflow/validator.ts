@@ -8,6 +8,11 @@ export type ValidationContext = {
   verifiedNumbersAvailable: boolean;
   allowedNumbers: Set<string>;
   workflowSayMessage?: string;
+  saySchema?: {
+    allow_numbers: boolean;
+    max_questions: number;
+    forbidden_phrases?: string[];
+  } | null;
 };
 
 export type ValidationResult = {
@@ -47,6 +52,39 @@ export function validateAndRepairResponse(
 ): ValidationResult {
   let text = (inputText || "").trim();
   const violations: string[] = [];
+
+  // SAY schema enforcement (engine-enforced)
+  if (ctx.saySchema) {
+    const qCount = (text.match(/\?/g) || []).length;
+    if (qCount > ctx.saySchema.max_questions) {
+      violations.push("say_schema_too_many_questions");
+      const idx = text.indexOf("?");
+      if (idx >= 0) text = text.slice(0, idx + 1).trim();
+    }
+
+    if (!ctx.saySchema.allow_numbers && /[₹\d]/.test(text)) {
+      violations.push("say_schema_numbers_not_allowed");
+      return {
+        ok: false,
+        text: ctx.workflowSayMessage || text,
+        violations,
+        used_fallback: true,
+      };
+    }
+
+    for (const phrase of ctx.saySchema.forbidden_phrases || []) {
+      if (new RegExp(phrase, "i").test(text)) {
+        violations.push("say_schema_forbidden_phrase");
+        return {
+          ok: false,
+          text: ctx.workflowSayMessage || text,
+          violations,
+          used_fallback: true,
+        };
+      }
+    }
+  }
+
 
   // 1) Forbidden phrasing
   if (/contact (the )?dealer|contact dealership|dealer\.?ship/i.test(text)) {
