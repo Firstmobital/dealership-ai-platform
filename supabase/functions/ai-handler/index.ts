@@ -13,6 +13,7 @@ import {
 } from "../_shared/auth.ts";
 import { buildDirective } from "./workflow/directive.ts";
 import { enforceDirective } from "./workflow/enforcer.ts";
+import { validateAndRepairResponse, extractNumberTokens } from "./workflow/validator.ts";
 
 
 /* ============================================================================
@@ -664,6 +665,69 @@ function buildOnRoadReply(params: {
 // Small helper to prevent weird empty variant joins in TS string building
 function preventingRobotLikeHead(variant: string): boolean {
   return Boolean((variant || "").trim());
+}
+
+
+async function detectServiceTicketType(message: string): Promise<"booking"|"status"|"complaint"|"general"> {
+  const s = (message || "").toLowerCase();
+  if (/(book|booking|appointment|slot|schedule|pickup|drop)/i.test(s)) return "booking";
+  if (/(status|job card|jobcard|ready|done|completed)/i.test(s)) return "status";
+  if (/(complaint|issue|problem|noise|vibration|not working|failed|refund|consumer|court)/i.test(s)) return "complaint";
+  return "general";
+}
+
+async function createServiceTicketIfNeeded(params: {
+  supabaseAdmin: any;
+  organization_id: string;
+  conversation_id: string;
+  contact_id?: string | null;
+  channel: string;
+  user_message: string;
+  vehicle_number?: string | null;
+  logger: any;
+}) {
+  try {
+    const ticket_type = await detectServiceTicketType(params.user_message);
+
+    // Avoid duplicates: if open/pending exists, reuse
+    const { data: existing } = await params.supabaseAdmin
+      .from("service_tickets")
+      .select("id, status, created_at")
+      .eq("organization_id", params.organization_id)
+      .eq("conversation_id", params.conversation_id)
+      .in("status", ["open", "pending"])
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (existing && existing.length) return existing[0].id as string;
+
+    const { data: created, error } = await params.supabaseAdmin
+      .from("service_tickets")
+      .insert({
+        organization_id: params.organization_id,
+        conversation_id: params.conversation_id,
+        contact_id: params.contact_id ?? null,
+        channel: params.channel,
+        ticket_type,
+        status: "open",
+        vehicle_number: params.vehicle_number ?? null,
+        description: params.user_message,
+        created_by: "ai",
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      params.logger.error("[service_ticket] create failed", { error });
+      return null;
+    }
+
+    params.logger.info("[service_ticket] created", { id: created?.id, ticket_type });
+    return created?.id as string;
+  } catch (e: any) {
+    params.logger.error("[service_ticket] unexpected", { error: e });
+    return null;
+  }
 }
 
 
@@ -4171,6 +4235,25 @@ ${personality.donts || "- None specified."}
       // never break on memory anchors
     }
 
+    // ------------------------------------------------------------
+// MVP service ticket creation (transactional service workflow)
+// ------------------------------------------------------------
+let serviceTicketId: string | null = null;
+
+if (intentBucket === "service") {
+  serviceTicketId = await createServiceTicketIfNeeded({
+    supabaseAdmin: supabase,
+    organization_id: organizationId,
+    conversation_id: conversation_id,
+    contact_id: contactId ?? null,
+    channel,
+    user_message,
+    vehicle_number: (nextEntitiesWithKb as any)?.vehicle_number ?? null,
+    logger,
+  });
+}
+
+
     const requiresAuthoritativeKB =
       aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
@@ -4363,6 +4446,7 @@ ${personality.donts || "- None specified."}
     // WORKFLOW CONTEXT (GUIDANCE ONLY — NO EXECUTION)
     // ------------------------------------------------------------------
     let workflowInstructionText = "";
+    let workflowSayMessage = "";
     let resolvedWorkflow: WorkflowLogRow | null = null;
     let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
     let workflowStepsCount = 0;
@@ -4456,10 +4540,14 @@ ${personality.donts || "- None specified."}
         }
 
         if (!forcedReplyText && workflowDirectiveAction === "say") {
-          workflowInstructionText = safeText(
+          // Engine-enforced SAY: capture deterministic message seed; validator will fallback to this if needed.
+          workflowSayMessage = safeText(
             (step as any).instruction_text ?? step.action?.instruction_text
           );
-        }
+        
+          // Do not rely on prompt guidance for correctness
+          workflowInstructionText = "";
+        }        
       }
     }
 
@@ -4589,6 +4677,10 @@ typeof truncateTextToTokenLimit === "function"
 // - ask_question steps are answered deterministically via WorkflowDirective
 // - workflow guidance is injected only for "say" steps (LLM renders, engine advances)
 // ------------------------------------------------------------------
+// Allowed number tokens from KB + Campaign context (strict pricing validator)
+const allowedNumbersForOutput = new Set<string>();
+for (const t of extractNumberTokens(String(kbContextForPrompt || ""))) allowedNumbersForOutput.add(t);
+for (const t of extractNumberTokens(String(campaignContextForPrompt || ""))) allowedNumbersForOutput.add(t);
 
 // 11) System prompt
     const systemPrompt = `
@@ -4887,6 +4979,22 @@ Respond now to the customer's latest message only.
 
     let aiResponseText = forcedReplyText ?? aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
+
+    // Strict validators (NO prompt-trust)
+const verifiedNumbersAvailable = Boolean(kbHasPricingSignals || campaignHasPricingSignals);
+
+const val = validateAndRepairResponse(aiResponseText, {
+  intent: aiExtract.intent as any,
+  verifiedNumbersAvailable,
+  allowedNumbers: allowedNumbersForOutput,
+  workflowSayMessage,
+});
+
+if (!val.ok) {
+  logger.warn("[ai-validator] violations", { violations: val.violations, used_fallback: val.used_fallback });
+}
+aiResponseText = val.text;
+
 
     // If user asked pricing and KB has pricing signals, but the model didn't output any numbers,
 // show the KB options instead of only asking "confirm variant".
