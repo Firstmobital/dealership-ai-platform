@@ -13,8 +13,10 @@ import {
 } from "../_shared/auth.ts";
 import { buildDirective } from "./workflow/directive.ts";
 import { enforceDirective } from "./workflow/enforcer.ts";
-import { validateAndRepairResponse, extractNumberTokens } from "./workflow/validator.ts";
-
+import {
+  validateAndRepairResponse,
+  extractNumberTokens,
+} from "./workflow/validator.ts";
 
 /* ============================================================================
    ENV
@@ -169,7 +171,9 @@ async function fetchOfferCatalogText(params: {
       }
     );
 
-    articleIds = [...new Set((chunkHits || []).map((r) => String(r.article_id)))];
+    articleIds = [
+      ...new Set((chunkHits || []).map((r) => String(r.article_id))),
+    ];
   }
 
   if (!articleIds.length) return null;
@@ -219,9 +223,7 @@ async function fetchOfferCatalogText(params: {
   if (!rows.length) return null;
 
   // 3) Concatenate, prioritizing obvious offer-like chunks.
-  const chunks = rows
-    .map((r) => String(r.chunk || "").trim())
-    .filter(Boolean);
+  const chunks = rows.map((r) => String(r.chunk || "").trim()).filter(Boolean);
 
   const joined = chunks.join("\n\n").trim();
   if (!joined) return null;
@@ -234,7 +236,6 @@ async function fetchOfferCatalogText(params: {
 
   return joined;
 }
-
 
 type KBCandidate = {
   id: string;
@@ -327,7 +328,6 @@ function safeText(v: any): string {
   return typeof v === "string" ? v : "";
 }
 
-
 /* ============================================================================
    PRICING/OFFER PARSERS (KB → STRUCTURED ANSWERS)
 ============================================================================ */
@@ -382,7 +382,10 @@ function extractOfferEntriesFromText(text: string): OfferEntry[] {
 
   // Split into MODEL blocks if present; otherwise treat whole text as a single block
   const modelBlocks = hasModelMarkers
-    ? normalized.split(/\bMODEL\s*:\s*/i).map((p) => p.trim()).filter(Boolean)
+    ? normalized
+        .split(/\bMODEL\s*:\s*/i)
+        .map((p) => p.trim())
+        .filter(Boolean)
     : [normalized];
 
   for (const mb of modelBlocks) {
@@ -412,10 +415,13 @@ function extractOfferEntriesFromText(text: string): OfferEntry[] {
       const vraw = vparts[j];
 
       // Variant name is the text up to the next known label
-      const variantName =
-        (vraw.match(/^([^]+?)(?=\bFuel\s*:|\bTransmission\s*:|\bColor(?: Options)?\s*:|\bManufacturing Year\s*:|\bPricing\s*:|\bOriginal(?:\s+Ex-Showroom)?\s+Price\s*:|\bDiscount Amount\s*:|\bFinal(?:\s+Discounted)?(?:\s+Ex-Showroom)?\s+Price\s*:|\bVariant\s*:|\bMODEL\s*:|$)/i)?.[1] || "")
-          .replace(/\s+/g, " ")
-          .trim();
+      const variantName = (
+        vraw.match(
+          /^([^]+?)(?=\bFuel\s*:|\bTransmission\s*:|\bColor(?: Options)?\s*:|\bManufacturing Year\s*:|\bPricing\s*:|\bOriginal(?:\s+Ex-Showroom)?\s+Price\s*:|\bDiscount Amount\s*:|\bFinal(?:\s+Discounted)?(?:\s+Ex-Showroom)?\s+Price\s*:|\bVariant\s*:|\bMODEL\s*:|$)/i
+        )?.[1] || ""
+      )
+        .replace(/\s+/g, " ")
+        .trim();
 
       const fuel = pick(vraw, "Fuel");
       const transmission = pick(vraw, "Transmission");
@@ -423,7 +429,8 @@ function extractOfferEntriesFromText(text: string): OfferEntry[] {
       const manufacturing_year = pick(vraw, "Manufacturing Year");
 
       const original_price =
-        pick(vraw, "Original Ex-Showroom Price") ?? pick(vraw, "Original Price");
+        pick(vraw, "Original Ex-Showroom Price") ??
+        pick(vraw, "Original Price");
       const total_discount = pick(vraw, "Discount Amount");
       const discounted_price =
         pick(vraw, "Final Discounted Ex-Showroom Price") ??
@@ -500,12 +507,14 @@ function buildOfferReply(entry: OfferEntry): string {
 
   const headParts: string[] = [];
   if (entry.model) headParts.push(entry.model.trim());
-  if (preventingRobotLikeHead(entry.variant)) headParts.push(entry.variant.trim());
+  if (preventingRobotLikeHead(entry.variant))
+    headParts.push(entry.variant.trim());
 
   const meta: string[] = [];
   if (entry.fuel) meta.push(entry.fuel.trim());
   if (entry.transmission) meta.push(entry.transmission.trim());
-  if (entry.manufacturing_year) meta.push(`MY${entry.manufacturing_year.trim()}`);
+  if (entry.manufacturing_year)
+    meta.push(`MY${entry.manufacturing_year.trim()}`);
 
   const metaText = meta.length ? ` (${meta.join(", ")})` : "";
   const head = `${headParts.join(" ")}${metaText}`.trim();
@@ -545,7 +554,9 @@ function buildOfferReply(entry: OfferEntry): string {
   if (discount) bits.push(`Discount Amount: ${discount}`);
 
   // Soft next step (human)
-  bits.push(`If you want, I can also check availability for this exact color/year.`);
+  bits.push(
+    `If you want, I can also check availability for this exact color/year.`
+  );
 
   return bits.join("\n");
 }
@@ -558,7 +569,9 @@ function buildOfferListReply(params: {
   const modelNorm = normalizeForMatch(model);
 
   const filtered = modelNorm
-    ? params.entries.filter((e) => normalizeForMatch(e.model || "").includes(modelNorm))
+    ? params.entries.filter((e) =>
+        normalizeForMatch(e.model || "").includes(modelNorm)
+      )
     : params.entries;
 
   if (!filtered.length) {
@@ -583,12 +596,16 @@ function buildOfferListReply(params: {
       const suffix = suffixBits.length ? ` — ${suffixBits.join(" | ")}` : "";
       lines.push(`• ${e.variant}${suffix}`);
     }
-    lines.push("Tell me the variant name and I’ll share the full breakup (original ex-showroom + discount + offer ex-showroom) from the offer list.");
+    lines.push(
+      "Tell me the variant name and I’ll share the full breakup (original ex-showroom + discount + offer ex-showroom) from the offer list."
+    );
     return lines.join("\n");
   }
 
   // No model specified: show a compact catalog grouped by model.
-  lines.push("Yes — currently the special stock offers are available on these variants (limited stock):");
+  lines.push(
+    "Yes — currently the special stock offers are available on these variants (limited stock):"
+  );
   const byModel = new Map<string, OfferEntry[]>();
   for (const e of filtered) {
     const k = (e.model || "Other").trim() || "Other";
@@ -614,10 +631,11 @@ function buildOfferListReply(params: {
     if (list.length > 4) lines.push(`• +${list.length - 4} more`);
   }
 
-  lines.push("\nWhich model are you checking? I’ll share the exact offer details for that one.");
+  lines.push(
+    "\nWhich model are you checking? I’ll share the exact offer details for that one."
+  );
   return lines.join("\n");
 }
-
 
 function extractOnRoadLine(params: {
   text: string;
@@ -630,7 +648,10 @@ function extractOnRoadLine(params: {
   const modelNorm = normalizeForMatch(params.model || "");
   const variantNorm = normalizeForMatch(params.variant || "");
 
-  const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const lines = t
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
 
   // Prefer lines that mention on-road + model/variant
   let best: { line: string; score: number } | null = null;
@@ -661,18 +682,25 @@ function buildOnRoadReply(params: {
   return `${prefix}${params.onRoadLine.trim()}\nIf you want, I can also share the breakup (RTO/insurance) if it’s mentioned for this variant.`;
 }
 
-
 // Small helper to prevent weird empty variant joins in TS string building
 function preventingRobotLikeHead(variant: string): boolean {
   return Boolean((variant || "").trim());
 }
 
-
-async function detectServiceTicketType(message: string): Promise<"booking"|"status"|"complaint"|"general"> {
+async function detectServiceTicketType(
+  message: string
+): Promise<"booking" | "status" | "complaint" | "general"> {
   const s = (message || "").toLowerCase();
-  if (/(book|booking|appointment|slot|schedule|pickup|drop)/i.test(s)) return "booking";
-  if (/(status|job card|jobcard|ready|done|completed)/i.test(s)) return "status";
-  if (/(complaint|issue|problem|noise|vibration|not working|failed|refund|consumer|court)/i.test(s)) return "complaint";
+  if (/(book|booking|appointment|slot|schedule|pickup|drop)/i.test(s))
+    return "booking";
+  if (/(status|job card|jobcard|ready|done|completed)/i.test(s))
+    return "status";
+  if (
+    /(complaint|issue|problem|noise|vibration|not working|failed|refund|consumer|court)/i.test(
+      s
+    )
+  )
+    return "complaint";
   return "general";
 }
 
@@ -722,14 +750,16 @@ async function createServiceTicketIfNeeded(params: {
       return null;
     }
 
-    params.logger.info("[service_ticket] created", { id: created?.id, ticket_type });
+    params.logger.info("[service_ticket] created", {
+      id: created?.id,
+      ticket_type,
+    });
     return created?.id as string;
   } catch (e: any) {
     params.logger.error("[service_ticket] unexpected", { error: e });
     return null;
   }
 }
-
 
 /* ============================================================================
    INTENT HEURISTICS (FAILSAFE)
@@ -842,7 +872,12 @@ function inferIntentHeuristic(userMessage: string): {
    - LLM is allowed only as a LOW-CONFIDENCE fallback elsewhere
 ============================================================================ */
 type DeterministicIntentResult = {
-  high_level_intent: "sales" | "service" | "finance" | "accessories" | "general";
+  high_level_intent:
+    | "sales"
+    | "service"
+    | "finance"
+    | "accessories"
+    | "general";
   stage: "awareness" | "consideration" | "decision" | "post_purchase";
   confidence: number;
   reasons: string[];
@@ -858,31 +893,125 @@ function classifyDeterministicConversationIntent(params: {
   const hasAny = (arr: string[]) => arr.some((k) => msg.includes(k));
 
   const serviceKeys = [
-    "service", "servicing", "maintenance", "workshop", "pickup", "drop", "appointment",
-    "schedule", "schedule service", "service booking", "service due", "oil", "engine oil",
-    "brake", "clutch", "battery", "tyre", "tire", "ac", "aircon", "noise", "issue", "problem",
-    "check", "diagnose", "warranty", "claim", "insurance claim", "accident", "repair",
-    "estimate", "job card", "invoice", "bill", "RSA", "roadside",
-    "सर्विस", "मेंटेनेंस", "वर्कशॉप", "अपॉइंटमेंट", "रिपेयर", "समस्या", "वारंटी"
+    "service",
+    "servicing",
+    "maintenance",
+    "workshop",
+    "pickup",
+    "drop",
+    "appointment",
+    "schedule",
+    "schedule service",
+    "service booking",
+    "service due",
+    "oil",
+    "engine oil",
+    "brake",
+    "clutch",
+    "battery",
+    "tyre",
+    "tire",
+    "ac",
+    "aircon",
+    "noise",
+    "issue",
+    "problem",
+    "check",
+    "diagnose",
+    "warranty",
+    "claim",
+    "insurance claim",
+    "accident",
+    "repair",
+    "estimate",
+    "job card",
+    "invoice",
+    "bill",
+    "RSA",
+    "roadside",
+    "सर्विस",
+    "मेंटेनेंस",
+    "वर्कशॉप",
+    "अपॉइंटमेंट",
+    "रिपेयर",
+    "समस्या",
+    "वारंटी",
   ];
 
   const financeKeys = [
-    "emi", "loan", "finance", "down payment", "dp", "interest", "tenure", "bank", "approval",
-    "quotation", "quote", "on-road", "on road", "ex-showroom", "ex showroom",
-    "ईएमआई", "लोन", "फाइनेंस", "डाउन पेमेंट", "बैंक"
+    "emi",
+    "loan",
+    "finance",
+    "down payment",
+    "dp",
+    "interest",
+    "tenure",
+    "bank",
+    "approval",
+    "quotation",
+    "quote",
+    "on-road",
+    "on road",
+    "ex-showroom",
+    "ex showroom",
+    "ईएमआई",
+    "लोन",
+    "फाइनेंस",
+    "डाउन पेमेंट",
+    "बैंक",
   ];
 
   const accessoriesKeys = [
-    "accessory", "accessories", "mats", "seat cover", "seat covers", "dashcam", "music system",
-    "alloy", "alloys", "fog lamp", "spoiler", "wrap", "coating", "ppf", "ceramic",
-    "एक्सेसरी", "मैट", "सीट कवर"
+    "accessory",
+    "accessories",
+    "mats",
+    "seat cover",
+    "seat covers",
+    "dashcam",
+    "music system",
+    "alloy",
+    "alloys",
+    "fog lamp",
+    "spoiler",
+    "wrap",
+    "coating",
+    "ppf",
+    "ceramic",
+    "एक्सेसरी",
+    "मैट",
+    "सीट कवर",
   ];
 
   const salesKeys = [
-    "price", "pricing", "discount", "offer", "deal", "scheme", "variant", "variants", "features",
-    "brochure", "test drive", "book", "booking", "delivery", "waiting", "availability",
-    "color", "colour", "mileage", "range", "top speed", "safety",
-    "कीमत", "दाम", "ऑफर", "डिस्काउंट", "बुक", "टेस्ट ड्राइव", "वेरिएंट"
+    "price",
+    "pricing",
+    "discount",
+    "offer",
+    "deal",
+    "scheme",
+    "variant",
+    "variants",
+    "features",
+    "brochure",
+    "test drive",
+    "book",
+    "booking",
+    "delivery",
+    "waiting",
+    "availability",
+    "color",
+    "colour",
+    "mileage",
+    "range",
+    "top speed",
+    "safety",
+    "कीमत",
+    "दाम",
+    "ऑफर",
+    "डिस्काउंट",
+    "बुक",
+    "टेस्ट ड्राइव",
+    "वेरिएंट",
   ];
 
   const isService = hasAny(serviceKeys);
@@ -914,16 +1043,31 @@ function classifyDeterministicConversationIntent(params: {
 
   // Stage: simple heuristic
   let stage: DeterministicIntentResult["stage"] = "consideration";
-  if (/b(hi|hello|hey|namaste|info|details|brochure|variants|features|mileage|range)b/i.test(msg)) {
+  if (
+    /b(hi|hello|hey|namaste|info|details|brochure|variants|features|mileage|range)b/i.test(
+      msg
+    )
+  ) {
     stage = "awareness";
   }
-  if (/b(price|ons*-?road|quotation|quote|discount|offer|tests*drive|visit)b/i.test(msg)) {
+  if (
+    /b(price|ons*-?road|quotation|quote|discount|offer|tests*drive|visit)b/i.test(
+      msg
+    )
+  ) {
     stage = "consideration";
   }
-  if (/b(book|booking|confirm|final|buy|purchase|deliver|delivery|ready|pay)b/i.test(msg)) {
+  if (
+    /b(book|booking|confirm|final|buy|purchase|deliver|delivery|ready|pay)b/i.test(
+      msg
+    )
+  ) {
     stage = "decision";
   }
-  if (high === "service" && /b(done|completed|status|when|pickup|drop|bill|invoice)b/i.test(msg)) {
+  if (
+    high === "service" &&
+    /b(done|completed|status|when|pickup|drop|bill|invoice)b/i.test(msg)
+  ) {
     stage = "post_purchase";
   }
 
@@ -1222,77 +1366,97 @@ function redactUserProvidedPricing(text: string): string {
   return t;
 }
 
-
 /* ============================================================================
    WORKFLOW ENFORCEMENT HELPERS (QUALIFICATION FLOWS)
 ============================================================================ */
 
 function isQualificationWorkflowInstruction(text: string): boolean {
-  const t = (text || '').toLowerCase();
+  const t = (text || "").toLowerCase();
   return (
-    t.includes('ask the user') ||
-    t.includes('fuel type') ||
-    t.includes('transmission preference') ||
-    t.includes('which fuel') ||
-    t.includes('which model') ||
-    t.includes('model or segment') ||
-    t.includes('which segment') ||
-    t.includes('one question')
+    t.includes("ask the user") ||
+    t.includes("fuel type") ||
+    t.includes("transmission preference") ||
+    t.includes("which fuel") ||
+    t.includes("which model") ||
+    t.includes("model or segment") ||
+    t.includes("which segment") ||
+    t.includes("one question")
   );
 }
 
-type WorkflowQuestionType = 'fuel' | 'transmission' | 'model' | 'confirm' | null;
+type WorkflowQuestionType =
+  | "fuel"
+  | "transmission"
+  | "model"
+  | "confirm"
+  | null;
 
 function detectWorkflowQuestionType(instruction: string): WorkflowQuestionType {
-  const t = (instruction || '').toLowerCase();
-  if (t.includes('fuel') && t.includes('ask')) return 'fuel';
-  if (t.includes('transmission') && t.includes('ask')) return 'transmission';
-  if ((t.includes('which model') || t.includes('model or segment') || t.includes('segment')) && t.includes('ask')) return 'model';
-  if (t.includes('confirm') || t.includes('preferences have been noted')) return 'confirm';
+  const t = (instruction || "").toLowerCase();
+  if (t.includes("fuel") && t.includes("ask")) return "fuel";
+  if (t.includes("transmission") && t.includes("ask")) return "transmission";
+  if (
+    (t.includes("which model") ||
+      t.includes("model or segment") ||
+      t.includes("segment")) &&
+    t.includes("ask")
+  )
+    return "model";
+  if (t.includes("confirm") || t.includes("preferences have been noted"))
+    return "confirm";
   return null;
 }
 
 function hasUserAnsweredFuel(userMsg: string): boolean {
-  const u = (userMsg || '').toLowerCase();
+  const u = (userMsg || "").toLowerCase();
   return /\b(petrol|diesel|ev|electric|cng)\b/.test(u);
 }
 
 function hasUserAnsweredTransmission(userMsg: string): boolean {
-  const u = (userMsg || '').toLowerCase();
+  const u = (userMsg || "").toLowerCase();
   return /\b(manual|automatic|amt|dca|at)\b/.test(u);
 }
 
 function hasUserAnsweredModel(userMsg: string): boolean {
-  const u = (userMsg || '').toLowerCase();
+  const u = (userMsg || "").toLowerCase();
   return /\b(nexon|punch|harrier|safari|curvv|altroz|tiago|tigor)\b/.test(u);
 }
 
 function buildQualificationQuestion(
   qtype: Exclude<WorkflowQuestionType, null>,
-  locked: Record<string, any>,
+  locked: Record<string, any>
 ): string {
-  if (qtype === 'fuel') {
-    return 'Sure — which fuel do you prefer: Petrol, Diesel, EV, or Not sure?';
+  if (qtype === "fuel") {
+    return "Sure — which fuel do you prefer: Petrol, Diesel, EV, or Not sure?";
   }
-  if (qtype === 'transmission') {
-    return 'Got it — transmission preference: Manual, Automatic, or Either?';
+  if (qtype === "transmission") {
+    return "Got it — transmission preference: Manual, Automatic, or Either?";
   }
-  if (qtype === 'model') {
+  if (qtype === "model") {
     if (locked?.model) {
-      return 'Noted. Anything else you prefer — budget range or use-case (city/highway/family)?';
+      return "Noted. Anything else you prefer — budget range or use-case (city/highway/family)?";
     }
-    return 'Which model/segment are you interested in? (e.g., Nexon, Punch, Harrier, Safari, Curvv)';
+    return "Which model/segment are you interested in? (e.g., Nexon, Punch, Harrier, Safari, Curvv)";
   }
-  return 'Perfect — noted. I’m checking the best available stock options with applicable offers. Anything specific you want: budget or model?';
+  return "Perfect — noted. I’m checking the best available stock options with applicable offers. Anything specific you want: budget or model?";
 }
 
 function enforceTechwheelsOnlyCTA(text: string): string {
-  let t = text || '';
+  let t = text || "";
   const replacements: Array<[RegExp, string]> = [
-    [/\bcontact (?:your|the) (?:nearest )?dealer(?:ship)?\b/gi, 'contact the Techwheels team'],
-    [/\bvisit (?:your|the) (?:nearest )?dealer(?:ship)?\b/gi, 'visit Techwheels'],
-    [/\breach out to (?:your|the) dealer(?:ship)?\b/gi, 'reach out to Techwheels'],
-    [/\bdealer(?:ship)?\b/gi, 'Techwheels'],
+    [
+      /\bcontact (?:your|the) (?:nearest )?dealer(?:ship)?\b/gi,
+      "contact the Techwheels team",
+    ],
+    [
+      /\bvisit (?:your|the) (?:nearest )?dealer(?:ship)?\b/gi,
+      "visit Techwheels",
+    ],
+    [
+      /\breach out to (?:your|the) dealer(?:ship)?\b/gi,
+      "reach out to Techwheels",
+    ],
+    [/\bdealer(?:ship)?\b/gi, "Techwheels"],
   ];
   for (const [rx, rep] of replacements) t = t.replace(rx, rep);
   return t;
@@ -1684,7 +1848,6 @@ function isExplicitTopicChange(msg: string): boolean {
   return patterns.some((p) => p.test(t));
 }
 
-
 /* ============================================================================
    RESPONSE SCHEMA ENFORCER (Behavior-level)
    - Ensures dealership-executive style
@@ -1695,35 +1858,42 @@ function enforceDealershipReplySchema(params: {
   intentBucket: string; // sales | service | finance | accessories
   extractedIntent: string;
 }): string {
-  let t = (params.text || '').trim();
+  let t = (params.text || "").trim();
   if (!t) return t;
 
   // Normalize whitespace
-  t = t.replace(/\r\n/g, "\n").replace(/[ \t]+/g, ' ');
+  t = t.replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ");
 
   // If multiple questions, keep first question mark; convert others to periods.
   const qmPositions: number[] = [];
-  for (let i = 0; i < t.length; i++) if (t[i] === '?') qmPositions.push(i);
+  for (let i = 0; i < t.length; i++) if (t[i] === "?") qmPositions.push(i);
   if (qmPositions.length > 1) {
     const first = qmPositions[0];
     const before = t.slice(0, first + 1);
-    const after = t.slice(first + 1).replace(/\?/g, '.');
+    const after = t.slice(first + 1).replace(/\?/g, ".");
     t = (before + after).trim();
   }
 
   // Ensure there's a clear next step if the message has no question.
-  const hasQuestion = /\?\s*$/.test(t) || t.includes('?');
+  const hasQuestion = /\?\s*$/.test(t) || t.includes("?");
   if (!hasQuestion) {
-    if (params.intentBucket === 'service') {
-      t += "\n\nPlease share your vehicle number and preferred slot (date/time).";
-    } else if (params.intentBucket === 'finance') {
-      t += "\n\nWhich model and variant are you checking, and is it self or company purchase?";
-    } else if (params.intentBucket === 'accessories') {
-      t += "\n\nWhich model/variant is your car, and which accessory are you looking for?";
+    if (params.intentBucket === "service") {
+      t +=
+        "\n\nPlease share your vehicle number and preferred slot (date/time).";
+    } else if (params.intentBucket === "finance") {
+      t +=
+        "\n\nWhich model and variant are you checking, and is it self or company purchase?";
+    } else if (params.intentBucket === "accessories") {
+      t +=
+        "\n\nWhich model/variant is your car, and which accessory are you looking for?";
     } else {
       // sales
-      if (params.extractedIntent === 'pricing' || params.extractedIntent === 'offer') {
-        t += "\n\nWhich exact model + variant (fuel + transmission) should I check for you?";
+      if (
+        params.extractedIntent === "pricing" ||
+        params.extractedIntent === "offer"
+      ) {
+        t +=
+          "\n\nWhich exact model + variant (fuel + transmission) should I check for you?";
       } else {
         t += "\n\nWhich model are you considering?";
       }
@@ -1731,11 +1901,11 @@ function enforceDealershipReplySchema(params: {
 
     // Re-run one-question enforcement after appending.
     const qm2: number[] = [];
-    for (let i = 0; i < t.length; i++) if (t[i] === '?') qm2.push(i);
+    for (let i = 0; i < t.length; i++) if (t[i] === "?") qm2.push(i);
     if (qm2.length > 1) {
       const first = qm2[0];
       const before = t.slice(0, first + 1);
-      const after = t.slice(first + 1).replace(/\?/g, '.');
+      const after = t.slice(first + 1).replace(/\?/g, ".");
       t = (before + after).trim();
     }
   }
@@ -1872,7 +2042,6 @@ function getChargedAmountForModel(model?: string | null): number {
   const key = (model || "").trim();
   return MODEL_CHARGED_PRICE[key] ?? 2.5;
 }
-
 
 function estimateActualCost(params: {
   provider: "openai" | "gemini";
@@ -2420,19 +2589,24 @@ async function resolveKnowledgeContextSemantic(params: {
 } | null> {
   const { userMessage, organizationId, logger } = params;
 
-    let intent = params.intent || "other";
+  let intent = params.intent || "other";
 
   // Heuristic upgrade: ai-extract can miss short discount/price queries ("smart discount").
   // If the user message clearly signals pricing/offers, force the right KB mode so we pack the full article.
   const um = (userMessage || "").toLowerCase();
-  const looksOffer = /\b(discount|offer|offers|scheme|stock offer|stock offers|deal|deals)\b/.test(um);
-  const looksPricing = /\b(price|pricing|on[- ]?road|ex[- ]?showroom|quotation|quote|emi)\b/.test(um);
+  const looksOffer =
+    /\b(discount|offer|offers|scheme|stock offer|stock offers|deal|deals)\b/.test(
+      um
+    );
+  const looksPricing =
+    /\b(price|pricing|on[- ]?road|ex[- ]?showroom|quotation|quote|emi)\b/.test(
+      um
+    );
 
   if (intent === "other") {
     if (looksOffer) intent = "offer";
     else if (looksPricing) intent = "pricing";
   }
-
 
   // Phase 2: Keep KB *strict* to reduce hallucinations.
   // - First pass: higher threshold.
@@ -2440,11 +2614,11 @@ async function resolveKnowledgeContextSemantic(params: {
   // NOTE: Offer/pricing queries are often phrased generically ("offers running?"),
   // so we allow a bit more recall and let reranking + scoring handle precision.
   const INITIAL_THRESHOLD =
-    intent === "offer" ? 0.50 : intent === "pricing" ? 0.55 : 0.58;
+    intent === "offer" ? 0.5 : intent === "pricing" ? 0.55 : 0.58;
   const FALLBACK_THRESHOLD =
-    intent === "offer" ? 0.40 : intent === "pricing" ? 0.45 : 0.50;
+    intent === "offer" ? 0.4 : intent === "pricing" ? 0.45 : 0.5;
   const HARD_MIN_SIMILARITY =
-    intent === "offer" ? 0.30 : intent === "pricing" ? 0.36 : 0.48;
+    intent === "offer" ? 0.3 : intent === "pricing" ? 0.36 : 0.48;
   const SOFT_MIN_SIMILARITY =
     intent === "offer" ? 0.48 : intent === "pricing" ? 0.52 : 0.55;
 
@@ -2457,18 +2631,19 @@ async function resolveKnowledgeContextSemantic(params: {
       .replace(/\bsmart\+/gi, "smart plus")
       .replace(/\+/g, " plus ");
 
-          // Short-query expansion (embedding only):
-          // If query is very short and intent is pricing/offer, embeddings can be weak.
-          // Expand with stable pricing/offer tokens to improve recall without changing user-visible behavior.
-          const isShort =
-            normalized.length < 18 || normalized.split(/\s+/).filter(Boolean).length < 3;
-      
-          const embedInput =
-            (intent === "pricing" || intent === "offer") && isShort
-              ? `${normalized} on-road price breakup ex-showroom insurance rto tcs discount offer scheme variant`
-              : normalized;
-      
-          const textHash = await sha256Hex(embedInput.toLowerCase());
+    // Short-query expansion (embedding only):
+    // If query is very short and intent is pricing/offer, embeddings can be weak.
+    // Expand with stable pricing/offer tokens to improve recall without changing user-visible behavior.
+    const isShort =
+      normalized.length < 18 ||
+      normalized.split(/\s+/).filter(Boolean).length < 3;
+
+    const embedInput =
+      (intent === "pricing" || intent === "offer") && isShort
+        ? `${normalized} on-road price breakup ex-showroom insurance rto tcs discount offer scheme variant`
+        : normalized;
+
+    const textHash = await sha256Hex(embedInput.toLowerCase());
 
     // Cache lookup (service-role table; never blocks if it fails)
     let embedding: number[] | null = null;
@@ -2646,7 +2821,10 @@ async function resolveKnowledgeContextSemantic(params: {
 
       // 1.5) Offer anchor boost: when intent is "offer", aggressively
       // prioritize the dedicated offers article so it outranks generic pricing.
-      if (params.intent === "offer" && isOfferArticle(params.title, params.chunk)) {
+      if (
+        params.intent === "offer" &&
+        isOfferArticle(params.title, params.chunk)
+      ) {
         score += 0.25;
       }
 
@@ -2875,7 +3053,6 @@ async function resolveKnowledgeContextSemantic(params: {
         if (!byArticle.has(r.article_id)) byArticle.set(r.article_id, []);
         byArticle.get(r.article_id)!.push(r);
       }
-
     }
 
     const packed = packKbContext({
@@ -3049,13 +3226,23 @@ async function detectWorkflowTrigger(
   // 1) keyword matches
   // 2) intent matches
   // 3) always (fallback)
-  const keywordWorkflows = workflows.filter((wf) => (wf.trigger?.type ?? "always") === "keyword");
-  const intentWorkflows = workflows.filter((wf) => (wf.trigger?.type ?? "always") === "intent");
-  const alwaysWorkflows = workflows.filter((wf) => (wf.trigger?.type ?? "always") === "always");
+  const keywordWorkflows = workflows.filter(
+    (wf) => (wf.trigger?.type ?? "always") === "keyword"
+  );
+  const intentWorkflows = workflows.filter(
+    (wf) => (wf.trigger?.type ?? "always") === "intent"
+  );
+  const alwaysWorkflows = workflows.filter(
+    (wf) => (wf.trigger?.type ?? "always") === "always"
+  );
 
   for (const wf of keywordWorkflows) {
     const keywords: string[] = wf.trigger?.keywords ?? [];
-    if (keywords.some((k) => lowerMsg.includes((k ?? "").toString().toLowerCase()))) {
+    if (
+      keywords.some((k) =>
+        lowerMsg.includes((k ?? "").toString().toLowerCase())
+      )
+    ) {
       logger.info("[workflow] keyword trigger matched", {
         workflow_id: wf.id,
         trigger_keywords: keywords,
@@ -3064,36 +3251,40 @@ async function detectWorkflowTrigger(
     }
   }
 
-if (intentWorkflows.length) {
-  for (const wf of intentWorkflows) {
-    const intents: string[] = wf.trigger?.intents ?? [];
-    if (!intents.length) continue;
+  if (intentWorkflows.length) {
+    for (const wf of intentWorkflows) {
+      const intents: string[] = wf.trigger?.intents ?? [];
+      if (!intents.length) continue;
 
-    const intentsLower = intents.map((i) => (i ?? "").toString().toLowerCase());
+      const intentsLower = intents.map((i) =>
+        (i ?? "").toString().toLowerCase()
+      );
 
-    // 1) direct bucket match (sales/service/finance/accessories)
-    if (intentsLower.includes((intentBucket ?? "").toLowerCase())) {
-      logger.info("[workflow] intent trigger matched (bucket)", {
-        workflow_id: wf.id,
-        intent: intentBucket,
-      });
-      return wf;
-    }
+      // 1) direct bucket match (sales/service/finance/accessories)
+      if (intentsLower.includes((intentBucket ?? "").toLowerCase())) {
+        logger.info("[workflow] intent trigger matched (bucket)", {
+          workflow_id: wf.id,
+          intent: intentBucket,
+        });
+        return wf;
+      }
 
-    // 2) keyword-ish fallback: if intent list contains words that appear in message
-    if (intentsLower.some((i) => i && lowerMsg.includes(i))) {
-      logger.info("[workflow] intent trigger matched (keyword fallback)", {
-        workflow_id: wf.id,
-        intent: intentBucket,
-      });
-      return wf;
+      // 2) keyword-ish fallback: if intent list contains words that appear in message
+      if (intentsLower.some((i) => i && lowerMsg.includes(i))) {
+        logger.info("[workflow] intent trigger matched (keyword fallback)", {
+          workflow_id: wf.id,
+          intent: intentBucket,
+        });
+        return wf;
+      }
     }
   }
-}
 
-if (alwaysWorkflows.length) {
+  if (alwaysWorkflows.length) {
     // Keep existing DB order for fallback.
-    logger.info("[workflow] always trigger matched", { workflow_id: alwaysWorkflows[0].id });
+    logger.info("[workflow] always trigger matched", {
+      workflow_id: alwaysWorkflows[0].id,
+    });
     return alwaysWorkflows[0];
   }
 
@@ -4070,17 +4261,27 @@ ${personality.donts || "- None specified."}
     const msgLower = (user_message || "").toLowerCase();
     const isServiceIntent =
       aiExtract.intent === "service" ||
-      /\b(service|servicing|workshop|maintenance|periodic|appointment|pickup|drop|jobs*card|complaint|warranty|rsa|breakdown|repair)\b/i.test(user_message);
-    const isFinanceIntent = /\b(emi|loan|finance|downs*payment|dp|interest|tenure|bank|mileages*loan)\b/i.test(user_message);
-    const isAccessoriesIntent = /\b(accessor|accessories|seats*cover|floors*mat|alloy|dashcam|infotainment|musics*system)\b/i.test(user_message);
+      /\b(service|servicing|workshop|maintenance|periodic|appointment|pickup|drop|jobs*card|complaint|warranty|rsa|breakdown|repair)\b/i.test(
+        user_message
+      );
+    const isFinanceIntent =
+      /\b(emi|loan|finance|downs*payment|dp|interest|tenure|bank|mileages*loan)\b/i.test(
+        user_message
+      );
+    const isAccessoriesIntent =
+      /\b(accessor|accessories|seats*cover|floors*mat|alloy|dashcam|infotainment|musics*system)\b/i.test(
+        user_message
+      );
 
-    const conversationIntent = (isServiceIntent
-      ? "service"
-      : isFinanceIntent
-      ? "finance"
-      : isAccessoriesIntent
-      ? "accessories"
-      : "sales") as any;
+    const conversationIntent = (
+      isServiceIntent
+        ? "service"
+        : isFinanceIntent
+        ? "finance"
+        : isAccessoriesIntent
+        ? "accessories"
+        : "sales"
+    ) as any;
 
     // Back-compat variable used across the handler (schema enforcement + ai_state persistence)
     const intentBucket = conversationIntent as
@@ -4091,17 +4292,22 @@ ${personality.donts || "- None specified."}
 
     const funnelStage = isServiceIntent
       ? "post_purchase"
-      : /\b(book|booking|confirm|buy|purchase|delivery|ready|tests*drive|schedule|visit)\b/i.test(user_message)
+      : /\b(book|booking|confirm|buy|purchase|delivery|ready|tests*drive|schedule|visit)\b/i.test(
+          user_message
+        )
       ? "decision"
-      : /\b(price|pricing|ons*road|variant|variants|feature|features|compare|brochure|mileage|range)\b/i.test(user_message)
+      : /\b(price|pricing|ons*road|variant|variants|feature|features|compare|brochure|mileage|range)\b/i.test(
+          user_message
+        )
       ? "consideration"
       : "awareness";
 
-    const intentConfidence = isServiceIntent || isFinanceIntent || isAccessoriesIntent
-      ? 0.85
-      : aiExtract.intent && aiExtract.intent !== "other"
-      ? 0.7
-      : 0.55;
+    const intentConfidence =
+      isServiceIntent || isFinanceIntent || isAccessoriesIntent
+        ? 0.85
+        : aiExtract.intent && aiExtract.intent !== "other"
+        ? 0.7
+        : 0.55;
 
     // 9) Campaign context (best-effort; fixed schema)
     let campaignContextText = "";
@@ -4236,23 +4442,22 @@ ${personality.donts || "- None specified."}
     }
 
     // ------------------------------------------------------------
-// MVP service ticket creation (transactional service workflow)
-// ------------------------------------------------------------
-let serviceTicketId: string | null = null;
+    // MVP service ticket creation (transactional service workflow)
+    // ------------------------------------------------------------
+    let serviceTicketId: string | null = null;
 
-if (intentBucket === "service") {
-  serviceTicketId = await createServiceTicketIfNeeded({
-    supabaseAdmin: supabase,
-    organization_id: organizationId,
-    conversation_id: conversation_id,
-    contact_id: contactId ?? null,
-    channel,
-    user_message,
-    vehicle_number: (nextEntitiesWithKb as any)?.vehicle_number ?? null,
-    logger,
-  });
-}
-
+    if (intentBucket === "service") {
+      serviceTicketId = await createServiceTicketIfNeeded({
+        supabaseAdmin: supabase,
+        organization_id: organizationId,
+        conversation_id: conversation_id,
+        contact_id: contactId ?? null,
+        channel,
+        user_message,
+        vehicle_number: (nextEntitiesWithKb as any)?.vehicle_number ?? null,
+        logger,
+      });
+    }
 
     const requiresAuthoritativeKB =
       aiExtract.intent === "pricing" || aiExtract.intent === "offer";
@@ -4260,15 +4465,15 @@ if (intentBucket === "service") {
     // PHASE 0: For pricing/offers, treat KB as valid ONLY if it actually contains pricing/offer signals.
     // This prevents hallucinations when KB context is non-empty but irrelevant (e.g., features doc).
     const kbHasPricingSignals =
-  looksLikePricingOrOfferContext(contextText) ||
-  // strong pricing-table heuristic: multiple big numbers + pricing column keywords
-  (
-    (/(ex[-\s]?showroom|on[-\s]?road|insurance|rto|tcs)/i.test(contextText)) &&
-    ((contextText.match(/\b\d{5,}\b/g) || []).length >= 3)
-  ) ||
-  // your existing variant+keyword rule
-  (/\bvariant\b/i.test(contextText) &&
-    /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i.test(contextText));
+      looksLikePricingOrOfferContext(contextText) ||
+      // strong pricing-table heuristic: multiple big numbers + pricing column keywords
+      (/(ex[-\s]?showroom|on[-\s]?road|insurance|rto|tcs)/i.test(contextText) &&
+        (contextText.match(/\b\d{5,}\b/g) || []).length >= 3) ||
+      // your existing variant+keyword rule
+      (/\bvariant\b/i.test(contextText) &&
+        /(\bprice\b|₹|\bon[-\s]?road\b|\bex[-\s]?showroom\b|\brto\b|\binsurance\b)/i.test(
+          contextText
+        ));
 
     // Forced reply text can be set by deterministic KB handlers (pricing/offers) or strict-mode guards.
     let forcedReplyText: string | null = null;
@@ -4295,7 +4500,9 @@ if (intentBucket === "service") {
         const lockedModel =
           (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null;
         const lockedVariant =
-          (nextEntitiesWithKb as any)?.variant ?? aiExtract.vehicle_variant ?? null;
+          (nextEntitiesWithKb as any)?.variant ??
+          aiExtract.vehicle_variant ??
+          null;
 
         // If we didn't retrieve the offers catalog chunk(s) (common when chunking split by word-count
         // or retrieval missed the model block), fetch the offers catalog deterministically.
@@ -4303,7 +4510,9 @@ if (intentBucket === "service") {
         const modelMissingInEntries =
           !!modelNormForCheck &&
           entries.length > 0 &&
-          !entries.some((e) => normalizeForMatch(e.model || "").includes(modelNormForCheck));
+          !entries.some((e) =>
+            normalizeForMatch(e.model || "").includes(modelNormForCheck)
+          );
 
         if (!entries.length || modelMissingInEntries) {
           const offerCatalog = await fetchOfferCatalogText({
@@ -4325,35 +4534,51 @@ if (intentBucket === "service") {
             entries,
             lockedModel,
             lockedVariant,
-            lockedFuel: (nextEntitiesWithKb as any)?.fuel_type ?? aiExtract.fuel_type ?? null,
+            lockedFuel:
+              (nextEntitiesWithKb as any)?.fuel_type ??
+              aiExtract.fuel_type ??
+              null,
             lockedTransmission:
-              (nextEntitiesWithKb as any)?.transmission ?? aiExtract.transmission ?? null,
+              (nextEntitiesWithKb as any)?.transmission ??
+              aiExtract.transmission ??
+              null,
             lockedYear:
-              (nextEntitiesWithKb as any)?.manufacturing_year ?? aiExtract.manufacturing_year ?? null,
+              (nextEntitiesWithKb as any)?.manufacturing_year ??
+              aiExtract.manufacturing_year ??
+              null,
           });
 
           if (picked) {
             forcedReplyText = buildOfferReply(picked);
 
             // Auto-lock exact match for follow-ups
-            (nextEntitiesWithKb as any).model = picked.model || (nextEntitiesWithKb as any).model;
-            (nextEntitiesWithKb as any).variant = picked.variant || (nextEntitiesWithKb as any).variant;
-            if (picked.fuel) (nextEntitiesWithKb as any).fuel_type = picked.fuel;
-            if (picked.transmission) (nextEntitiesWithKb as any).transmission = picked.transmission;
+            (nextEntitiesWithKb as any).model =
+              picked.model || (nextEntitiesWithKb as any).model;
+            (nextEntitiesWithKb as any).variant =
+              picked.variant || (nextEntitiesWithKb as any).variant;
+            if (picked.fuel)
+              (nextEntitiesWithKb as any).fuel_type = picked.fuel;
+            if (picked.transmission)
+              (nextEntitiesWithKb as any).transmission = picked.transmission;
             if (picked.manufacturing_year)
-              (nextEntitiesWithKb as any).manufacturing_year = picked.manufacturing_year;
+              (nextEntitiesWithKb as any).manufacturing_year =
+                picked.manufacturing_year;
 
             logger.info("[offer] structured_reply_used", {
               model: (nextEntitiesWithKb as any).model,
               variant: (nextEntitiesWithKb as any).variant,
               fuel: (nextEntitiesWithKb as any).fuel_type,
               transmission: (nextEntitiesWithKb as any).transmission,
-              manufacturing_year: (nextEntitiesWithKb as any).manufacturing_year,
+              manufacturing_year: (nextEntitiesWithKb as any)
+                .manufacturing_year,
             });
           }
         } else {
           // No variant specified: list available offer variants (model-scoped if model is known).
-          forcedReplyText = buildOfferListReply({ entries, model: lockedModel });
+          forcedReplyText = buildOfferListReply({
+            entries,
+            model: lockedModel,
+          });
 
           // If model is known and there is only one offer variant, auto-lock it.
           if (lockedModel) {
@@ -4363,12 +4588,15 @@ if (intentBucket === "service") {
             );
             if (scoped.length === 1) {
               const only = scoped[0];
-              (nextEntitiesWithKb as any).model = only.model || (nextEntitiesWithKb as any).model;
+              (nextEntitiesWithKb as any).model =
+                only.model || (nextEntitiesWithKb as any).model;
               (nextEntitiesWithKb as any).variant = only.variant;
               if (only.fuel) (nextEntitiesWithKb as any).fuel_type = only.fuel;
-              if (only.transmission) (nextEntitiesWithKb as any).transmission = only.transmission;
+              if (only.transmission)
+                (nextEntitiesWithKb as any).transmission = only.transmission;
               if (only.manufacturing_year)
-                (nextEntitiesWithKb as any).manufacturing_year = only.manufacturing_year;
+                (nextEntitiesWithKb as any).manufacturing_year =
+                  only.manufacturing_year;
             }
           }
         }
@@ -4446,11 +4674,16 @@ if (intentBucket === "service") {
     // WORKFLOW CONTEXT (GUIDANCE ONLY — NO EXECUTION)
     // ------------------------------------------------------------------
     let workflowInstructionText = "";
-    let workflowSayMessage = "";
+let workflowSayMessage = "";
+let workflowSaySchema: {
+  allow_numbers: boolean;
+  max_questions: number;
+  forbidden_phrases?: string[];
+} | null = null;
+
     let resolvedWorkflow: WorkflowLogRow | null = null;
     let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
     let workflowStepsCount = 0;
-
 
     const activeWorkflow = await loadActiveWorkflow(
       conversation_id,
@@ -4513,7 +4746,10 @@ if (intentBucket === "service") {
 
         // Engine-enforced workflow directive (the engine decides, LLM only renders)
         try {
-          const directive = buildDirective(step as any, (nextEntitiesWithKb as any) || {});
+          const directive = buildDirective(
+            step as any,
+            (nextEntitiesWithKb as any) || {}
+          );
           workflowDirectiveAction = directive.action;
 
           if (directive.action === "ask" || directive.action === "escalate") {
@@ -4521,7 +4757,10 @@ if (intentBucket === "service") {
             forcedReplyText = enforceDirective(directive as any);
 
             // Hold step on ask; end workflow on escalate.
-            const nextStepNum = directive.action === "ask" ? (resolvedWorkflow.current_step_number ?? 1) : workflowStepsCount + 1;
+            const nextStepNum =
+              directive.action === "ask"
+                ? resolvedWorkflow.current_step_number ?? 1
+                : workflowStepsCount + 1;
             const completed = directive.action === "escalate";
             await saveWorkflowProgress(
               resolvedWorkflow.id,
@@ -4536,7 +4775,9 @@ if (intentBucket === "service") {
             workflowInstructionText = "";
           }
         } catch (err) {
-          logger.error("[workflow] directive build/enforce error", { error: err });
+          logger.error("[workflow] directive build/enforce error", {
+            error: err,
+          });
         }
 
         if (!forcedReplyText && workflowDirectiveAction === "say") {
@@ -4544,10 +4785,10 @@ if (intentBucket === "service") {
           workflowSayMessage = safeText(
             (step as any).instruction_text ?? step.action?.instruction_text
           );
-        
+
           // Do not rely on prompt guidance for correctness
           workflowInstructionText = "";
-        }        
+        }
       }
     }
 
@@ -4601,88 +4842,98 @@ if (intentBucket === "service") {
     }
 
     // -------------------------------
-// P3: Build prompt variables (MUST be in-scope before systemPrompt)
-// -------------------------------
+    // P3: Build prompt variables (MUST be in-scope before systemPrompt)
+    // -------------------------------
 
-// Campaign facts block (safe default)
-const campaignFactsBlock: string =
-typeof buildCampaignFactsBlock === "function"
-  ? buildCampaignFactsBlock(conv.campaign_context ?? null)
-  : (campaignContextText?.trim()
-      ? `Campaign Context Available: Yes`
-      : `Campaign Context Available: No`);
+    // Campaign facts block (safe default)
+    const campaignFactsBlock: string =
+      typeof buildCampaignFactsBlock === "function"
+        ? buildCampaignFactsBlock(conv.campaign_context ?? null)
+        : campaignContextText?.trim()
+        ? `Campaign Context Available: Yes`
+        : `Campaign Context Available: No`;
 
-// KB confidence label (safe default)
-const kbConfidence: "strong" | "weak" | "none" =
-(kbMatchMeta?.confidence === "strong" || kbMatchMeta?.confidence === "weak")
-  ? (kbMatchMeta.confidence as "strong" | "weak")
-  : (kbFound ? "weak" : "none");
+    // KB confidence label (safe default)
+    const kbConfidence: "strong" | "weak" | "none" =
+      kbMatchMeta?.confidence === "strong" || kbMatchMeta?.confidence === "weak"
+        ? (kbMatchMeta.confidence as "strong" | "weak")
+        : kbFound
+        ? "weak"
+        : "none";
 
-// Option titles (safe default)
-const kbOptionTitles: string[] = Array.isArray(kbMatchMeta?.option_titles)
-? kbMatchMeta!.option_titles.filter(Boolean).slice(0, 6)
-: [];
+    // Option titles (safe default)
+    const kbOptionTitles: string[] = Array.isArray(kbMatchMeta?.option_titles)
+      ? kbMatchMeta!.option_titles.filter(Boolean).slice(0, 6)
+      : [];
 
-// Context packing (safe + deterministic)
-const highRiskIntentForContext =
-aiExtract.intent === "pricing" ||
-aiExtract.intent === "offer" ||
-aiExtract.intent === "features";
+    // Context packing (safe + deterministic)
+    const highRiskIntentForContext =
+      aiExtract.intent === "pricing" ||
+      aiExtract.intent === "offer" ||
+      aiExtract.intent === "features";
 
-// IMPORTANT: These helpers must exist in your file already.
-// If not, replace them with a simple truncation fallback (I included fallback below).
+    // IMPORTANT: These helpers must exist in your file already.
+    // If not, replace them with a simple truncation fallback (I included fallback below).
 
-const safeTruncate = (t: string, maxChars: number) =>
-(t || "").length > maxChars ? (t || "").slice(0, maxChars) + "…" : (t || "");
+    const safeTruncate = (t: string, maxChars: number) =>
+      (t || "").length > maxChars
+        ? (t || "").slice(0, maxChars) + "…"
+        : t || "";
 
-// KB context for prompt
-const kbContextForPrompt: string =
-typeof truncateTextToTokenLimit === "function"
-  ? (
-      highRiskIntentForContext
-        ? (typeof extractPricingFocusedContext === "function"
+    // KB context for prompt
+    const kbContextForPrompt: string =
+      typeof truncateTextToTokenLimit === "function"
+        ? highRiskIntentForContext
+          ? typeof extractPricingFocusedContext === "function"
             ? extractPricingFocusedContext(
                 contextText || "",
                 channel === "whatsapp" ? 9000 : 14000
               )
-            : safeTruncate(contextText || "", channel === "whatsapp" ? 9000 : 14000))
-        : truncateTextToTokenLimit(
-            contextText || "",
-            channel === "whatsapp" ? 1200 : 3200
-          )
-    )
-  : safeTruncate(contextText || "", channel === "whatsapp" ? 1200 : 3200);
+            : safeTruncate(
+                contextText || "",
+                channel === "whatsapp" ? 9000 : 14000
+              )
+          : truncateTextToTokenLimit(
+              contextText || "",
+              channel === "whatsapp" ? 1200 : 3200
+            )
+        : safeTruncate(contextText || "", channel === "whatsapp" ? 1200 : 3200);
 
-// Campaign context for prompt
-const campaignContextForPrompt: string =
-typeof truncateTextToTokenLimit === "function"
-  ? (
-      highRiskIntentForContext
-        ? (typeof extractPricingFocusedContext === "function"
+    // Campaign context for prompt
+    const campaignContextForPrompt: string =
+      typeof truncateTextToTokenLimit === "function"
+        ? highRiskIntentForContext
+          ? typeof extractPricingFocusedContext === "function"
             ? extractPricingFocusedContext(
                 campaignContextText || "",
                 channel === "whatsapp" ? 5000 : 9000
               )
-            : safeTruncate(campaignContextText || "", channel === "whatsapp" ? 5000 : 9000))
-        : truncateTextToTokenLimit(
+            : safeTruncate(
+                campaignContextText || "",
+                channel === "whatsapp" ? 5000 : 9000
+              )
+          : truncateTextToTokenLimit(
+              campaignContextText || "",
+              channel === "whatsapp" ? 700 : 1800
+            )
+        : safeTruncate(
             campaignContextText || "",
             channel === "whatsapp" ? 700 : 1800
-          )
-    )
-  : safeTruncate(campaignContextText || "", channel === "whatsapp" ? 700 : 1800);
-
+          );
 
     // ------------------------------------------------------------------
-// WORKFLOW ENFORCEMENT (ENGINE-ENFORCED)
-// - ask_question steps are answered deterministically via WorkflowDirective
-// - workflow guidance is injected only for "say" steps (LLM renders, engine advances)
-// ------------------------------------------------------------------
-// Allowed number tokens from KB + Campaign context (strict pricing validator)
-const allowedNumbersForOutput = new Set<string>();
-for (const t of extractNumberTokens(String(kbContextForPrompt || ""))) allowedNumbersForOutput.add(t);
-for (const t of extractNumberTokens(String(campaignContextForPrompt || ""))) allowedNumbersForOutput.add(t);
+    // WORKFLOW ENFORCEMENT (ENGINE-ENFORCED)
+    // - ask_question steps are answered deterministically via WorkflowDirective
+    // - workflow guidance is injected only for "say" steps (LLM renders, engine advances)
+    // ------------------------------------------------------------------
+    // Allowed number tokens from KB + Campaign context (strict pricing validator)
+    const allowedNumbersForOutput = new Set<string>();
+    for (const t of extractNumberTokens(String(kbContextForPrompt || "")))
+      allowedNumbersForOutput.add(t);
+    for (const t of extractNumberTokens(String(campaignContextForPrompt || "")))
+      allowedNumbersForOutput.add(t);
 
-// 11) System prompt
+    // 11) System prompt
     const systemPrompt = `
 You are an AI assistant representing this business.
 
@@ -4981,58 +5232,62 @@ Respond now to the customer's latest message only.
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
     // Strict validators (NO prompt-trust)
-const verifiedNumbersAvailable = Boolean(kbHasPricingSignals || campaignHasPricingSignals);
+    const verifiedNumbersAvailable = Boolean(
+      kbHasPricingSignals || campaignHasPricingSignals
+    );
 
-const val = validateAndRepairResponse(aiResponseText, {
-  intent: aiExtract.intent as any,
-  verifiedNumbersAvailable,
-  allowedNumbers: allowedNumbersForOutput,
-  workflowSayMessage,
-});
+    const val = validateAndRepairResponse(aiResponseText, {
+      intent: aiExtract.intent as any,
+      verifiedNumbersAvailable,
+      allowedNumbers: allowedNumbersForOutput,
+      workflowSayMessage,
+    });
 
-if (!val.ok) {
-  logger.warn("[ai-validator] violations", { violations: val.violations, used_fallback: val.used_fallback });
-}
-aiResponseText = val.text;
-
+    if (!val.ok) {
+      logger.warn("[ai-validator] violations", {
+        violations: val.violations,
+        used_fallback: val.used_fallback,
+      });
+    }
+    aiResponseText = val.text;
 
     // If user asked pricing and KB has pricing signals, but the model didn't output any numbers,
-// show the KB options instead of only asking "confirm variant".
-if (
-  aiExtract.intent === "pricing" &&
-  kbHasPricingSignals &&
-  !/\d/.test(aiResponseText) &&
-  /variant|confirm|which/i.test(aiResponseText)
-) {
-  const lines = (contextText || "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .filter((l) => /on[- ]?road|ex[- ]?showroom|insurance|rto|tcs|₹/i.test(l))
-    .slice(0, 12);
+    // show the KB options instead of only asking "confirm variant".
+    if (
+      aiExtract.intent === "pricing" &&
+      kbHasPricingSignals &&
+      !/\d/.test(aiResponseText) &&
+      /variant|confirm|which/i.test(aiResponseText)
+    ) {
+      const lines = (contextText || "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .filter((l) =>
+          /on[- ]?road|ex[- ]?showroom|insurance|rto|tcs|₹/i.test(l)
+        )
+        .slice(0, 12);
 
-  if (lines.length) {
-    aiResponseText =
-      `Here’s what I have in the knowledge base:\n` +
-      lines.map((l) => `• ${l}`).join("\n") +
-      `\n\nWhich exact variant (fuel + transmission) should I quote for you?`;
-  }
-}
+      if (lines.length) {
+        aiResponseText =
+          `Here’s what I have in the knowledge base:\n` +
+          lines.map((l) => `• ${l}`).join("\n") +
+          `\n\nWhich exact variant (fuel + transmission) should I quote for you?`;
+      }
+    }
 
     const looksLikeClarification =
-  /\?\s*$/.test(aiResponseText.trim()) &&
-  !/\d/.test(aiResponseText) &&
-  !/₹/.test(aiResponseText);
-
+      /\?\s*$/.test(aiResponseText.trim()) &&
+      !/\d/.test(aiResponseText) &&
+      !/₹/.test(aiResponseText);
 
     // ------------------------------------------------------------------
     // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
     // ------------------------------------------------------------------
     const shouldValidate =
-  Boolean(contextText?.trim() || campaignContextText?.trim()) &&
-  aiResponseText !== fallbackMessage &&
-  !looksLikeClarification;
-
+      Boolean(contextText?.trim() || campaignContextText?.trim()) &&
+      aiResponseText !== fallbackMessage &&
+      !looksLikeClarification;
 
     if (shouldValidate) {
       const highRiskIntent =
@@ -5084,13 +5339,13 @@ if (
     const highRiskIntent =
       aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
-      const pricingIsActuallyAvailable =
-      (kbFound && kbHasPricingSignals) || campaignHasPricingSignals;    
-    
-      // Block pricing-style answers ONLY when pricing is truly unsupported by KB or campaign
+    const pricingIsActuallyAvailable =
+      (kbFound && kbHasPricingSignals) || campaignHasPricingSignals;
+
+    // Block pricing-style answers ONLY when pricing is truly unsupported by KB or campaign
     if (
       highRiskIntent &&
-      !pricingIsActuallyAvailable &&  
+      !pricingIsActuallyAvailable &&
       pricingEstimateRequired &&
       !kbHasPricingSignals &&
       !campaignHasPricingSignals
@@ -5110,7 +5365,6 @@ if (
       }
     }
 
-    
     // ------------------------------------------------------------------
     // HARD DO-NOT-SAY ENFORCEMENT:
     // Do not say "can't verify/can't confirm" unless user provided a numeric claim.
@@ -5122,16 +5376,19 @@ if (
       /मैं\s+verify/i.test(aiResponseText);
 
     if (!userProvidedNumber && containsCantVerify) {
-      logger.warn("[validator] removed cant-verify phrasing (no user numeric claim)", {
-        intent: aiExtract.intent,
-      });
+      logger.warn(
+        "[validator] removed cant-verify phrasing (no user numeric claim)",
+        {
+          intent: aiExtract.intent,
+        }
+      );
 
       // Replace with one short clarifying question (variant only).
       aiResponseText =
         "Sure — which exact variant (fuel + transmission) should I quote for?";
 
-    // Techwheels-only CTA enforcement
-    aiResponseText = enforceTechwheelsOnlyCTA(aiResponseText);
+      // Techwheels-only CTA enforcement
+      aiResponseText = enforceTechwheelsOnlyCTA(aiResponseText);
     }
 
     // 14) Wallet debit + AI usage log (only if AI was actually called)
@@ -5259,21 +5516,20 @@ if (
         .eq("id", usage.id);
     }
 
-    
     // 14.9) Persist behavior-level conversation state (intent/stage/workflow/KB)
     const nowIso = new Date().toISOString();
 
     const kbArticleIds: string[] = (kbMatchMeta?.article_ids ?? []) as any;
     const mergedAiState: Record<string, any> = {
       ...((conv as any).ai_state || {}),
-      last_intent: aiExtract.intent || 'other',
+      last_intent: aiExtract.intent || "other",
       last_intent_bucket: intentBucket,
       funnel_stage: funnelStage,
       intent_confidence: intentConfidence,
       intent_at: nowIso,
       last_workflow_id: resolvedWorkflow?.workflow_id ?? null,
       last_workflow_run_at: resolvedWorkflow ? nowIso : null,
-      last_kb: kbFound ? (nextEntitiesWithKb?.last_kb ?? null) : null,
+      last_kb: kbFound ? nextEntitiesWithKb?.last_kb ?? null : null,
     };
 
     const conversationUpdate: Record<string, any> = {
@@ -5284,13 +5540,13 @@ if (
       intent_updated_at: nowIso,
       last_workflow_id: resolvedWorkflow?.workflow_id ?? null,
       last_workflow_run_at: resolvedWorkflow ? nowIso : null,
-      last_kb_hit_count: kbFound ? (kbArticleIds.length || 0) : 0,
+      last_kb_hit_count: kbFound ? kbArticleIds.length || 0 : 0,
       last_kb_article_ids: kbFound ? kbArticleIds : [],
       last_kb_match_confidence: kbMatchMeta?.confidence ?? null,
       last_message_at: nowIso,
     };
 
-// 15) NO-REPLY handling (do NOT save message / do NOT send)
+    // 15) NO-REPLY handling (do NOT save message / do NOT send)
     if (aiResponseText.trim() === AI_NO_REPLY_TOKEN) {
       if (resolvedWorkflow) {
         logger.warn("[ai-handler] NO_REPLY blocked due to active workflow", {
@@ -5331,53 +5587,55 @@ if (
       }
     }
 
-    
-// --------------------------------------------------
-// WORKFLOW PROGRESSION (ENGINE-ENFORCED)
-// - ask: do NOT advance (we are waiting for required info)
-// - say: advance after reply
-// - escalate: already completed earlier
-// --------------------------------------------------
-if (resolvedWorkflow) {
-  const steps = await getWorkflowSteps(resolvedWorkflow.workflow_id!, logger);
+    // --------------------------------------------------
+    // WORKFLOW PROGRESSION (ENGINE-ENFORCED)
+    // - ask: do NOT advance (we are waiting for required info)
+    // - say: advance after reply
+    // - escalate: already completed earlier
+    // --------------------------------------------------
+    if (resolvedWorkflow) {
+      const steps = await getWorkflowSteps(
+        resolvedWorkflow.workflow_id!,
+        logger
+      );
 
-  const currentStep = resolvedWorkflow.current_step_number ?? 1;
+      const currentStep = resolvedWorkflow.current_step_number ?? 1;
 
-  if (workflowDirectiveAction === "ask") {
-    // Hold; already persisted in the directive branch.
-    logger.debug("[workflow] hold step (awaiting required info)", {
-      workflow_id: resolvedWorkflow.workflow_id,
-      currentStep,
-    });
-  } else if (workflowDirectiveAction === "escalate") {
-    // Already marked completed in the directive branch.
-    logger.debug("[workflow] completed via escalation", {
-      workflow_id: resolvedWorkflow.workflow_id,
-      currentStep,
-    });
-  } else {
-    const nextStep = currentStep + 1;
-    const completed = nextStep > (steps?.length ?? workflowStepsCount ?? 0);
+      if (workflowDirectiveAction === "ask") {
+        // Hold; already persisted in the directive branch.
+        logger.debug("[workflow] hold step (awaiting required info)", {
+          workflow_id: resolvedWorkflow.workflow_id,
+          currentStep,
+        });
+      } else if (workflowDirectiveAction === "escalate") {
+        // Already marked completed in the directive branch.
+        logger.debug("[workflow] completed via escalation", {
+          workflow_id: resolvedWorkflow.workflow_id,
+          currentStep,
+        });
+      } else {
+        const nextStep = currentStep + 1;
+        const completed = nextStep > (steps?.length ?? workflowStepsCount ?? 0);
 
-    await saveWorkflowProgress(
-      resolvedWorkflow.id,
-      organizationId,
-      nextStep,
-      resolvedWorkflow.variables ?? {},
-      completed,
-      logger
-    );
-  }
-}
+        await saveWorkflowProgress(
+          resolvedWorkflow.id,
+          organizationId,
+          nextStep,
+          resolvedWorkflow.variables ?? {},
+          completed,
+          logger
+        );
+      }
+    }
 
-// 15.5) Enforce dealership response schema (single question, clear next step)
+    // 15.5) Enforce dealership response schema (single question, clear next step)
     aiResponseText = enforceDealershipReplySchema({
       text: aiResponseText,
       intentBucket,
-      extractedIntent: aiExtract.intent || 'other',
+      extractedIntent: aiExtract.intent || "other",
     });
 
-// 16) Phase 6.3 — Log unanswered question
+    // 16) Phase 6.3 — Log unanswered question
     // - Classic fallback
     // - OR kb_only blocked reply (P2)
     const shouldLogUnanswered =
@@ -5434,10 +5692,10 @@ if (resolvedWorkflow) {
     });
 
     await supabase
-          .from("conversations")
-          .update(conversationUpdate)
-          .eq("id", conversation_id)
-          .eq("organization_id", organizationId);
+      .from("conversations")
+      .update(conversationUpdate)
+      .eq("id", conversation_id)
+      .eq("organization_id", organizationId);
 
     // 18) WhatsApp send
     if (channel === "whatsapp" && contactPhone) {
