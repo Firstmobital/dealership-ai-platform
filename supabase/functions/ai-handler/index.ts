@@ -11,6 +11,9 @@ import {
   requireOrgMembership,
   isInternalRequest,
 } from "../_shared/auth.ts";
+import { buildDirective } from "./workflow/directive.ts";
+import { enforceDirective } from "./workflow/enforcer.ts";
+
 
 /* ============================================================================
    ENV
@@ -2957,7 +2960,8 @@ type WorkflowLogRow = {
 async function detectWorkflowTrigger(
   user_message: string,
   organizationId: string,
-  logger: ReturnType<typeof createLogger>
+  logger: ReturnType<typeof createLogger>,
+  intentBucket: string
 ): Promise<WorkflowRow | null> {
   const workflows = await safeSupabase<WorkflowRow[]>(
     "load_workflows",
@@ -2996,45 +3000,34 @@ async function detectWorkflowTrigger(
     }
   }
 
-  if (intentWorkflows.length) {
-    const { provider, model } = await resolveAISettings({ organizationId, logger });
+if (intentWorkflows.length) {
+  for (const wf of intentWorkflows) {
+    const intents: string[] = wf.trigger?.intents ?? [];
+    if (!intents.length) continue;
 
-    for (const wf of intentWorkflows) {
-      const intents: string[] = wf.trigger?.intents ?? [];
-      if (!intents.length) continue;
+    const intentsLower = intents.map((i) => (i ?? "").toString().toLowerCase());
 
-      try {
-        const systemPrompt = `Classify the user's intent into EXACTLY one of: ${intents.join(", ")}.\nReturn ONLY the intent word (no punctuation, no extra text).`;
-        const resp = await runAICompletion({
-          provider,
-          model,
-          systemPrompt,
-          historyMessages: [{ role: "user", content: user_message }],
-          logger,
-        });
+    // 1) direct bucket match (sales/service/finance/accessories)
+    if (intentsLower.includes((intentBucket ?? "").toLowerCase())) {
+      logger.info("[workflow] intent trigger matched (bucket)", {
+        workflow_id: wf.id,
+        intent: intentBucket,
+      });
+      return wf;
+    }
 
-        const intent = (resp?.text ?? "").trim().toLowerCase();
-        logger.debug("[workflow] intent classification result", {
-          intent,
-          intents,
-          provider,
-          model,
-        });
-
-        if (intents.map((i) => i.toLowerCase()).includes(intent)) {
-          logger.info("[workflow] intent trigger matched", {
-            workflow_id: wf.id,
-            intent,
-          });
-          return wf;
-        }
-      } catch (err) {
-        logger.error("[workflow] intent classification error", { error: err });
-      }
+    // 2) keyword-ish fallback: if intent list contains words that appear in message
+    if (intentsLower.some((i) => i && lowerMsg.includes(i))) {
+      logger.info("[workflow] intent trigger matched (keyword fallback)", {
+        workflow_id: wf.id,
+        intent: intentBucket,
+      });
+      return wf;
     }
   }
+}
 
-  if (alwaysWorkflows.length) {
+if (alwaysWorkflows.length) {
     // Keep existing DB order for fallback.
     logger.info("[workflow] always trigger matched", { workflow_id: alwaysWorkflows[0].id });
     return alwaysWorkflows[0];
@@ -4371,6 +4364,9 @@ ${personality.donts || "- None specified."}
     // ------------------------------------------------------------------
     let workflowInstructionText = "";
     let resolvedWorkflow: WorkflowLogRow | null = null;
+    let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
+    let workflowStepsCount = 0;
+
 
     const activeWorkflow = await loadActiveWorkflow(
       conversation_id,
@@ -4399,7 +4395,8 @@ ${personality.donts || "- None specified."}
       const wf = await detectWorkflowTrigger(
         user_message,
         organizationId,
-        logger
+        logger,
+        intentBucket
       );
 
       if (wf) {
@@ -4428,9 +4425,41 @@ ${personality.donts || "- None specified."}
         );
 
         const step = steps[index];
-        workflowInstructionText = safeText(
-          (step as any).instruction_text ?? step.action?.instruction_text
-        );
+        workflowStepsCount = steps.length;
+
+        // Engine-enforced workflow directive (the engine decides, LLM only renders)
+        try {
+          const directive = buildDirective(step as any, (nextEntitiesWithKb as any) || {});
+          workflowDirectiveAction = directive.action;
+
+          if (directive.action === "ask" || directive.action === "escalate") {
+            // Deterministic reply; do NOT rely on the LLM.
+            forcedReplyText = enforceDirective(directive as any);
+
+            // Hold step on ask; end workflow on escalate.
+            const nextStepNum = directive.action === "ask" ? (resolvedWorkflow.current_step_number ?? 1) : workflowStepsCount + 1;
+            const completed = directive.action === "escalate";
+            await saveWorkflowProgress(
+              resolvedWorkflow.id,
+              organizationId,
+              nextStepNum,
+              resolvedWorkflow.variables ?? {},
+              completed,
+              logger
+            );
+
+            // Do not inject workflow guidance into prompts when we already produced the enforced reply.
+            workflowInstructionText = "";
+          }
+        } catch (err) {
+          logger.error("[workflow] directive build/enforce error", { error: err });
+        }
+
+        if (!forcedReplyText && workflowDirectiveAction === "say") {
+          workflowInstructionText = safeText(
+            (step as any).instruction_text ?? step.action?.instruction_text
+          );
+        }
       }
     }
 
@@ -4483,82 +4512,85 @@ ${personality.donts || "- None specified."}
       });
     }
 
+    // -------------------------------
+// P3: Build prompt variables (MUST be in-scope before systemPrompt)
+// -------------------------------
+
+// Campaign facts block (safe default)
+const campaignFactsBlock: string =
+typeof buildCampaignFactsBlock === "function"
+  ? buildCampaignFactsBlock(conv.campaign_context ?? null)
+  : (campaignContextText?.trim()
+      ? `Campaign Context Available: Yes`
+      : `Campaign Context Available: No`);
+
+// KB confidence label (safe default)
+const kbConfidence: "strong" | "weak" | "none" =
+(kbMatchMeta?.confidence === "strong" || kbMatchMeta?.confidence === "weak")
+  ? (kbMatchMeta.confidence as "strong" | "weak")
+  : (kbFound ? "weak" : "none");
+
+// Option titles (safe default)
+const kbOptionTitles: string[] = Array.isArray(kbMatchMeta?.option_titles)
+? kbMatchMeta!.option_titles.filter(Boolean).slice(0, 6)
+: [];
+
+// Context packing (safe + deterministic)
+const highRiskIntentForContext =
+aiExtract.intent === "pricing" ||
+aiExtract.intent === "offer" ||
+aiExtract.intent === "features";
+
+// IMPORTANT: These helpers must exist in your file already.
+// If not, replace them with a simple truncation fallback (I included fallback below).
+
+const safeTruncate = (t: string, maxChars: number) =>
+(t || "").length > maxChars ? (t || "").slice(0, maxChars) + "…" : (t || "");
+
+// KB context for prompt
+const kbContextForPrompt: string =
+typeof truncateTextToTokenLimit === "function"
+  ? (
+      highRiskIntentForContext
+        ? (typeof extractPricingFocusedContext === "function"
+            ? extractPricingFocusedContext(
+                contextText || "",
+                channel === "whatsapp" ? 9000 : 14000
+              )
+            : safeTruncate(contextText || "", channel === "whatsapp" ? 9000 : 14000))
+        : truncateTextToTokenLimit(
+            contextText || "",
+            channel === "whatsapp" ? 1200 : 3200
+          )
+    )
+  : safeTruncate(contextText || "", channel === "whatsapp" ? 1200 : 3200);
+
+// Campaign context for prompt
+const campaignContextForPrompt: string =
+typeof truncateTextToTokenLimit === "function"
+  ? (
+      highRiskIntentForContext
+        ? (typeof extractPricingFocusedContext === "function"
+            ? extractPricingFocusedContext(
+                campaignContextText || "",
+                channel === "whatsapp" ? 5000 : 9000
+              )
+            : safeTruncate(campaignContextText || "", channel === "whatsapp" ? 5000 : 9000))
+        : truncateTextToTokenLimit(
+            campaignContextText || "",
+            channel === "whatsapp" ? 700 : 1800
+          )
+    )
+  : safeTruncate(campaignContextText || "", channel === "whatsapp" ? 700 : 1800);
+
+
     // ------------------------------------------------------------------
-    // WORKFLOW ENFORCEMENT (QUALIFICATION)
-    // If the active workflow step is asking a preference question, we ask it
-    // deterministically (1 question), unless it's already answered/locked.
-    // ------------------------------------------------------------------
-    if (!forcedReplyText && resolvedWorkflow && workflowInstructionText?.trim()) {
-      const qtype = detectWorkflowQuestionType(workflowInstructionText);
-      if (qtype && isQualificationWorkflowInstruction(workflowInstructionText)) {
-        const locked: any = nextEntitiesWithKb || {};
+// WORKFLOW ENFORCEMENT (ENGINE-ENFORCED)
+// - ask_question steps are answered deterministically via WorkflowDirective
+// - workflow guidance is injected only for "say" steps (LLM renders, engine advances)
+// ------------------------------------------------------------------
 
-        // Sticky topic for campaign replies / short follow-ups
-        if (!locked.topic && (aiExtract.intent === "offer" || /\b(discount|offer|scheme|deal|stock)\b/i.test(user_message))) {
-          locked.topic = "offer_pricing";
-        }
-
-        const fuelKnown = Boolean(locked.fuel_type) || hasUserAnsweredFuel(user_message);
-        const transKnown = Boolean(locked.transmission) || hasUserAnsweredTransmission(user_message);
-        const modelKnown = Boolean(locked.model) || Boolean(aiExtract.vehicle_model) || hasUserAnsweredModel(user_message);
-
-        let shouldAsk = false;
-        if (qtype === "fuel" && !fuelKnown) shouldAsk = true;
-        if (qtype === "transmission" && !transKnown) shouldAsk = true;
-        if (qtype === "model" && !modelKnown) shouldAsk = true;
-        if (qtype === "confirm") shouldAsk = true;
-
-        if (shouldAsk) {
-          forcedReplyText = buildQualificationQuestion(qtype, locked);
-          logger.info("[workflow] forced_question_reply", {
-            qtype,
-            workflow_id: resolvedWorkflow.workflow_id,
-          });
-        }
-      }
-    }
-
-    const campaignFactsBlock = buildCampaignFactsBlock(
-      conv.campaign_context ?? null
-    );
-
-    // KB meta for best-effort options
-    const kbConfidence: "strong" | "weak" | "none" = kbMatchMeta?.confidence
-      ? (kbMatchMeta.confidence as any)
-      : kbFound
-      ? "weak"
-      : "none";
-
-    const kbOptionTitles: string[] = (kbMatchMeta?.option_titles ?? [])
-      .filter(Boolean)
-      .slice(0, 6);
-
-    // P3: Keep full KB/Campaign context for validation, but trim what we send to the model
-    // to stay within budget and reduce cost.
-    const highRiskIntentForContext =
-      aiExtract.intent === "pricing" || aiExtract.intent === "offer";
-
-    const kbContextForPrompt = highRiskIntentForContext
-      ? extractPricingFocusedContext(
-          contextText,
-          channel === "whatsapp" ? 9000 : 14000
-        )
-      : truncateTextToTokenLimit(
-          contextText,
-          channel === "whatsapp" ? 1200 : 3200
-        );
-
-    const campaignContextForPrompt = highRiskIntentForContext
-      ? extractPricingFocusedContext(
-          campaignContextText,
-          channel === "whatsapp" ? 5000 : 9000
-        )
-      : truncateTextToTokenLimit(
-          campaignContextText,
-          channel === "whatsapp" ? 700 : 1800
-        );
-
-    // 11) System prompt
+// 11) System prompt
     const systemPrompt = `
 You are an AI assistant representing this business.
 
@@ -4628,7 +4660,7 @@ ${personaBlock}
 PRICING / DISCOUNT POLICY (IMPORTANT):
 PRICING_ESTIMATE_REQUIRED: ${pricingEstimateRequired ? "YES" : "NO"}
 - For pricing/offers, use verified numbers ONLY if they appear in Knowledge Context or Campaign Context.
-- If verified numbers are NOT present, you may provide a rough estimate ONLY if it helps the customer, but you MUST clearly say: "This is an estimate. Our sales team will confirm the exact on-road price/offer."
+- If verified numbers are NOT present, do NOT estimate or guess. Ask ONE short clarifying question (variant/city) OR say the Techwheels team will confirm the exact on-road price/offer.
 - If the customer asks about DISCOUNTS/OFFERS but does not mention a model/variant, ask ONE short clarifying question and include 3–5 model options you can help with (from context if available).
 - If the customer asks about PRICING but variant is missing, ask ONE short clarifying question (variant) OR share the closest variant pricing only if it is explicitly in Knowledge/Campaign context.
 
@@ -4766,7 +4798,7 @@ Respond now to the customer's latest message only.
           provider: aiSettings!.provider,
           configuredModel: aiSettings!.model,
           channel,
-          kbConfidence,
+          kbConfidence: kbConfidence,
           aiMode,
           userMessage: user_message,
           hasWorkflow: Boolean(workflowInstructionText?.trim()),
@@ -5191,30 +5223,46 @@ if (
       }
     }
 
-    // --------------------------------------------------
-    // WORKFLOW PROGRESSION (ADVANCE STEP AFTER AI REPLY)
-    // --------------------------------------------------
-    if (resolvedWorkflow) {
-      const steps = await getWorkflowSteps(
-        resolvedWorkflow.workflow_id!,
-        logger
-      );
-
-      const nextStep = (resolvedWorkflow.current_step_number ?? 1) + 1;
-      const completed = nextStep > steps.length;
-
-      await saveWorkflowProgress(
-        resolvedWorkflow.id,
-        organizationId,
-        nextStep,
-        resolvedWorkflow.variables ?? {},
-        completed,
-        logger
-      );
-    }
-
     
-    // 15.5) Enforce dealership response schema (single question, clear next step)
+// --------------------------------------------------
+// WORKFLOW PROGRESSION (ENGINE-ENFORCED)
+// - ask: do NOT advance (we are waiting for required info)
+// - say: advance after reply
+// - escalate: already completed earlier
+// --------------------------------------------------
+if (resolvedWorkflow) {
+  const steps = await getWorkflowSteps(resolvedWorkflow.workflow_id!, logger);
+
+  const currentStep = resolvedWorkflow.current_step_number ?? 1;
+
+  if (workflowDirectiveAction === "ask") {
+    // Hold; already persisted in the directive branch.
+    logger.debug("[workflow] hold step (awaiting required info)", {
+      workflow_id: resolvedWorkflow.workflow_id,
+      currentStep,
+    });
+  } else if (workflowDirectiveAction === "escalate") {
+    // Already marked completed in the directive branch.
+    logger.debug("[workflow] completed via escalation", {
+      workflow_id: resolvedWorkflow.workflow_id,
+      currentStep,
+    });
+  } else {
+    const nextStep = currentStep + 1;
+    const completed = nextStep > (steps?.length ?? workflowStepsCount ?? 0);
+
+    await saveWorkflowProgress(
+      resolvedWorkflow.id,
+      organizationId,
+      nextStep,
+      resolvedWorkflow.variables ?? {},
+      completed,
+      logger
+    );
+  }
+}
+
+// 15.5) Enforce dealership response schema (single question, clear next step)
     aiResponseText = enforceDealershipReplySchema({
       text: aiResponseText,
       intentBucket,
