@@ -2,12 +2,12 @@
 -- PostgreSQL database dump
 --
 
-\restrict HBKI4CloiiKHMvjz2LKJKHJ2qzrVlKtgD60KfoLTA0P1H5qdZLKme4CSeQZ6XtL
+\restrict HYwN7iU0bfNlHC9D4oh2zjjMbtNyJK2KOhZAjRfKAGOiCGlqvHYNrXgqN6WjDK6
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.7 (Homebrew)
 
--- Started on 2026-02-09 17:27:01 IST
+-- Started on 2026-02-12 17:40:42 IST
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -46,7 +46,7 @@ CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 
 
 --
--- TOC entry 5556 (class 0 OID 0)
+-- TOC entry 5568 (class 0 OID 0)
 -- Dependencies: 1
 -- Name: EXTENSION pg_cron; Type: COMMENT; Schema: -; Owner: -
 --
@@ -87,7 +87,7 @@ CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA public;
 
 
 --
--- TOC entry 5557 (class 0 OID 0)
+-- TOC entry 5569 (class 0 OID 0)
 -- Dependencies: 8
 -- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: -
 --
@@ -152,7 +152,7 @@ CREATE EXTENSION IF NOT EXISTS http WITH SCHEMA public;
 
 
 --
--- TOC entry 5558 (class 0 OID 0)
+-- TOC entry 5570 (class 0 OID 0)
 -- Dependencies: 9
 -- Name: EXTENSION http; Type: COMMENT; Schema: -; Owner: -
 --
@@ -169,7 +169,7 @@ CREATE EXTENSION IF NOT EXISTS pg_graphql WITH SCHEMA graphql;
 
 
 --
--- TOC entry 5559 (class 0 OID 0)
+-- TOC entry 5571 (class 0 OID 0)
 -- Dependencies: 4
 -- Name: EXTENSION pg_graphql; Type: COMMENT; Schema: -; Owner: -
 --
@@ -186,7 +186,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
 
 --
--- TOC entry 5560 (class 0 OID 0)
+-- TOC entry 5572 (class 0 OID 0)
 -- Dependencies: 6
 -- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
 --
@@ -203,7 +203,7 @@ CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;
 
 
 --
--- TOC entry 5561 (class 0 OID 0)
+-- TOC entry 5573 (class 0 OID 0)
 -- Dependencies: 3
 -- Name: EXTENSION supabase_vault; Type: COMMENT; Schema: -; Owner: -
 --
@@ -220,7 +220,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 
 
 --
--- TOC entry 5562 (class 0 OID 0)
+-- TOC entry 5574 (class 0 OID 0)
 -- Dependencies: 5
 -- Name: EXTENSION "uuid-ossp"; Type: COMMENT; Schema: -; Owner: -
 --
@@ -237,7 +237,7 @@ CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
 
 --
--- TOC entry 5563 (class 0 OID 0)
+-- TOC entry 5575 (class 0 OID 0)
 -- Dependencies: 7
 -- Name: EXTENSION vector; Type: COMMENT; Schema: -; Owner: -
 --
@@ -246,7 +246,7 @@ COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access met
 
 
 --
--- TOC entry 1446 (class 1247 OID 16784)
+-- TOC entry 1447 (class 1247 OID 16784)
 -- Name: aal_level; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -258,7 +258,7 @@ CREATE TYPE auth.aal_level AS ENUM (
 
 
 --
--- TOC entry 1470 (class 1247 OID 16925)
+-- TOC entry 1471 (class 1247 OID 16925)
 -- Name: code_challenge_method; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -269,7 +269,7 @@ CREATE TYPE auth.code_challenge_method AS ENUM (
 
 
 --
--- TOC entry 1443 (class 1247 OID 16778)
+-- TOC entry 1444 (class 1247 OID 16778)
 -- Name: factor_status; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -280,7 +280,7 @@ CREATE TYPE auth.factor_status AS ENUM (
 
 
 --
--- TOC entry 1440 (class 1247 OID 16773)
+-- TOC entry 1441 (class 1247 OID 16773)
 -- Name: factor_type; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -292,7 +292,7 @@ CREATE TYPE auth.factor_type AS ENUM (
 
 
 --
--- TOC entry 1488 (class 1247 OID 17028)
+-- TOC entry 1489 (class 1247 OID 17028)
 -- Name: oauth_authorization_status; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -305,7 +305,7 @@ CREATE TYPE auth.oauth_authorization_status AS ENUM (
 
 
 --
--- TOC entry 1500 (class 1247 OID 17101)
+-- TOC entry 1501 (class 1247 OID 17101)
 -- Name: oauth_client_type; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -316,7 +316,7 @@ CREATE TYPE auth.oauth_client_type AS ENUM (
 
 
 --
--- TOC entry 1482 (class 1247 OID 17006)
+-- TOC entry 1483 (class 1247 OID 17006)
 -- Name: oauth_registration_type; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -327,7 +327,7 @@ CREATE TYPE auth.oauth_registration_type AS ENUM (
 
 
 --
--- TOC entry 1491 (class 1247 OID 17038)
+-- TOC entry 1492 (class 1247 OID 17038)
 -- Name: oauth_response_type; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -337,7 +337,7 @@ CREATE TYPE auth.oauth_response_type AS ENUM (
 
 
 --
--- TOC entry 1476 (class 1247 OID 16967)
+-- TOC entry 1477 (class 1247 OID 16967)
 -- Name: one_time_token_type; Type: TYPE; Schema: auth; Owner: -
 --
 
@@ -352,7 +352,7 @@ CREATE TYPE auth.one_time_token_type AS ENUM (
 
 
 --
--- TOC entry 1560 (class 1247 OID 18668)
+-- TOC entry 1561 (class 1247 OID 18668)
 -- Name: campaign_message_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -368,7 +368,7 @@ CREATE TYPE public.campaign_message_status AS ENUM (
 
 
 --
--- TOC entry 1563 (class 1247 OID 18682)
+-- TOC entry 1564 (class 1247 OID 18682)
 -- Name: campaign_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -383,7 +383,7 @@ CREATE TYPE public.campaign_status AS ENUM (
 
 
 --
--- TOC entry 1566 (class 1247 OID 18696)
+-- TOC entry 1567 (class 1247 OID 18696)
 -- Name: message_sender; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -396,7 +396,7 @@ CREATE TYPE public.message_sender AS ENUM (
 
 
 --
--- TOC entry 1692 (class 1247 OID 79066)
+-- TOC entry 1696 (class 1247 OID 79066)
 -- Name: psf_resolution_status; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -407,7 +407,7 @@ CREATE TYPE public.psf_resolution_status AS ENUM (
 
 
 --
--- TOC entry 1686 (class 1247 OID 79056)
+-- TOC entry 1690 (class 1247 OID 79056)
 -- Name: psf_sentiment; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -420,7 +420,7 @@ CREATE TYPE public.psf_sentiment AS ENUM (
 
 
 --
--- TOC entry 1548 (class 1247 OID 17349)
+-- TOC entry 1549 (class 1247 OID 17349)
 -- Name: action; Type: TYPE; Schema: realtime; Owner: -
 --
 
@@ -434,7 +434,7 @@ CREATE TYPE realtime.action AS ENUM (
 
 
 --
--- TOC entry 1527 (class 1247 OID 17231)
+-- TOC entry 1528 (class 1247 OID 17231)
 -- Name: equality_op; Type: TYPE; Schema: realtime; Owner: -
 --
 
@@ -450,7 +450,7 @@ CREATE TYPE realtime.equality_op AS ENUM (
 
 
 --
--- TOC entry 1530 (class 1247 OID 17245)
+-- TOC entry 1531 (class 1247 OID 17245)
 -- Name: user_defined_filter; Type: TYPE; Schema: realtime; Owner: -
 --
 
@@ -462,7 +462,7 @@ CREATE TYPE realtime.user_defined_filter AS (
 
 
 --
--- TOC entry 1554 (class 1247 OID 17390)
+-- TOC entry 1555 (class 1247 OID 17390)
 -- Name: wal_column; Type: TYPE; Schema: realtime; Owner: -
 --
 
@@ -477,7 +477,7 @@ CREATE TYPE realtime.wal_column AS (
 
 
 --
--- TOC entry 1551 (class 1247 OID 17361)
+-- TOC entry 1552 (class 1247 OID 17361)
 -- Name: wal_rls; Type: TYPE; Schema: realtime; Owner: -
 --
 
@@ -490,7 +490,7 @@ CREATE TYPE realtime.wal_rls AS (
 
 
 --
--- TOC entry 1536 (class 1247 OID 17272)
+-- TOC entry 1537 (class 1247 OID 17272)
 -- Name: buckettype; Type: TYPE; Schema: storage; Owner: -
 --
 
@@ -502,7 +502,7 @@ CREATE TYPE storage.buckettype AS ENUM (
 
 
 --
--- TOC entry 583 (class 1255 OID 16540)
+-- TOC entry 584 (class 1255 OID 16540)
 -- Name: email(); Type: FUNCTION; Schema: auth; Owner: -
 --
 
@@ -518,8 +518,8 @@ $$;
 
 
 --
--- TOC entry 5564 (class 0 OID 0)
--- Dependencies: 583
+-- TOC entry 5576 (class 0 OID 0)
+-- Dependencies: 584
 -- Name: FUNCTION email(); Type: COMMENT; Schema: auth; Owner: -
 --
 
@@ -527,7 +527,7 @@ COMMENT ON FUNCTION auth.email() IS 'Deprecated. Use auth.jwt() -> ''email'' ins
 
 
 --
--- TOC entry 596 (class 1255 OID 16755)
+-- TOC entry 597 (class 1255 OID 16755)
 -- Name: jwt(); Type: FUNCTION; Schema: auth; Owner: -
 --
 
@@ -543,7 +543,7 @@ $$;
 
 
 --
--- TOC entry 497 (class 1255 OID 16539)
+-- TOC entry 498 (class 1255 OID 16539)
 -- Name: role(); Type: FUNCTION; Schema: auth; Owner: -
 --
 
@@ -559,8 +559,8 @@ $$;
 
 
 --
--- TOC entry 5565 (class 0 OID 0)
--- Dependencies: 497
+-- TOC entry 5577 (class 0 OID 0)
+-- Dependencies: 498
 -- Name: FUNCTION role(); Type: COMMENT; Schema: auth; Owner: -
 --
 
@@ -568,7 +568,7 @@ COMMENT ON FUNCTION auth.role() IS 'Deprecated. Use auth.jwt() -> ''role'' inste
 
 
 --
--- TOC entry 530 (class 1255 OID 16538)
+-- TOC entry 531 (class 1255 OID 16538)
 -- Name: uid(); Type: FUNCTION; Schema: auth; Owner: -
 --
 
@@ -584,8 +584,8 @@ $$;
 
 
 --
--- TOC entry 5566 (class 0 OID 0)
--- Dependencies: 530
+-- TOC entry 5578 (class 0 OID 0)
+-- Dependencies: 531
 -- Name: FUNCTION uid(); Type: COMMENT; Schema: auth; Owner: -
 --
 
@@ -593,7 +593,7 @@ COMMENT ON FUNCTION auth.uid() IS 'Deprecated. Use auth.jwt() -> ''sub'' instead
 
 
 --
--- TOC entry 677 (class 1255 OID 16597)
+-- TOC entry 678 (class 1255 OID 16597)
 -- Name: grant_pg_cron_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
@@ -631,8 +631,8 @@ $$;
 
 
 --
--- TOC entry 5567 (class 0 OID 0)
--- Dependencies: 677
+-- TOC entry 5579 (class 0 OID 0)
+-- Dependencies: 678
 -- Name: FUNCTION grant_pg_cron_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
@@ -640,7 +640,7 @@ COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cr
 
 
 --
--- TOC entry 641 (class 1255 OID 16618)
+-- TOC entry 642 (class 1255 OID 16618)
 -- Name: grant_pg_graphql_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
@@ -699,8 +699,8 @@ $_$;
 
 
 --
--- TOC entry 5568 (class 0 OID 0)
--- Dependencies: 641
+-- TOC entry 5580 (class 0 OID 0)
+-- Dependencies: 642
 -- Name: FUNCTION grant_pg_graphql_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
@@ -708,7 +708,7 @@ COMMENT ON FUNCTION extensions.grant_pg_graphql_access() IS 'Grants access to pg
 
 
 --
--- TOC entry 564 (class 1255 OID 16599)
+-- TOC entry 565 (class 1255 OID 16599)
 -- Name: grant_pg_net_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
@@ -760,8 +760,8 @@ $$;
 
 
 --
--- TOC entry 5569 (class 0 OID 0)
--- Dependencies: 564
+-- TOC entry 5581 (class 0 OID 0)
+-- Dependencies: 565
 -- Name: FUNCTION grant_pg_net_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
@@ -803,7 +803,7 @@ END; $$;
 
 
 --
--- TOC entry 701 (class 1255 OID 16610)
+-- TOC entry 702 (class 1255 OID 16610)
 -- Name: pgrst_drop_watch(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
@@ -835,7 +835,7 @@ END; $$;
 
 
 --
--- TOC entry 509 (class 1255 OID 16620)
+-- TOC entry 510 (class 1255 OID 16620)
 -- Name: set_graphql_placeholder(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
@@ -893,8 +893,8 @@ $_$;
 
 
 --
--- TOC entry 5570 (class 0 OID 0)
--- Dependencies: 509
+-- TOC entry 5582 (class 0 OID 0)
+-- Dependencies: 510
 -- Name: FUNCTION set_graphql_placeholder(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
@@ -902,7 +902,7 @@ COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeh
 
 
 --
--- TOC entry 588 (class 1255 OID 16387)
+-- TOC entry 589 (class 1255 OID 16387)
 -- Name: get_auth(text); Type: FUNCTION; Schema: pgbouncer; Owner: -
 --
 
@@ -953,7 +953,7 @@ CREATE TABLE public.background_jobs (
 
 
 --
--- TOC entry 550 (class 1255 OID 94161)
+-- TOC entry 551 (class 1255 OID 94161)
 -- Name: claim_background_jobs(integer, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1016,7 +1016,7 @@ CREATE TABLE public.campaign_messages (
 
 
 --
--- TOC entry 5571 (class 0 OID 0)
+-- TOC entry 5583 (class 0 OID 0)
 -- Dependencies: 402
 -- Name: COLUMN campaign_messages.rendered_text; Type: COMMENT; Schema: public; Owner: -
 --
@@ -1025,7 +1025,7 @@ COMMENT ON COLUMN public.campaign_messages.rendered_text IS 'Final resolved mess
 
 
 --
--- TOC entry 594 (class 1255 OID 92854)
+-- TOC entry 595 (class 1255 OID 92854)
 -- Name: claim_campaign_messages(uuid, integer, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1062,7 +1062,7 @@ $$;
 
 
 --
--- TOC entry 746 (class 1255 OID 94137)
+-- TOC entry 747 (class 1255 OID 94137)
 -- Name: consume_ai_quota(uuid, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1111,7 +1111,7 @@ $$;
 
 
 --
--- TOC entry 647 (class 1255 OID 77718)
+-- TOC entry 648 (class 1255 OID 77718)
 -- Name: create_psf_case_on_campaign_message(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1149,7 +1149,7 @@ $$;
 
 
 --
--- TOC entry 668 (class 1255 OID 22937)
+-- TOC entry 669 (class 1255 OID 22937)
 -- Name: match_knowledge_chunks(public.vector, integer, double precision); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1169,7 +1169,7 @@ $$;
 
 
 --
--- TOC entry 545 (class 1255 OID 90369)
+-- TOC entry 546 (class 1255 OID 90369)
 -- Name: match_knowledge_chunks(public.vector, double precision, integer, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1191,7 +1191,7 @@ $$;
 
 
 --
--- TOC entry 501 (class 1255 OID 90373)
+-- TOC entry 502 (class 1255 OID 90373)
 -- Name: match_knowledge_chunks(public.vector, integer, double precision, uuid, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1215,7 +1215,7 @@ $$;
 
 
 --
--- TOC entry 499 (class 1255 OID 99154)
+-- TOC entry 500 (class 1255 OID 99154)
 -- Name: match_knowledge_chunks_lexical_scoped(text, uuid, integer, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1243,7 +1243,7 @@ $$;
 
 
 --
--- TOC entry 549 (class 1255 OID 92815)
+-- TOC entry 550 (class 1255 OID 92815)
 -- Name: match_knowledge_chunks_scoped(public.vector, uuid, integer, double precision, boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1268,7 +1268,7 @@ $$;
 
 
 --
--- TOC entry 730 (class 1255 OID 96460)
+-- TOC entry 731 (class 1255 OID 96460)
 -- Name: on_message_deleted_recompute_conversation_last_message_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1286,7 +1286,7 @@ $$;
 
 
 --
--- TOC entry 510 (class 1255 OID 63897)
+-- TOC entry 511 (class 1255 OID 63897)
 -- Name: phase5_create_wallet_for_org(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1305,7 +1305,7 @@ $$;
 
 
 --
--- TOC entry 747 (class 1255 OID 63901)
+-- TOC entry 748 (class 1255 OID 63901)
 -- Name: phase5_wallet_apply_transaction(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1334,7 +1334,7 @@ $$;
 
 
 --
--- TOC entry 576 (class 1255 OID 74204)
+-- TOC entry 577 (class 1255 OID 74204)
 -- Name: phase5_wallet_manual_credit(uuid, numeric, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1423,7 +1423,7 @@ $$;
 
 
 --
--- TOC entry 767 (class 1255 OID 63899)
+-- TOC entry 768 (class 1255 OID 63899)
 -- Name: phase5_wallet_prevent_negative_balance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1464,7 +1464,7 @@ $$;
 
 
 --
--- TOC entry 663 (class 1255 OID 78909)
+-- TOC entry 664 (class 1255 OID 78909)
 -- Name: phase6_log_unanswered_question(uuid, uuid, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1503,7 +1503,7 @@ $$;
 
 
 --
--- TOC entry 724 (class 1255 OID 96458)
+-- TOC entry 725 (class 1255 OID 96458)
 -- Name: recompute_conversation_last_message_at(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1527,7 +1527,7 @@ $$;
 
 
 --
--- TOC entry 563 (class 1255 OID 78915)
+-- TOC entry 564 (class 1255 OID 78915)
 -- Name: set_active_organization(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1554,7 +1554,7 @@ $$;
 
 
 --
--- TOC entry 523 (class 1255 OID 92847)
+-- TOC entry 524 (class 1255 OID 92847)
 -- Name: set_message_order_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1569,7 +1569,7 @@ $$;
 
 
 --
--- TOC entry 758 (class 1255 OID 92838)
+-- TOC entry 759 (class 1255 OID 92838)
 -- Name: set_message_organization_id(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1594,7 +1594,22 @@ $$;
 
 
 --
--- TOC entry 769 (class 1255 OID 74274)
+-- TOC entry 490 (class 1255 OID 122639)
+-- Name: set_service_tickets_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_service_tickets_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+
+--
+-- TOC entry 770 (class 1255 OID 74274)
 -- Name: set_unanswered_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1608,7 +1623,7 @@ end $$;
 
 
 --
--- TOC entry 558 (class 1255 OID 74263)
+-- TOC entry 559 (class 1255 OID 74263)
 -- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1622,7 +1637,7 @@ end $$;
 
 
 --
--- TOC entry 716 (class 1255 OID 96459)
+-- TOC entry 717 (class 1255 OID 96459)
 -- Name: touch_conversation_last_message_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1675,7 +1690,7 @@ $$;
 
 
 --
--- TOC entry 729 (class 1255 OID 77716)
+-- TOC entry 730 (class 1255 OID 77716)
 -- Name: update_psf_cases_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1690,7 +1705,7 @@ $$;
 
 
 --
--- TOC entry 645 (class 1255 OID 17383)
+-- TOC entry 646 (class 1255 OID 17383)
 -- Name: apply_rls(jsonb, integer); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -1999,7 +2014,7 @@ $$;
 
 
 --
--- TOC entry 660 (class 1255 OID 17466)
+-- TOC entry 661 (class 1255 OID 17466)
 -- Name: broadcast_changes(text, text, text, text, text, record, record, text); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2029,7 +2044,7 @@ $$;
 
 
 --
--- TOC entry 720 (class 1255 OID 17395)
+-- TOC entry 721 (class 1255 OID 17395)
 -- Name: build_prepared_statement_sql(text, regclass, realtime.wal_column[]); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2063,7 +2078,7 @@ CREATE FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name te
 
 
 --
--- TOC entry 630 (class 1255 OID 17346)
+-- TOC entry 631 (class 1255 OID 17346)
 -- Name: cast(text, regtype); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2080,7 +2095,7 @@ CREATE FUNCTION realtime."cast"(val text, type_ regtype) RETURNS jsonb
 
 
 --
--- TOC entry 612 (class 1255 OID 17341)
+-- TOC entry 613 (class 1255 OID 17341)
 -- Name: check_equality_op(realtime.equality_op, regtype, text, text); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2120,7 +2135,7 @@ CREATE FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtyp
 
 
 --
--- TOC entry 537 (class 1255 OID 17391)
+-- TOC entry 538 (class 1255 OID 17391)
 -- Name: is_visible_through_filters(realtime.wal_column[], realtime.user_defined_filter[]); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2157,7 +2172,7 @@ CREATE FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[
 
 
 --
--- TOC entry 566 (class 1255 OID 17402)
+-- TOC entry 567 (class 1255 OID 17402)
 -- Name: list_changes(name, name, integer, integer); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2224,7 +2239,7 @@ CREATE FUNCTION realtime.list_changes(publication name, slot_name name, max_chan
 
 
 --
--- TOC entry 656 (class 1255 OID 17340)
+-- TOC entry 657 (class 1255 OID 17340)
 -- Name: quote_wal2json(regclass); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2263,7 +2278,7 @@ CREATE FUNCTION realtime.quote_wal2json(entity regclass) RETURNS text
 
 
 --
--- TOC entry 680 (class 1255 OID 17465)
+-- TOC entry 681 (class 1255 OID 17465)
 -- Name: send(jsonb, text, text, boolean); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2301,7 +2316,7 @@ $$;
 
 
 --
--- TOC entry 513 (class 1255 OID 17260)
+-- TOC entry 514 (class 1255 OID 17260)
 -- Name: subscription_check_filters(); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2376,7 +2391,7 @@ CREATE FUNCTION realtime.subscription_check_filters() RETURNS trigger
 
 
 --
--- TOC entry 614 (class 1255 OID 17372)
+-- TOC entry 615 (class 1255 OID 17372)
 -- Name: to_regrole(text); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2386,7 +2401,7 @@ CREATE FUNCTION realtime.to_regrole(role_name text) RETURNS regrole
 
 
 --
--- TOC entry 568 (class 1255 OID 18703)
+-- TOC entry 569 (class 1255 OID 18703)
 -- Name: topic(); Type: FUNCTION; Schema: realtime; Owner: -
 --
 
@@ -2398,7 +2413,7 @@ $$;
 
 
 --
--- TOC entry 648 (class 1255 OID 17219)
+-- TOC entry 649 (class 1255 OID 17219)
 -- Name: add_prefixes(text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2419,7 +2434,7 @@ $$;
 
 
 --
--- TOC entry 744 (class 1255 OID 17145)
+-- TOC entry 745 (class 1255 OID 17145)
 -- Name: can_insert_object(text, text, uuid, jsonb); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2437,7 +2452,7 @@ $$;
 
 
 --
--- TOC entry 633 (class 1255 OID 17291)
+-- TOC entry 634 (class 1255 OID 17291)
 -- Name: delete_leaf_prefixes(text[], text[]); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2503,7 +2518,7 @@ $$;
 
 
 --
--- TOC entry 512 (class 1255 OID 17220)
+-- TOC entry 513 (class 1255 OID 17220)
 -- Name: delete_prefix(text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2540,7 +2555,7 @@ $$;
 
 
 --
--- TOC entry 649 (class 1255 OID 17223)
+-- TOC entry 650 (class 1255 OID 17223)
 -- Name: delete_prefix_hierarchy_trigger(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2562,7 +2577,7 @@ $$;
 
 
 --
--- TOC entry 684 (class 1255 OID 17269)
+-- TOC entry 685 (class 1255 OID 17269)
 -- Name: enforce_bucket_name_length(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2579,7 +2594,7 @@ $$;
 
 
 --
--- TOC entry 592 (class 1255 OID 17119)
+-- TOC entry 593 (class 1255 OID 17119)
 -- Name: extension(text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2598,7 +2613,7 @@ $$;
 
 
 --
--- TOC entry 615 (class 1255 OID 17118)
+-- TOC entry 616 (class 1255 OID 17118)
 -- Name: filename(text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2615,7 +2630,7 @@ $$;
 
 
 --
--- TOC entry 749 (class 1255 OID 17117)
+-- TOC entry 750 (class 1255 OID 17117)
 -- Name: foldername(text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2646,7 +2661,7 @@ $$;
 
 
 --
--- TOC entry 619 (class 1255 OID 17217)
+-- TOC entry 620 (class 1255 OID 17217)
 -- Name: get_prefix(text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2663,7 +2678,7 @@ $_$;
 
 
 --
--- TOC entry 593 (class 1255 OID 17218)
+-- TOC entry 594 (class 1255 OID 17218)
 -- Name: get_prefixes(text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2691,7 +2706,7 @@ $$;
 
 
 --
--- TOC entry 623 (class 1255 OID 17267)
+-- TOC entry 624 (class 1255 OID 17267)
 -- Name: get_size_by_bucket(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2708,7 +2723,7 @@ $$;
 
 
 --
--- TOC entry 590 (class 1255 OID 17184)
+-- TOC entry 591 (class 1255 OID 17184)
 -- Name: list_multipart_uploads_with_delimiter(text, text, text, integer, text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2755,7 +2770,7 @@ $_$;
 
 
 --
--- TOC entry 655 (class 1255 OID 17147)
+-- TOC entry 656 (class 1255 OID 17147)
 -- Name: list_objects_with_delimiter(text, text, text, integer, text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2800,7 +2815,7 @@ $_$;
 
 
 --
--- TOC entry 627 (class 1255 OID 17290)
+-- TOC entry 628 (class 1255 OID 17290)
 -- Name: lock_top_prefixes(text[], text[]); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2825,7 +2840,7 @@ $$;
 
 
 --
--- TOC entry 555 (class 1255 OID 17292)
+-- TOC entry 556 (class 1255 OID 17292)
 -- Name: objects_delete_cleanup(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2857,7 +2872,7 @@ $$;
 
 
 --
--- TOC entry 704 (class 1255 OID 17222)
+-- TOC entry 705 (class 1255 OID 17222)
 -- Name: objects_insert_prefix_trigger(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2874,7 +2889,7 @@ $$;
 
 
 --
--- TOC entry 751 (class 1255 OID 17293)
+-- TOC entry 752 (class 1255 OID 17293)
 -- Name: objects_update_cleanup(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2967,7 +2982,7 @@ $$;
 
 
 --
--- TOC entry 567 (class 1255 OID 17298)
+-- TOC entry 568 (class 1255 OID 17298)
 -- Name: objects_update_level_trigger(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -2986,7 +3001,7 @@ $$;
 
 
 --
--- TOC entry 613 (class 1255 OID 17268)
+-- TOC entry 614 (class 1255 OID 17268)
 -- Name: objects_update_prefix_trigger(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3029,7 +3044,7 @@ $$;
 
 
 --
--- TOC entry 553 (class 1255 OID 17200)
+-- TOC entry 554 (class 1255 OID 17200)
 -- Name: operation(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3043,7 +3058,7 @@ $$;
 
 
 --
--- TOC entry 708 (class 1255 OID 17294)
+-- TOC entry 709 (class 1255 OID 17294)
 -- Name: prefixes_delete_cleanup(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3075,7 +3090,7 @@ $$;
 
 
 --
--- TOC entry 664 (class 1255 OID 17221)
+-- TOC entry 665 (class 1255 OID 17221)
 -- Name: prefixes_insert_trigger(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3090,7 +3105,7 @@ $$;
 
 
 --
--- TOC entry 681 (class 1255 OID 17134)
+-- TOC entry 682 (class 1255 OID 17134)
 -- Name: search(text, text, integer, integer, integer, text, text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3115,7 +3130,7 @@ $$;
 
 
 --
--- TOC entry 731 (class 1255 OID 17265)
+-- TOC entry 732 (class 1255 OID 17265)
 -- Name: search_legacy_v1(text, text, integer, integer, integer, text, text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3185,7 +3200,7 @@ $_$;
 
 
 --
--- TOC entry 670 (class 1255 OID 17264)
+-- TOC entry 671 (class 1255 OID 17264)
 -- Name: search_v1_optimised(text, text, integer, integer, integer, text, text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3254,7 +3269,7 @@ $_$;
 
 
 --
--- TOC entry 739 (class 1255 OID 17289)
+-- TOC entry 740 (class 1255 OID 17289)
 -- Name: search_v2(text, text, integer, integer, text, text, text, text); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3351,7 +3366,7 @@ $_$;
 
 
 --
--- TOC entry 527 (class 1255 OID 17135)
+-- TOC entry 528 (class 1255 OID 17135)
 -- Name: update_updated_at_column(); Type: FUNCTION; Schema: storage; Owner: -
 --
 
@@ -3435,7 +3450,7 @@ CREATE TABLE auth.audit_log_entries (
 
 
 --
--- TOC entry 5572 (class 0 OID 0)
+-- TOC entry 5584 (class 0 OID 0)
 -- Dependencies: 362
 -- Name: TABLE audit_log_entries; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3470,7 +3485,7 @@ CREATE TABLE auth.flow_state (
 
 
 --
--- TOC entry 5573 (class 0 OID 0)
+-- TOC entry 5585 (class 0 OID 0)
 -- Dependencies: 379
 -- Name: TABLE flow_state; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3497,7 +3512,7 @@ CREATE TABLE auth.identities (
 
 
 --
--- TOC entry 5574 (class 0 OID 0)
+-- TOC entry 5586 (class 0 OID 0)
 -- Dependencies: 370
 -- Name: TABLE identities; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3506,7 +3521,7 @@ COMMENT ON TABLE auth.identities IS 'Auth: Stores identities associated to a use
 
 
 --
--- TOC entry 5575 (class 0 OID 0)
+-- TOC entry 5587 (class 0 OID 0)
 -- Dependencies: 370
 -- Name: COLUMN identities.email; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3529,7 +3544,7 @@ CREATE TABLE auth.instances (
 
 
 --
--- TOC entry 5576 (class 0 OID 0)
+-- TOC entry 5588 (class 0 OID 0)
 -- Dependencies: 361
 -- Name: TABLE instances; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3552,7 +3567,7 @@ CREATE TABLE auth.mfa_amr_claims (
 
 
 --
--- TOC entry 5577 (class 0 OID 0)
+-- TOC entry 5589 (class 0 OID 0)
 -- Dependencies: 374
 -- Name: TABLE mfa_amr_claims; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3577,7 +3592,7 @@ CREATE TABLE auth.mfa_challenges (
 
 
 --
--- TOC entry 5578 (class 0 OID 0)
+-- TOC entry 5590 (class 0 OID 0)
 -- Dependencies: 373
 -- Name: TABLE mfa_challenges; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3608,7 +3623,7 @@ CREATE TABLE auth.mfa_factors (
 
 
 --
--- TOC entry 5579 (class 0 OID 0)
+-- TOC entry 5591 (class 0 OID 0)
 -- Dependencies: 372
 -- Name: TABLE mfa_factors; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3617,7 +3632,7 @@ COMMENT ON TABLE auth.mfa_factors IS 'auth: stores metadata about factors';
 
 
 --
--- TOC entry 5580 (class 0 OID 0)
+-- TOC entry 5592 (class 0 OID 0)
 -- Dependencies: 372
 -- Name: COLUMN mfa_factors.last_webauthn_challenge_data; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3673,7 +3688,7 @@ CREATE TABLE auth.oauth_client_states (
 
 
 --
--- TOC entry 5581 (class 0 OID 0)
+-- TOC entry 5593 (class 0 OID 0)
 -- Dependencies: 421
 -- Name: TABLE oauth_client_states; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3761,7 +3776,7 @@ CREATE TABLE auth.refresh_tokens (
 
 
 --
--- TOC entry 5582 (class 0 OID 0)
+-- TOC entry 5594 (class 0 OID 0)
 -- Dependencies: 360
 -- Name: TABLE refresh_tokens; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3783,7 +3798,7 @@ CREATE SEQUENCE auth.refresh_tokens_id_seq
 
 
 --
--- TOC entry 5583 (class 0 OID 0)
+-- TOC entry 5595 (class 0 OID 0)
 -- Dependencies: 359
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE OWNED BY; Schema: auth; Owner: -
 --
@@ -3813,7 +3828,7 @@ CREATE TABLE auth.saml_providers (
 
 
 --
--- TOC entry 5584 (class 0 OID 0)
+-- TOC entry 5596 (class 0 OID 0)
 -- Dependencies: 377
 -- Name: TABLE saml_providers; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3840,7 +3855,7 @@ CREATE TABLE auth.saml_relay_states (
 
 
 --
--- TOC entry 5585 (class 0 OID 0)
+-- TOC entry 5597 (class 0 OID 0)
 -- Dependencies: 378
 -- Name: TABLE saml_relay_states; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3859,7 +3874,7 @@ CREATE TABLE auth.schema_migrations (
 
 
 --
--- TOC entry 5586 (class 0 OID 0)
+-- TOC entry 5598 (class 0 OID 0)
 -- Dependencies: 363
 -- Name: TABLE schema_migrations; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3893,7 +3908,7 @@ CREATE TABLE auth.sessions (
 
 
 --
--- TOC entry 5587 (class 0 OID 0)
+-- TOC entry 5599 (class 0 OID 0)
 -- Dependencies: 371
 -- Name: TABLE sessions; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3902,7 +3917,7 @@ COMMENT ON TABLE auth.sessions IS 'Auth: Stores session data associated to a use
 
 
 --
--- TOC entry 5588 (class 0 OID 0)
+-- TOC entry 5600 (class 0 OID 0)
 -- Dependencies: 371
 -- Name: COLUMN sessions.not_after; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3911,7 +3926,7 @@ COMMENT ON COLUMN auth.sessions.not_after IS 'Auth: Not after is a nullable colu
 
 
 --
--- TOC entry 5589 (class 0 OID 0)
+-- TOC entry 5601 (class 0 OID 0)
 -- Dependencies: 371
 -- Name: COLUMN sessions.refresh_token_hmac_key; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3920,7 +3935,7 @@ COMMENT ON COLUMN auth.sessions.refresh_token_hmac_key IS 'Holds a HMAC-SHA256 k
 
 
 --
--- TOC entry 5590 (class 0 OID 0)
+-- TOC entry 5602 (class 0 OID 0)
 -- Dependencies: 371
 -- Name: COLUMN sessions.refresh_token_counter; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3944,7 +3959,7 @@ CREATE TABLE auth.sso_domains (
 
 
 --
--- TOC entry 5591 (class 0 OID 0)
+-- TOC entry 5603 (class 0 OID 0)
 -- Dependencies: 376
 -- Name: TABLE sso_domains; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3968,7 +3983,7 @@ CREATE TABLE auth.sso_providers (
 
 
 --
--- TOC entry 5592 (class 0 OID 0)
+-- TOC entry 5604 (class 0 OID 0)
 -- Dependencies: 375
 -- Name: TABLE sso_providers; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -3977,7 +3992,7 @@ COMMENT ON TABLE auth.sso_providers IS 'Auth: Manages SSO identity provider info
 
 
 --
--- TOC entry 5593 (class 0 OID 0)
+-- TOC entry 5605 (class 0 OID 0)
 -- Dependencies: 375
 -- Name: COLUMN sso_providers.resource_id; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -4031,7 +4046,7 @@ CREATE TABLE auth.users (
 
 
 --
--- TOC entry 5594 (class 0 OID 0)
+-- TOC entry 5606 (class 0 OID 0)
 -- Dependencies: 358
 -- Name: TABLE users; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -4040,7 +4055,7 @@ COMMENT ON TABLE auth.users IS 'Auth: Stores user login data within a secure sch
 
 
 --
--- TOC entry 5595 (class 0 OID 0)
+-- TOC entry 5607 (class 0 OID 0)
 -- Dependencies: 358
 -- Name: COLUMN users.is_sso_user; Type: COMMENT; Schema: auth; Owner: -
 --
@@ -4299,7 +4314,7 @@ CREATE TABLE public.campaigns (
 
 
 --
--- TOC entry 5596 (class 0 OID 0)
+-- TOC entry 5608 (class 0 OID 0)
 -- Dependencies: 403
 -- Name: COLUMN campaigns.status; Type: COMMENT; Schema: public; Owner: -
 --
@@ -4308,7 +4323,7 @@ COMMENT ON COLUMN public.campaigns.status IS 'draft | scheduled | sending | comp
 
 
 --
--- TOC entry 5597 (class 0 OID 0)
+-- TOC entry 5609 (class 0 OID 0)
 -- Dependencies: 403
 -- Name: COLUMN campaigns.launched_at; Type: COMMENT; Schema: public; Owner: -
 --
@@ -4317,7 +4332,7 @@ COMMENT ON COLUMN public.campaigns.launched_at IS 'Timestamp when campaign was m
 
 
 --
--- TOC entry 5598 (class 0 OID 0)
+-- TOC entry 5610 (class 0 OID 0)
 -- Dependencies: 403
 -- Name: COLUMN campaigns.variable_mapping; Type: COMMENT; Schema: public; Owner: -
 --
@@ -4503,13 +4518,22 @@ CREATE TABLE public.conversations (
     workflow_id uuid,
     campaign_context jsonb DEFAULT '{}'::jsonb,
     campaign_reply_sheet_tab text,
+    ai_state jsonb DEFAULT '{}'::jsonb NOT NULL,
+    funnel_stage text,
+    intent_confidence double precision,
+    intent_updated_at timestamp with time zone,
+    last_workflow_id uuid,
+    last_workflow_run_at timestamp with time zone,
+    last_kb_hit_count integer,
+    last_kb_article_ids uuid[],
+    last_kb_match_confidence text,
     CONSTRAINT conversations_ai_mode_check CHECK ((ai_mode = ANY (ARRAY['auto'::text, 'suggest'::text, 'off'::text]))),
     CONSTRAINT conversations_channel_check CHECK ((channel = ANY (ARRAY['web'::text, 'whatsapp'::text, 'internal'::text])))
 );
 
 
 --
--- TOC entry 5599 (class 0 OID 0)
+-- TOC entry 5611 (class 0 OID 0)
 -- Dependencies: 405
 -- Name: COLUMN conversations.intent; Type: COMMENT; Schema: public; Owner: -
 --
@@ -4518,7 +4542,7 @@ COMMENT ON COLUMN public.conversations.intent IS 'AI classified intent: sales | 
 
 
 --
--- TOC entry 5600 (class 0 OID 0)
+-- TOC entry 5612 (class 0 OID 0)
 -- Dependencies: 405
 -- Name: COLUMN conversations.intent_source; Type: COMMENT; Schema: public; Owner: -
 --
@@ -4527,7 +4551,7 @@ COMMENT ON COLUMN public.conversations.intent_source IS 'ai | manual';
 
 
 --
--- TOC entry 5601 (class 0 OID 0)
+-- TOC entry 5613 (class 0 OID 0)
 -- Dependencies: 405
 -- Name: COLUMN conversations.intent_update_count; Type: COMMENT; Schema: public; Owner: -
 --
@@ -4846,6 +4870,30 @@ CREATE TABLE public.replay_requests (
     status text DEFAULT 'queued'::text NOT NULL,
     last_error text,
     result jsonb DEFAULT '{}'::jsonb NOT NULL
+);
+
+
+--
+-- TOC entry 477 (class 1259 OID 122608)
+-- Name: service_tickets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.service_tickets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    organization_id uuid NOT NULL,
+    conversation_id uuid NOT NULL,
+    contact_id uuid,
+    channel text DEFAULT 'web'::text NOT NULL,
+    ticket_type text DEFAULT 'general'::text NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    vehicle_number text,
+    preferred_slot text,
+    description text,
+    created_by text DEFAULT 'ai'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT service_tickets_status_check CHECK ((status = ANY (ARRAY['open'::text, 'pending'::text, 'closed'::text]))),
+    CONSTRAINT service_tickets_ticket_type_check CHECK ((ticket_type = ANY (ARRAY['booking'::text, 'status'::text, 'complaint'::text, 'general'::text])))
 );
 
 
@@ -5174,75 +5222,7 @@ PARTITION BY RANGE (inserted_at);
 
 
 --
--- TOC entry 471 (class 1259 OID 110950)
--- Name: messages_2026_02_04; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2026_02_04 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- TOC entry 472 (class 1259 OID 112130)
--- Name: messages_2026_02_05; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2026_02_05 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- TOC entry 473 (class 1259 OID 113563)
--- Name: messages_2026_02_06; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2026_02_06 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- TOC entry 474 (class 1259 OID 115556)
--- Name: messages_2026_02_07; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2026_02_07 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- TOC entry 475 (class 1259 OID 116976)
+-- TOC entry 471 (class 1259 OID 116976)
 -- Name: messages_2026_02_08; Type: TABLE; Schema: realtime; Owner: -
 --
 
@@ -5259,7 +5239,7 @@ CREATE TABLE realtime.messages_2026_02_08 (
 
 
 --
--- TOC entry 476 (class 1259 OID 118096)
+-- TOC entry 472 (class 1259 OID 118096)
 -- Name: messages_2026_02_09; Type: TABLE; Schema: realtime; Owner: -
 --
 
@@ -5276,7 +5256,7 @@ CREATE TABLE realtime.messages_2026_02_09 (
 
 
 --
--- TOC entry 477 (class 1259 OID 119219)
+-- TOC entry 473 (class 1259 OID 119219)
 -- Name: messages_2026_02_10; Type: TABLE; Schema: realtime; Owner: -
 --
 
@@ -5293,7 +5273,7 @@ CREATE TABLE realtime.messages_2026_02_10 (
 
 
 --
--- TOC entry 478 (class 1259 OID 121438)
+-- TOC entry 474 (class 1259 OID 121438)
 -- Name: messages_2026_02_11; Type: TABLE; Schema: realtime; Owner: -
 --
 
@@ -5310,11 +5290,62 @@ CREATE TABLE realtime.messages_2026_02_11 (
 
 
 --
--- TOC entry 479 (class 1259 OID 121450)
+-- TOC entry 475 (class 1259 OID 121450)
 -- Name: messages_2026_02_12; Type: TABLE; Schema: realtime; Owner: -
 --
 
 CREATE TABLE realtime.messages_2026_02_12 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- TOC entry 476 (class 1259 OID 122588)
+-- Name: messages_2026_02_13; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2026_02_13 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- TOC entry 478 (class 1259 OID 123750)
+-- Name: messages_2026_02_14; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2026_02_14 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- TOC entry 479 (class 1259 OID 124865)
+-- Name: messages_2026_02_15; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2026_02_15 (
     topic text NOT NULL,
     extension text NOT NULL,
     payload jsonb,
@@ -5391,7 +5422,7 @@ CREATE TABLE storage.buckets (
 
 
 --
--- TOC entry 5602 (class 0 OID 0)
+-- TOC entry 5614 (class 0 OID 0)
 -- Dependencies: 364
 -- Name: COLUMN buckets.owner; Type: COMMENT; Schema: storage; Owner: -
 --
@@ -5464,7 +5495,7 @@ CREATE TABLE storage.objects (
 
 
 --
--- TOC entry 5603 (class 0 OID 0)
+-- TOC entry 5615 (class 0 OID 0)
 -- Dependencies: 365
 -- Name: COLUMN objects.owner; Type: COMMENT; Schema: storage; Owner: -
 --
@@ -5556,7 +5587,7 @@ CREATE TABLE supabase_functions.hooks (
 
 
 --
--- TOC entry 5604 (class 0 OID 0)
+-- TOC entry 5616 (class 0 OID 0)
 -- Dependencies: 416
 -- Name: TABLE hooks; Type: COMMENT; Schema: supabase_functions; Owner: -
 --
@@ -5578,7 +5609,7 @@ CREATE SEQUENCE supabase_functions.hooks_id_seq
 
 
 --
--- TOC entry 5605 (class 0 OID 0)
+-- TOC entry 5617 (class 0 OID 0)
 -- Dependencies: 417
 -- Name: hooks_id_seq; Type: SEQUENCE OWNED BY; Schema: supabase_functions; Owner: -
 --
@@ -5621,39 +5652,7 @@ CREATE TABLE supabase_migrations.seed_files (
 
 
 --
--- TOC entry 4310 (class 0 OID 0)
--- Name: messages_2026_02_04; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_04 FOR VALUES FROM ('2026-02-04 00:00:00') TO ('2026-02-05 00:00:00');
-
-
---
 -- TOC entry 4311 (class 0 OID 0)
--- Name: messages_2026_02_05; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_05 FOR VALUES FROM ('2026-02-05 00:00:00') TO ('2026-02-06 00:00:00');
-
-
---
--- TOC entry 4312 (class 0 OID 0)
--- Name: messages_2026_02_06; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_06 FOR VALUES FROM ('2026-02-06 00:00:00') TO ('2026-02-07 00:00:00');
-
-
---
--- TOC entry 4313 (class 0 OID 0)
--- Name: messages_2026_02_07; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_07 FOR VALUES FROM ('2026-02-07 00:00:00') TO ('2026-02-08 00:00:00');
-
-
---
--- TOC entry 4314 (class 0 OID 0)
 -- Name: messages_2026_02_08; Type: TABLE ATTACH; Schema: realtime; Owner: -
 --
 
@@ -5661,7 +5660,7 @@ ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_08
 
 
 --
--- TOC entry 4315 (class 0 OID 0)
+-- TOC entry 4312 (class 0 OID 0)
 -- Name: messages_2026_02_09; Type: TABLE ATTACH; Schema: realtime; Owner: -
 --
 
@@ -5669,7 +5668,7 @@ ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_09
 
 
 --
--- TOC entry 4316 (class 0 OID 0)
+-- TOC entry 4313 (class 0 OID 0)
 -- Name: messages_2026_02_10; Type: TABLE ATTACH; Schema: realtime; Owner: -
 --
 
@@ -5677,7 +5676,7 @@ ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_10
 
 
 --
--- TOC entry 4317 (class 0 OID 0)
+-- TOC entry 4314 (class 0 OID 0)
 -- Name: messages_2026_02_11; Type: TABLE ATTACH; Schema: realtime; Owner: -
 --
 
@@ -5685,11 +5684,35 @@ ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_11
 
 
 --
--- TOC entry 4318 (class 0 OID 0)
+-- TOC entry 4315 (class 0 OID 0)
 -- Name: messages_2026_02_12; Type: TABLE ATTACH; Schema: realtime; Owner: -
 --
 
 ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_12 FOR VALUES FROM ('2026-02-12 00:00:00') TO ('2026-02-13 00:00:00');
+
+
+--
+-- TOC entry 4316 (class 0 OID 0)
+-- Name: messages_2026_02_13; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_13 FOR VALUES FROM ('2026-02-13 00:00:00') TO ('2026-02-14 00:00:00');
+
+
+--
+-- TOC entry 4317 (class 0 OID 0)
+-- Name: messages_2026_02_14; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_14 FOR VALUES FROM ('2026-02-14 00:00:00') TO ('2026-02-15 00:00:00');
+
+
+--
+-- TOC entry 4318 (class 0 OID 0)
+-- Name: messages_2026_02_15; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2026_02_15 FOR VALUES FROM ('2026-02-15 00:00:00') TO ('2026-02-16 00:00:00');
 
 
 --
@@ -5701,7 +5724,7 @@ ALTER TABLE ONLY auth.refresh_tokens ALTER COLUMN id SET DEFAULT nextval('auth.r
 
 
 --
--- TOC entry 4476 (class 2604 OID 18949)
+-- TOC entry 4477 (class 2604 OID 18949)
 -- Name: hooks id; Type: DEFAULT; Schema: supabase_functions; Owner: -
 --
 
@@ -5709,7 +5732,7 @@ ALTER TABLE ONLY supabase_functions.hooks ALTER COLUMN id SET DEFAULT nextval('s
 
 
 --
--- TOC entry 4826 (class 2606 OID 18952)
+-- TOC entry 4832 (class 2606 OID 18952)
 -- Name: extensions extensions_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: -
 --
 
@@ -5718,7 +5741,7 @@ ALTER TABLE ONLY _realtime.extensions
 
 
 --
--- TOC entry 4830 (class 2606 OID 18954)
+-- TOC entry 4836 (class 2606 OID 18954)
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: -
 --
 
@@ -5727,7 +5750,7 @@ ALTER TABLE ONLY _realtime.schema_migrations
 
 
 --
--- TOC entry 4833 (class 2606 OID 18956)
+-- TOC entry 4839 (class 2606 OID 18956)
 -- Name: tenants tenants_pkey; Type: CONSTRAINT; Schema: _realtime; Owner: -
 --
 
@@ -5736,7 +5759,7 @@ ALTER TABLE ONLY _realtime.tenants
 
 
 --
--- TOC entry 4753 (class 2606 OID 16829)
+-- TOC entry 4759 (class 2606 OID 16829)
 -- Name: mfa_amr_claims amr_id_pk; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5745,7 +5768,7 @@ ALTER TABLE ONLY auth.mfa_amr_claims
 
 
 --
--- TOC entry 4707 (class 2606 OID 16531)
+-- TOC entry 4713 (class 2606 OID 16531)
 -- Name: audit_log_entries audit_log_entries_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5754,7 +5777,7 @@ ALTER TABLE ONLY auth.audit_log_entries
 
 
 --
--- TOC entry 4776 (class 2606 OID 16935)
+-- TOC entry 4782 (class 2606 OID 16935)
 -- Name: flow_state flow_state_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5763,7 +5786,7 @@ ALTER TABLE ONLY auth.flow_state
 
 
 --
--- TOC entry 4731 (class 2606 OID 16953)
+-- TOC entry 4737 (class 2606 OID 16953)
 -- Name: identities identities_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5772,7 +5795,7 @@ ALTER TABLE ONLY auth.identities
 
 
 --
--- TOC entry 4733 (class 2606 OID 16963)
+-- TOC entry 4739 (class 2606 OID 16963)
 -- Name: identities identities_provider_id_provider_unique; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5781,7 +5804,7 @@ ALTER TABLE ONLY auth.identities
 
 
 --
--- TOC entry 4705 (class 2606 OID 16524)
+-- TOC entry 4711 (class 2606 OID 16524)
 -- Name: instances instances_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5790,7 +5813,7 @@ ALTER TABLE ONLY auth.instances
 
 
 --
--- TOC entry 4755 (class 2606 OID 16822)
+-- TOC entry 4761 (class 2606 OID 16822)
 -- Name: mfa_amr_claims mfa_amr_claims_session_id_authentication_method_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5799,7 +5822,7 @@ ALTER TABLE ONLY auth.mfa_amr_claims
 
 
 --
--- TOC entry 4751 (class 2606 OID 16810)
+-- TOC entry 4757 (class 2606 OID 16810)
 -- Name: mfa_challenges mfa_challenges_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5808,7 +5831,7 @@ ALTER TABLE ONLY auth.mfa_challenges
 
 
 --
--- TOC entry 4743 (class 2606 OID 17003)
+-- TOC entry 4749 (class 2606 OID 17003)
 -- Name: mfa_factors mfa_factors_last_challenged_at_key; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5817,7 +5840,7 @@ ALTER TABLE ONLY auth.mfa_factors
 
 
 --
--- TOC entry 4745 (class 2606 OID 16797)
+-- TOC entry 4751 (class 2606 OID 16797)
 -- Name: mfa_factors mfa_factors_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5826,7 +5849,7 @@ ALTER TABLE ONLY auth.mfa_factors
 
 
 --
--- TOC entry 4789 (class 2606 OID 17062)
+-- TOC entry 4795 (class 2606 OID 17062)
 -- Name: oauth_authorizations oauth_authorizations_authorization_code_key; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5835,7 +5858,7 @@ ALTER TABLE ONLY auth.oauth_authorizations
 
 
 --
--- TOC entry 4791 (class 2606 OID 17060)
+-- TOC entry 4797 (class 2606 OID 17060)
 -- Name: oauth_authorizations oauth_authorizations_authorization_id_key; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5844,7 +5867,7 @@ ALTER TABLE ONLY auth.oauth_authorizations
 
 
 --
--- TOC entry 4793 (class 2606 OID 17058)
+-- TOC entry 4799 (class 2606 OID 17058)
 -- Name: oauth_authorizations oauth_authorizations_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5853,7 +5876,7 @@ ALTER TABLE ONLY auth.oauth_authorizations
 
 
 --
--- TOC entry 4944 (class 2606 OID 47540)
+-- TOC entry 4951 (class 2606 OID 47540)
 -- Name: oauth_client_states oauth_client_states_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5862,7 +5885,7 @@ ALTER TABLE ONLY auth.oauth_client_states
 
 
 --
--- TOC entry 4786 (class 2606 OID 17022)
+-- TOC entry 4792 (class 2606 OID 17022)
 -- Name: oauth_clients oauth_clients_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5871,7 +5894,7 @@ ALTER TABLE ONLY auth.oauth_clients
 
 
 --
--- TOC entry 4797 (class 2606 OID 17084)
+-- TOC entry 4803 (class 2606 OID 17084)
 -- Name: oauth_consents oauth_consents_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5880,7 +5903,7 @@ ALTER TABLE ONLY auth.oauth_consents
 
 
 --
--- TOC entry 4799 (class 2606 OID 17086)
+-- TOC entry 4805 (class 2606 OID 17086)
 -- Name: oauth_consents oauth_consents_user_client_unique; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5889,7 +5912,7 @@ ALTER TABLE ONLY auth.oauth_consents
 
 
 --
--- TOC entry 4780 (class 2606 OID 16988)
+-- TOC entry 4786 (class 2606 OID 16988)
 -- Name: one_time_tokens one_time_tokens_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5898,7 +5921,7 @@ ALTER TABLE ONLY auth.one_time_tokens
 
 
 --
--- TOC entry 4699 (class 2606 OID 16514)
+-- TOC entry 4705 (class 2606 OID 16514)
 -- Name: refresh_tokens refresh_tokens_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5907,7 +5930,7 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 
 --
--- TOC entry 4702 (class 2606 OID 16740)
+-- TOC entry 4708 (class 2606 OID 16740)
 -- Name: refresh_tokens refresh_tokens_token_unique; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5916,7 +5939,7 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 
 --
--- TOC entry 4765 (class 2606 OID 16869)
+-- TOC entry 4771 (class 2606 OID 16869)
 -- Name: saml_providers saml_providers_entity_id_key; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5925,7 +5948,7 @@ ALTER TABLE ONLY auth.saml_providers
 
 
 --
--- TOC entry 4767 (class 2606 OID 16867)
+-- TOC entry 4773 (class 2606 OID 16867)
 -- Name: saml_providers saml_providers_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5934,7 +5957,7 @@ ALTER TABLE ONLY auth.saml_providers
 
 
 --
--- TOC entry 4772 (class 2606 OID 16883)
+-- TOC entry 4778 (class 2606 OID 16883)
 -- Name: saml_relay_states saml_relay_states_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5943,7 +5966,7 @@ ALTER TABLE ONLY auth.saml_relay_states
 
 
 --
--- TOC entry 4710 (class 2606 OID 16537)
+-- TOC entry 4716 (class 2606 OID 16537)
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5952,7 +5975,7 @@ ALTER TABLE ONLY auth.schema_migrations
 
 
 --
--- TOC entry 4738 (class 2606 OID 16761)
+-- TOC entry 4744 (class 2606 OID 16761)
 -- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5961,7 +5984,7 @@ ALTER TABLE ONLY auth.sessions
 
 
 --
--- TOC entry 4762 (class 2606 OID 16850)
+-- TOC entry 4768 (class 2606 OID 16850)
 -- Name: sso_domains sso_domains_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5970,7 +5993,7 @@ ALTER TABLE ONLY auth.sso_domains
 
 
 --
--- TOC entry 4757 (class 2606 OID 16841)
+-- TOC entry 4763 (class 2606 OID 16841)
 -- Name: sso_providers sso_providers_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5979,7 +6002,7 @@ ALTER TABLE ONLY auth.sso_providers
 
 
 --
--- TOC entry 4692 (class 2606 OID 16923)
+-- TOC entry 4698 (class 2606 OID 16923)
 -- Name: users users_phone_key; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5988,7 +6011,7 @@ ALTER TABLE ONLY auth.users
 
 
 --
--- TOC entry 4694 (class 2606 OID 16501)
+-- TOC entry 4700 (class 2606 OID 16501)
 -- Name: users users_pkey; Type: CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -5997,7 +6020,7 @@ ALTER TABLE ONLY auth.users
 
 
 --
--- TOC entry 5037 (class 2606 OID 94100)
+-- TOC entry 5044 (class 2606 OID 94100)
 -- Name: ai_embeddings_cache ai_embeddings_cache_organization_id_model_text_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6006,7 +6029,7 @@ ALTER TABLE ONLY public.ai_embeddings_cache
 
 
 --
--- TOC entry 5039 (class 2606 OID 94098)
+-- TOC entry 5046 (class 2606 OID 94098)
 -- Name: ai_embeddings_cache ai_embeddings_cache_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6015,7 +6038,7 @@ ALTER TABLE ONLY public.ai_embeddings_cache
 
 
 --
--- TOC entry 5043 (class 2606 OID 94128)
+-- TOC entry 5050 (class 2606 OID 94128)
 -- Name: ai_org_rate_limit_usage ai_org_rate_limit_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6024,7 +6047,7 @@ ALTER TABLE ONLY public.ai_org_rate_limit_usage
 
 
 --
--- TOC entry 5041 (class 2606 OID 94116)
+-- TOC entry 5048 (class 2606 OID 94116)
 -- Name: ai_org_rate_limits ai_org_rate_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6033,7 +6056,7 @@ ALTER TABLE ONLY public.ai_org_rate_limits
 
 
 --
--- TOC entry 4956 (class 2606 OID 101928)
+-- TOC entry 4963 (class 2606 OID 101928)
 -- Name: ai_settings ai_settings_organization_id_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6042,7 +6065,7 @@ ALTER TABLE ONLY public.ai_settings
 
 
 --
--- TOC entry 4958 (class 2606 OID 63787)
+-- TOC entry 4965 (class 2606 OID 63787)
 -- Name: ai_settings ai_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6051,7 +6074,7 @@ ALTER TABLE ONLY public.ai_settings
 
 
 --
--- TOC entry 5027 (class 2606 OID 93989)
+-- TOC entry 5034 (class 2606 OID 93989)
 -- Name: ai_turn_traces ai_turn_traces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6060,7 +6083,7 @@ ALTER TABLE ONLY public.ai_turn_traces
 
 
 --
--- TOC entry 4961 (class 2606 OID 63816)
+-- TOC entry 4968 (class 2606 OID 63816)
 -- Name: ai_usage_logs ai_usage_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6069,7 +6092,7 @@ ALTER TABLE ONLY public.ai_usage_logs
 
 
 --
--- TOC entry 5000 (class 2606 OID 74288)
+-- TOC entry 5007 (class 2606 OID 74288)
 -- Name: audit_logs audit_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6078,7 +6101,7 @@ ALTER TABLE ONLY public.audit_logs
 
 
 --
--- TOC entry 5046 (class 2606 OID 94152)
+-- TOC entry 5053 (class 2606 OID 94152)
 -- Name: background_jobs background_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6087,7 +6110,7 @@ ALTER TABLE ONLY public.background_jobs
 
 
 --
--- TOC entry 4835 (class 2606 OID 81375)
+-- TOC entry 4841 (class 2606 OID 81375)
 -- Name: bot_personality bot_personality_org_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6096,7 +6119,7 @@ ALTER TABLE ONLY public.bot_personality
 
 
 --
--- TOC entry 4837 (class 2606 OID 81378)
+-- TOC entry 4843 (class 2606 OID 81378)
 -- Name: bot_personality bot_personality_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6105,7 +6128,7 @@ ALTER TABLE ONLY public.bot_personality
 
 
 --
--- TOC entry 5013 (class 2606 OID 80243)
+-- TOC entry 5020 (class 2606 OID 80243)
 -- Name: campaign_delivery_receipt_failures campaign_delivery_receipt_failures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6114,7 +6137,7 @@ ALTER TABLE ONLY public.campaign_delivery_receipt_failures
 
 
 --
--- TOC entry 4840 (class 2606 OID 18964)
+-- TOC entry 4846 (class 2606 OID 18964)
 -- Name: campaign_messages campaign_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6123,7 +6146,7 @@ ALTER TABLE ONLY public.campaign_messages
 
 
 --
--- TOC entry 4852 (class 2606 OID 18966)
+-- TOC entry 4858 (class 2606 OID 18966)
 -- Name: campaigns campaigns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6132,7 +6155,7 @@ ALTER TABLE ONLY public.campaigns
 
 
 --
--- TOC entry 4948 (class 2606 OID 52740)
+-- TOC entry 4955 (class 2606 OID 52740)
 -- Name: contact_uploads contact_uploads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6141,7 +6164,7 @@ ALTER TABLE ONLY public.contact_uploads
 
 
 --
--- TOC entry 4860 (class 2606 OID 18968)
+-- TOC entry 4866 (class 2606 OID 18968)
 -- Name: contacts contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6150,7 +6173,7 @@ ALTER TABLE ONLY public.contacts
 
 
 --
--- TOC entry 4950 (class 2606 OID 55023)
+-- TOC entry 4957 (class 2606 OID 55023)
 -- Name: conversation_state conversation_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6159,7 +6182,7 @@ ALTER TABLE ONLY public.conversation_state
 
 
 --
--- TOC entry 4870 (class 2606 OID 18970)
+-- TOC entry 4877 (class 2606 OID 18970)
 -- Name: conversations conversations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6168,7 +6191,7 @@ ALTER TABLE ONLY public.conversations
 
 
 --
--- TOC entry 4887 (class 2606 OID 18972)
+-- TOC entry 4894 (class 2606 OID 18972)
 -- Name: knowledge_articles knowledge_articles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6177,7 +6200,7 @@ ALTER TABLE ONLY public.knowledge_articles
 
 
 --
--- TOC entry 4941 (class 2606 OID 42861)
+-- TOC entry 4948 (class 2606 OID 42861)
 -- Name: knowledge_chunks knowledge_chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6186,7 +6209,7 @@ ALTER TABLE ONLY public.knowledge_chunks
 
 
 --
--- TOC entry 5023 (class 2606 OID 92864)
+-- TOC entry 5030 (class 2606 OID 92864)
 -- Name: message_delivery_dlq message_delivery_dlq_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6195,7 +6218,7 @@ ALTER TABLE ONLY public.message_delivery_dlq
 
 
 --
--- TOC entry 5032 (class 2606 OID 94028)
+-- TOC entry 5039 (class 2606 OID 94028)
 -- Name: message_delivery_events message_delivery_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6204,7 +6227,7 @@ ALTER TABLE ONLY public.message_delivery_events
 
 
 --
--- TOC entry 4897 (class 2606 OID 18974)
+-- TOC entry 4904 (class 2606 OID 18974)
 -- Name: messages messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6213,7 +6236,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- TOC entry 4902 (class 2606 OID 18976)
+-- TOC entry 4909 (class 2606 OID 18976)
 -- Name: organization_users organization_users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6222,7 +6245,7 @@ ALTER TABLE ONLY public.organization_users
 
 
 --
--- TOC entry 4904 (class 2606 OID 18978)
+-- TOC entry 4911 (class 2606 OID 18978)
 -- Name: organizations organizations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6231,7 +6254,7 @@ ALTER TABLE ONLY public.organizations
 
 
 --
--- TOC entry 5009 (class 2606 OID 77692)
+-- TOC entry 5016 (class 2606 OID 77692)
 -- Name: psf_cases psf_cases_campaign_id_phone_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6240,7 +6263,7 @@ ALTER TABLE ONLY public.psf_cases
 
 
 --
--- TOC entry 5011 (class 2606 OID 77690)
+-- TOC entry 5018 (class 2606 OID 77690)
 -- Name: psf_cases psf_cases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6249,7 +6272,7 @@ ALTER TABLE ONLY public.psf_cases
 
 
 --
--- TOC entry 4986 (class 2606 OID 74218)
+-- TOC entry 4993 (class 2606 OID 74218)
 -- Name: razorpay_orders razorpay_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6258,7 +6281,7 @@ ALTER TABLE ONLY public.razorpay_orders
 
 
 --
--- TOC entry 4988 (class 2606 OID 74220)
+-- TOC entry 4995 (class 2606 OID 74220)
 -- Name: razorpay_orders razorpay_orders_razorpay_order_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6267,7 +6290,7 @@ ALTER TABLE ONLY public.razorpay_orders
 
 
 --
--- TOC entry 4993 (class 2606 OID 74245)
+-- TOC entry 5000 (class 2606 OID 74245)
 -- Name: razorpay_payments razorpay_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6276,7 +6299,7 @@ ALTER TABLE ONLY public.razorpay_payments
 
 
 --
--- TOC entry 4995 (class 2606 OID 74247)
+-- TOC entry 5002 (class 2606 OID 74247)
 -- Name: razorpay_payments razorpay_payments_razorpay_payment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6285,7 +6308,7 @@ ALTER TABLE ONLY public.razorpay_payments
 
 
 --
--- TOC entry 5035 (class 2606 OID 94060)
+-- TOC entry 5042 (class 2606 OID 94060)
 -- Name: replay_requests replay_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6294,7 +6317,16 @@ ALTER TABLE ONLY public.replay_requests
 
 
 --
--- TOC entry 4908 (class 2606 OID 18980)
+-- TOC entry 5074 (class 2606 OID 122623)
+-- Name: service_tickets service_tickets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.service_tickets
+    ADD CONSTRAINT service_tickets_pkey PRIMARY KEY (id);
+
+
+--
+-- TOC entry 4915 (class 2606 OID 18980)
 -- Name: unanswered_questions unanswered_questions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6303,7 +6335,7 @@ ALTER TABLE ONLY public.unanswered_questions
 
 
 --
--- TOC entry 4981 (class 2606 OID 63921)
+-- TOC entry 4988 (class 2606 OID 63921)
 -- Name: wallet_alert_logs wallet_alert_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6312,7 +6344,7 @@ ALTER TABLE ONLY public.wallet_alert_logs
 
 
 --
--- TOC entry 4976 (class 2606 OID 63882)
+-- TOC entry 4983 (class 2606 OID 63882)
 -- Name: wallet_transactions wallet_transactions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6321,7 +6353,7 @@ ALTER TABLE ONLY public.wallet_transactions
 
 
 --
--- TOC entry 4674 (class 2606 OID 74202)
+-- TOC entry 4678 (class 2606 OID 74202)
 -- Name: wallet_transactions wallet_txn_balance_snapshots_present; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6330,7 +6362,7 @@ ALTER TABLE public.wallet_transactions
 
 
 --
--- TOC entry 4967 (class 2606 OID 63861)
+-- TOC entry 4974 (class 2606 OID 63861)
 -- Name: wallets wallets_organization_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6339,7 +6371,7 @@ ALTER TABLE ONLY public.wallets
 
 
 --
--- TOC entry 4969 (class 2606 OID 63859)
+-- TOC entry 4976 (class 2606 OID 63859)
 -- Name: wallets wallets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6348,7 +6380,7 @@ ALTER TABLE ONLY public.wallets
 
 
 --
--- TOC entry 4946 (class 2606 OID 50960)
+-- TOC entry 4953 (class 2606 OID 50960)
 -- Name: whatsapp_bulk_logs whatsapp_bulk_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6357,7 +6389,7 @@ ALTER TABLE ONLY public.whatsapp_bulk_logs
 
 
 --
--- TOC entry 4910 (class 2606 OID 80252)
+-- TOC entry 4917 (class 2606 OID 80252)
 -- Name: whatsapp_settings whatsapp_settings_organization_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6366,7 +6398,7 @@ ALTER TABLE ONLY public.whatsapp_settings
 
 
 --
--- TOC entry 4912 (class 2606 OID 18982)
+-- TOC entry 4919 (class 2606 OID 18982)
 -- Name: whatsapp_settings whatsapp_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6375,7 +6407,7 @@ ALTER TABLE ONLY public.whatsapp_settings
 
 
 --
--- TOC entry 4954 (class 2606 OID 59195)
+-- TOC entry 4961 (class 2606 OID 59195)
 -- Name: whatsapp_templates whatsapp_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6384,7 +6416,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 
 
 --
--- TOC entry 4918 (class 2606 OID 18984)
+-- TOC entry 4925 (class 2606 OID 18984)
 -- Name: workflow_logs workflow_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6393,7 +6425,7 @@ ALTER TABLE ONLY public.workflow_logs
 
 
 --
--- TOC entry 4920 (class 2606 OID 18986)
+-- TOC entry 4927 (class 2606 OID 18986)
 -- Name: workflow_steps workflow_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6402,7 +6434,7 @@ ALTER TABLE ONLY public.workflow_steps
 
 
 --
--- TOC entry 4922 (class 2606 OID 18988)
+-- TOC entry 4929 (class 2606 OID 18988)
 -- Name: workflows workflows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6411,7 +6443,7 @@ ALTER TABLE ONLY public.workflows
 
 
 --
--- TOC entry 4925 (class 2606 OID 18990)
+-- TOC entry 4932 (class 2606 OID 18990)
 -- Name: messages messages_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6420,43 +6452,7 @@ ALTER TABLE ONLY realtime.messages
 
 
 --
--- TOC entry 5050 (class 2606 OID 110958)
--- Name: messages_2026_02_04 messages_2026_02_04_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2026_02_04
-    ADD CONSTRAINT messages_2026_02_04_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- TOC entry 5053 (class 2606 OID 112138)
--- Name: messages_2026_02_05 messages_2026_02_05_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2026_02_05
-    ADD CONSTRAINT messages_2026_02_05_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- TOC entry 5056 (class 2606 OID 113571)
--- Name: messages_2026_02_06 messages_2026_02_06_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2026_02_06
-    ADD CONSTRAINT messages_2026_02_06_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- TOC entry 5059 (class 2606 OID 115564)
--- Name: messages_2026_02_07 messages_2026_02_07_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2026_02_07
-    ADD CONSTRAINT messages_2026_02_07_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- TOC entry 5062 (class 2606 OID 116984)
+-- TOC entry 5057 (class 2606 OID 116984)
 -- Name: messages_2026_02_08 messages_2026_02_08_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6465,7 +6461,7 @@ ALTER TABLE ONLY realtime.messages_2026_02_08
 
 
 --
--- TOC entry 5065 (class 2606 OID 118104)
+-- TOC entry 5060 (class 2606 OID 118104)
 -- Name: messages_2026_02_09 messages_2026_02_09_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6474,7 +6470,7 @@ ALTER TABLE ONLY realtime.messages_2026_02_09
 
 
 --
--- TOC entry 5068 (class 2606 OID 119227)
+-- TOC entry 5063 (class 2606 OID 119227)
 -- Name: messages_2026_02_10 messages_2026_02_10_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6483,7 +6479,7 @@ ALTER TABLE ONLY realtime.messages_2026_02_10
 
 
 --
--- TOC entry 5071 (class 2606 OID 121446)
+-- TOC entry 5066 (class 2606 OID 121446)
 -- Name: messages_2026_02_11 messages_2026_02_11_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6492,7 +6488,7 @@ ALTER TABLE ONLY realtime.messages_2026_02_11
 
 
 --
--- TOC entry 5074 (class 2606 OID 121458)
+-- TOC entry 5069 (class 2606 OID 121458)
 -- Name: messages_2026_02_12 messages_2026_02_12_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6501,7 +6497,34 @@ ALTER TABLE ONLY realtime.messages_2026_02_12
 
 
 --
--- TOC entry 4813 (class 2606 OID 17255)
+-- TOC entry 5072 (class 2606 OID 122596)
+-- Name: messages_2026_02_13 messages_2026_02_13_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2026_02_13
+    ADD CONSTRAINT messages_2026_02_13_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- TOC entry 5077 (class 2606 OID 123758)
+-- Name: messages_2026_02_14 messages_2026_02_14_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2026_02_14
+    ADD CONSTRAINT messages_2026_02_14_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- TOC entry 5080 (class 2606 OID 124873)
+-- Name: messages_2026_02_15 messages_2026_02_15_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2026_02_15
+    ADD CONSTRAINT messages_2026_02_15_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- TOC entry 4819 (class 2606 OID 17255)
 -- Name: subscription pk_subscription; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6510,7 +6533,7 @@ ALTER TABLE ONLY realtime.subscription
 
 
 --
--- TOC entry 4802 (class 2606 OID 17116)
+-- TOC entry 4808 (class 2606 OID 17116)
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
@@ -6519,7 +6542,7 @@ ALTER TABLE ONLY realtime.schema_migrations
 
 
 --
--- TOC entry 4816 (class 2606 OID 17338)
+-- TOC entry 4822 (class 2606 OID 17338)
 -- Name: buckets_analytics buckets_analytics_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6528,7 +6551,7 @@ ALTER TABLE ONLY storage.buckets_analytics
 
 
 --
--- TOC entry 4713 (class 2606 OID 16554)
+-- TOC entry 4719 (class 2606 OID 16554)
 -- Name: buckets buckets_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6537,7 +6560,7 @@ ALTER TABLE ONLY storage.buckets
 
 
 --
--- TOC entry 4819 (class 2606 OID 17314)
+-- TOC entry 4825 (class 2606 OID 17314)
 -- Name: buckets_vectors buckets_vectors_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6546,7 +6569,7 @@ ALTER TABLE ONLY storage.buckets_vectors
 
 
 --
--- TOC entry 4723 (class 2606 OID 16595)
+-- TOC entry 4729 (class 2606 OID 16595)
 -- Name: migrations migrations_name_key; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6555,7 +6578,7 @@ ALTER TABLE ONLY storage.migrations
 
 
 --
--- TOC entry 4725 (class 2606 OID 16593)
+-- TOC entry 4731 (class 2606 OID 16593)
 -- Name: migrations migrations_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6564,7 +6587,7 @@ ALTER TABLE ONLY storage.migrations
 
 
 --
--- TOC entry 4721 (class 2606 OID 16571)
+-- TOC entry 4727 (class 2606 OID 16571)
 -- Name: objects objects_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6573,7 +6596,7 @@ ALTER TABLE ONLY storage.objects
 
 
 --
--- TOC entry 4810 (class 2606 OID 17211)
+-- TOC entry 4816 (class 2606 OID 17211)
 -- Name: prefixes prefixes_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6582,7 +6605,7 @@ ALTER TABLE ONLY storage.prefixes
 
 
 --
--- TOC entry 4807 (class 2606 OID 17172)
+-- TOC entry 4813 (class 2606 OID 17172)
 -- Name: s3_multipart_uploads_parts s3_multipart_uploads_parts_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6591,7 +6614,7 @@ ALTER TABLE ONLY storage.s3_multipart_uploads_parts
 
 
 --
--- TOC entry 4805 (class 2606 OID 17157)
+-- TOC entry 4811 (class 2606 OID 17157)
 -- Name: s3_multipart_uploads s3_multipart_uploads_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6600,7 +6623,7 @@ ALTER TABLE ONLY storage.s3_multipart_uploads
 
 
 --
--- TOC entry 4822 (class 2606 OID 17324)
+-- TOC entry 4828 (class 2606 OID 17324)
 -- Name: vector_indexes vector_indexes_pkey; Type: CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -6609,7 +6632,7 @@ ALTER TABLE ONLY storage.vector_indexes
 
 
 --
--- TOC entry 4927 (class 2606 OID 19006)
+-- TOC entry 4934 (class 2606 OID 19006)
 -- Name: hooks hooks_pkey; Type: CONSTRAINT; Schema: supabase_functions; Owner: -
 --
 
@@ -6618,7 +6641,7 @@ ALTER TABLE ONLY supabase_functions.hooks
 
 
 --
--- TOC entry 4931 (class 2606 OID 19008)
+-- TOC entry 4938 (class 2606 OID 19008)
 -- Name: migrations migrations_pkey; Type: CONSTRAINT; Schema: supabase_functions; Owner: -
 --
 
@@ -6627,7 +6650,7 @@ ALTER TABLE ONLY supabase_functions.migrations
 
 
 --
--- TOC entry 4933 (class 2606 OID 19010)
+-- TOC entry 4940 (class 2606 OID 19010)
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: supabase_migrations; Owner: -
 --
 
@@ -6636,7 +6659,7 @@ ALTER TABLE ONLY supabase_migrations.schema_migrations
 
 
 --
--- TOC entry 4824 (class 2606 OID 17503)
+-- TOC entry 4830 (class 2606 OID 17503)
 -- Name: seed_files seed_files_pkey; Type: CONSTRAINT; Schema: supabase_migrations; Owner: -
 --
 
@@ -6645,7 +6668,7 @@ ALTER TABLE ONLY supabase_migrations.seed_files
 
 
 --
--- TOC entry 4827 (class 1259 OID 19011)
+-- TOC entry 4833 (class 1259 OID 19011)
 -- Name: extensions_tenant_external_id_index; Type: INDEX; Schema: _realtime; Owner: -
 --
 
@@ -6653,7 +6676,7 @@ CREATE INDEX extensions_tenant_external_id_index ON _realtime.extensions USING b
 
 
 --
--- TOC entry 4828 (class 1259 OID 19012)
+-- TOC entry 4834 (class 1259 OID 19012)
 -- Name: extensions_tenant_external_id_type_index; Type: INDEX; Schema: _realtime; Owner: -
 --
 
@@ -6661,7 +6684,7 @@ CREATE UNIQUE INDEX extensions_tenant_external_id_type_index ON _realtime.extens
 
 
 --
--- TOC entry 4831 (class 1259 OID 19013)
+-- TOC entry 4837 (class 1259 OID 19013)
 -- Name: tenants_external_id_index; Type: INDEX; Schema: _realtime; Owner: -
 --
 
@@ -6669,7 +6692,7 @@ CREATE UNIQUE INDEX tenants_external_id_index ON _realtime.tenants USING btree (
 
 
 --
--- TOC entry 4708 (class 1259 OID 16532)
+-- TOC entry 4714 (class 1259 OID 16532)
 -- Name: audit_logs_instance_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6677,7 +6700,7 @@ CREATE INDEX audit_logs_instance_id_idx ON auth.audit_log_entries USING btree (i
 
 
 --
--- TOC entry 4682 (class 1259 OID 16750)
+-- TOC entry 4688 (class 1259 OID 16750)
 -- Name: confirmation_token_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6685,7 +6708,7 @@ CREATE UNIQUE INDEX confirmation_token_idx ON auth.users USING btree (confirmati
 
 
 --
--- TOC entry 4683 (class 1259 OID 16752)
+-- TOC entry 4689 (class 1259 OID 16752)
 -- Name: email_change_token_current_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6693,7 +6716,7 @@ CREATE UNIQUE INDEX email_change_token_current_idx ON auth.users USING btree (em
 
 
 --
--- TOC entry 4684 (class 1259 OID 16753)
+-- TOC entry 4690 (class 1259 OID 16753)
 -- Name: email_change_token_new_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6701,7 +6724,7 @@ CREATE UNIQUE INDEX email_change_token_new_idx ON auth.users USING btree (email_
 
 
 --
--- TOC entry 4741 (class 1259 OID 16831)
+-- TOC entry 4747 (class 1259 OID 16831)
 -- Name: factor_id_created_at_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6709,7 +6732,7 @@ CREATE INDEX factor_id_created_at_idx ON auth.mfa_factors USING btree (user_id, 
 
 
 --
--- TOC entry 4774 (class 1259 OID 16939)
+-- TOC entry 4780 (class 1259 OID 16939)
 -- Name: flow_state_created_at_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6717,7 +6740,7 @@ CREATE INDEX flow_state_created_at_idx ON auth.flow_state USING btree (created_a
 
 
 --
--- TOC entry 4729 (class 1259 OID 16919)
+-- TOC entry 4735 (class 1259 OID 16919)
 -- Name: identities_email_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6725,8 +6748,8 @@ CREATE INDEX identities_email_idx ON auth.identities USING btree (email text_pat
 
 
 --
--- TOC entry 5608 (class 0 OID 0)
--- Dependencies: 4729
+-- TOC entry 5620 (class 0 OID 0)
+-- Dependencies: 4735
 -- Name: INDEX identities_email_idx; Type: COMMENT; Schema: auth; Owner: -
 --
 
@@ -6734,7 +6757,7 @@ COMMENT ON INDEX auth.identities_email_idx IS 'Auth: Ensures indexed queries on 
 
 
 --
--- TOC entry 4734 (class 1259 OID 16747)
+-- TOC entry 4740 (class 1259 OID 16747)
 -- Name: identities_user_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6742,7 +6765,7 @@ CREATE INDEX identities_user_id_idx ON auth.identities USING btree (user_id);
 
 
 --
--- TOC entry 4777 (class 1259 OID 16936)
+-- TOC entry 4783 (class 1259 OID 16936)
 -- Name: idx_auth_code; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6750,7 +6773,7 @@ CREATE INDEX idx_auth_code ON auth.flow_state USING btree (auth_code);
 
 
 --
--- TOC entry 4942 (class 1259 OID 47541)
+-- TOC entry 4949 (class 1259 OID 47541)
 -- Name: idx_oauth_client_states_created_at; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6758,7 +6781,7 @@ CREATE INDEX idx_oauth_client_states_created_at ON auth.oauth_client_states USIN
 
 
 --
--- TOC entry 4778 (class 1259 OID 16937)
+-- TOC entry 4784 (class 1259 OID 16937)
 -- Name: idx_user_id_auth_method; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6766,7 +6789,7 @@ CREATE INDEX idx_user_id_auth_method ON auth.flow_state USING btree (user_id, au
 
 
 --
--- TOC entry 4749 (class 1259 OID 16942)
+-- TOC entry 4755 (class 1259 OID 16942)
 -- Name: mfa_challenge_created_at_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6774,7 +6797,7 @@ CREATE INDEX mfa_challenge_created_at_idx ON auth.mfa_challenges USING btree (cr
 
 
 --
--- TOC entry 4746 (class 1259 OID 16803)
+-- TOC entry 4752 (class 1259 OID 16803)
 -- Name: mfa_factors_user_friendly_name_unique; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6782,7 +6805,7 @@ CREATE UNIQUE INDEX mfa_factors_user_friendly_name_unique ON auth.mfa_factors US
 
 
 --
--- TOC entry 4747 (class 1259 OID 16948)
+-- TOC entry 4753 (class 1259 OID 16948)
 -- Name: mfa_factors_user_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6790,7 +6813,7 @@ CREATE INDEX mfa_factors_user_id_idx ON auth.mfa_factors USING btree (user_id);
 
 
 --
--- TOC entry 4787 (class 1259 OID 17073)
+-- TOC entry 4793 (class 1259 OID 17073)
 -- Name: oauth_auth_pending_exp_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6798,7 +6821,7 @@ CREATE INDEX oauth_auth_pending_exp_idx ON auth.oauth_authorizations USING btree
 
 
 --
--- TOC entry 4784 (class 1259 OID 17026)
+-- TOC entry 4790 (class 1259 OID 17026)
 -- Name: oauth_clients_deleted_at_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6806,7 +6829,7 @@ CREATE INDEX oauth_clients_deleted_at_idx ON auth.oauth_clients USING btree (del
 
 
 --
--- TOC entry 4794 (class 1259 OID 17099)
+-- TOC entry 4800 (class 1259 OID 17099)
 -- Name: oauth_consents_active_client_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6814,7 +6837,7 @@ CREATE INDEX oauth_consents_active_client_idx ON auth.oauth_consents USING btree
 
 
 --
--- TOC entry 4795 (class 1259 OID 17097)
+-- TOC entry 4801 (class 1259 OID 17097)
 -- Name: oauth_consents_active_user_client_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6822,7 +6845,7 @@ CREATE INDEX oauth_consents_active_user_client_idx ON auth.oauth_consents USING 
 
 
 --
--- TOC entry 4800 (class 1259 OID 17098)
+-- TOC entry 4806 (class 1259 OID 17098)
 -- Name: oauth_consents_user_order_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6830,7 +6853,7 @@ CREATE INDEX oauth_consents_user_order_idx ON auth.oauth_consents USING btree (u
 
 
 --
--- TOC entry 4781 (class 1259 OID 16995)
+-- TOC entry 4787 (class 1259 OID 16995)
 -- Name: one_time_tokens_relates_to_hash_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6838,7 +6861,7 @@ CREATE INDEX one_time_tokens_relates_to_hash_idx ON auth.one_time_tokens USING h
 
 
 --
--- TOC entry 4782 (class 1259 OID 16994)
+-- TOC entry 4788 (class 1259 OID 16994)
 -- Name: one_time_tokens_token_hash_hash_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6846,7 +6869,7 @@ CREATE INDEX one_time_tokens_token_hash_hash_idx ON auth.one_time_tokens USING h
 
 
 --
--- TOC entry 4783 (class 1259 OID 16996)
+-- TOC entry 4789 (class 1259 OID 16996)
 -- Name: one_time_tokens_user_id_token_type_key; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6854,7 +6877,7 @@ CREATE UNIQUE INDEX one_time_tokens_user_id_token_type_key ON auth.one_time_toke
 
 
 --
--- TOC entry 4685 (class 1259 OID 16754)
+-- TOC entry 4691 (class 1259 OID 16754)
 -- Name: reauthentication_token_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6862,7 +6885,7 @@ CREATE UNIQUE INDEX reauthentication_token_idx ON auth.users USING btree (reauth
 
 
 --
--- TOC entry 4686 (class 1259 OID 16751)
+-- TOC entry 4692 (class 1259 OID 16751)
 -- Name: recovery_token_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6870,7 +6893,7 @@ CREATE UNIQUE INDEX recovery_token_idx ON auth.users USING btree (recovery_token
 
 
 --
--- TOC entry 4695 (class 1259 OID 16515)
+-- TOC entry 4701 (class 1259 OID 16515)
 -- Name: refresh_tokens_instance_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6878,7 +6901,7 @@ CREATE INDEX refresh_tokens_instance_id_idx ON auth.refresh_tokens USING btree (
 
 
 --
--- TOC entry 4696 (class 1259 OID 16516)
+-- TOC entry 4702 (class 1259 OID 16516)
 -- Name: refresh_tokens_instance_id_user_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6886,7 +6909,7 @@ CREATE INDEX refresh_tokens_instance_id_user_id_idx ON auth.refresh_tokens USING
 
 
 --
--- TOC entry 4697 (class 1259 OID 16746)
+-- TOC entry 4703 (class 1259 OID 16746)
 -- Name: refresh_tokens_parent_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6894,7 +6917,7 @@ CREATE INDEX refresh_tokens_parent_idx ON auth.refresh_tokens USING btree (paren
 
 
 --
--- TOC entry 4700 (class 1259 OID 16833)
+-- TOC entry 4706 (class 1259 OID 16833)
 -- Name: refresh_tokens_session_id_revoked_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6902,7 +6925,7 @@ CREATE INDEX refresh_tokens_session_id_revoked_idx ON auth.refresh_tokens USING 
 
 
 --
--- TOC entry 4703 (class 1259 OID 16938)
+-- TOC entry 4709 (class 1259 OID 16938)
 -- Name: refresh_tokens_updated_at_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6910,7 +6933,7 @@ CREATE INDEX refresh_tokens_updated_at_idx ON auth.refresh_tokens USING btree (u
 
 
 --
--- TOC entry 4768 (class 1259 OID 16875)
+-- TOC entry 4774 (class 1259 OID 16875)
 -- Name: saml_providers_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6918,7 +6941,7 @@ CREATE INDEX saml_providers_sso_provider_id_idx ON auth.saml_providers USING btr
 
 
 --
--- TOC entry 4769 (class 1259 OID 16940)
+-- TOC entry 4775 (class 1259 OID 16940)
 -- Name: saml_relay_states_created_at_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6926,7 +6949,7 @@ CREATE INDEX saml_relay_states_created_at_idx ON auth.saml_relay_states USING bt
 
 
 --
--- TOC entry 4770 (class 1259 OID 16890)
+-- TOC entry 4776 (class 1259 OID 16890)
 -- Name: saml_relay_states_for_email_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6934,7 +6957,7 @@ CREATE INDEX saml_relay_states_for_email_idx ON auth.saml_relay_states USING btr
 
 
 --
--- TOC entry 4773 (class 1259 OID 16889)
+-- TOC entry 4779 (class 1259 OID 16889)
 -- Name: saml_relay_states_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6942,7 +6965,7 @@ CREATE INDEX saml_relay_states_sso_provider_id_idx ON auth.saml_relay_states USI
 
 
 --
--- TOC entry 4735 (class 1259 OID 16941)
+-- TOC entry 4741 (class 1259 OID 16941)
 -- Name: sessions_not_after_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6950,7 +6973,7 @@ CREATE INDEX sessions_not_after_idx ON auth.sessions USING btree (not_after DESC
 
 
 --
--- TOC entry 4736 (class 1259 OID 17111)
+-- TOC entry 4742 (class 1259 OID 17111)
 -- Name: sessions_oauth_client_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6958,7 +6981,7 @@ CREATE INDEX sessions_oauth_client_id_idx ON auth.sessions USING btree (oauth_cl
 
 
 --
--- TOC entry 4739 (class 1259 OID 16832)
+-- TOC entry 4745 (class 1259 OID 16832)
 -- Name: sessions_user_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6966,7 +6989,7 @@ CREATE INDEX sessions_user_id_idx ON auth.sessions USING btree (user_id);
 
 
 --
--- TOC entry 4760 (class 1259 OID 16857)
+-- TOC entry 4766 (class 1259 OID 16857)
 -- Name: sso_domains_domain_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6974,7 +6997,7 @@ CREATE UNIQUE INDEX sso_domains_domain_idx ON auth.sso_domains USING btree (lowe
 
 
 --
--- TOC entry 4763 (class 1259 OID 16856)
+-- TOC entry 4769 (class 1259 OID 16856)
 -- Name: sso_domains_sso_provider_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6982,7 +7005,7 @@ CREATE INDEX sso_domains_sso_provider_id_idx ON auth.sso_domains USING btree (ss
 
 
 --
--- TOC entry 4758 (class 1259 OID 16842)
+-- TOC entry 4764 (class 1259 OID 16842)
 -- Name: sso_providers_resource_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6990,7 +7013,7 @@ CREATE UNIQUE INDEX sso_providers_resource_id_idx ON auth.sso_providers USING bt
 
 
 --
--- TOC entry 4759 (class 1259 OID 17004)
+-- TOC entry 4765 (class 1259 OID 17004)
 -- Name: sso_providers_resource_id_pattern_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -6998,7 +7021,7 @@ CREATE INDEX sso_providers_resource_id_pattern_idx ON auth.sso_providers USING b
 
 
 --
--- TOC entry 4748 (class 1259 OID 17001)
+-- TOC entry 4754 (class 1259 OID 17001)
 -- Name: unique_phone_factor_per_user; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -7006,7 +7029,7 @@ CREATE UNIQUE INDEX unique_phone_factor_per_user ON auth.mfa_factors USING btree
 
 
 --
--- TOC entry 4740 (class 1259 OID 16830)
+-- TOC entry 4746 (class 1259 OID 16830)
 -- Name: user_id_created_at_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -7014,7 +7037,7 @@ CREATE INDEX user_id_created_at_idx ON auth.sessions USING btree (user_id, creat
 
 
 --
--- TOC entry 4687 (class 1259 OID 16910)
+-- TOC entry 4693 (class 1259 OID 16910)
 -- Name: users_email_partial_key; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -7022,8 +7045,8 @@ CREATE UNIQUE INDEX users_email_partial_key ON auth.users USING btree (email) WH
 
 
 --
--- TOC entry 5609 (class 0 OID 0)
--- Dependencies: 4687
+-- TOC entry 5621 (class 0 OID 0)
+-- Dependencies: 4693
 -- Name: INDEX users_email_partial_key; Type: COMMENT; Schema: auth; Owner: -
 --
 
@@ -7031,7 +7054,7 @@ COMMENT ON INDEX auth.users_email_partial_key IS 'Auth: A partial unique index t
 
 
 --
--- TOC entry 4688 (class 1259 OID 16748)
+-- TOC entry 4694 (class 1259 OID 16748)
 -- Name: users_instance_id_email_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -7039,7 +7062,7 @@ CREATE INDEX users_instance_id_email_idx ON auth.users USING btree (instance_id,
 
 
 --
--- TOC entry 4689 (class 1259 OID 16505)
+-- TOC entry 4695 (class 1259 OID 16505)
 -- Name: users_instance_id_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -7047,7 +7070,7 @@ CREATE INDEX users_instance_id_idx ON auth.users USING btree (instance_id);
 
 
 --
--- TOC entry 4690 (class 1259 OID 16965)
+-- TOC entry 4696 (class 1259 OID 16965)
 -- Name: users_is_anonymous_idx; Type: INDEX; Schema: auth; Owner: -
 --
 
@@ -7055,7 +7078,7 @@ CREATE INDEX users_is_anonymous_idx ON auth.users USING btree (is_anonymous);
 
 
 --
--- TOC entry 5024 (class 1259 OID 94016)
+-- TOC entry 5031 (class 1259 OID 94016)
 -- Name: ai_turn_traces_conv_started_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7063,7 +7086,7 @@ CREATE INDEX ai_turn_traces_conv_started_at_idx ON public.ai_turn_traces USING b
 
 
 --
--- TOC entry 5025 (class 1259 OID 94015)
+-- TOC entry 5032 (class 1259 OID 94015)
 -- Name: ai_turn_traces_org_started_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7071,7 +7094,7 @@ CREATE INDEX ai_turn_traces_org_started_at_idx ON public.ai_turn_traces USING bt
 
 
 --
--- TOC entry 4996 (class 1259 OID 74291)
+-- TOC entry 5003 (class 1259 OID 74291)
 -- Name: audit_logs_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7079,7 +7102,7 @@ CREATE INDEX audit_logs_created_at_idx ON public.audit_logs USING btree (created
 
 
 --
--- TOC entry 4997 (class 1259 OID 74290)
+-- TOC entry 5004 (class 1259 OID 74290)
 -- Name: audit_logs_entity_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7087,7 +7110,7 @@ CREATE INDEX audit_logs_entity_idx ON public.audit_logs USING btree (entity_type
 
 
 --
--- TOC entry 4998 (class 1259 OID 74289)
+-- TOC entry 5005 (class 1259 OID 74289)
 -- Name: audit_logs_org_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7095,7 +7118,7 @@ CREATE INDEX audit_logs_org_idx ON public.audit_logs USING btree (organization_i
 
 
 --
--- TOC entry 5044 (class 1259 OID 94159)
+-- TOC entry 5051 (class 1259 OID 94159)
 -- Name: background_jobs_org_status_run_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7103,7 +7126,7 @@ CREATE INDEX background_jobs_org_status_run_at_idx ON public.background_jobs USI
 
 
 --
--- TOC entry 5047 (class 1259 OID 94158)
+-- TOC entry 5054 (class 1259 OID 94158)
 -- Name: background_jobs_status_run_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7111,7 +7134,7 @@ CREATE INDEX background_jobs_status_run_at_idx ON public.background_jobs USING b
 
 
 --
--- TOC entry 4838 (class 1259 OID 92853)
+-- TOC entry 4844 (class 1259 OID 92853)
 -- Name: campaign_messages_claim_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7119,7 +7142,7 @@ CREATE INDEX campaign_messages_claim_idx ON public.campaign_messages USING btree
 
 
 --
--- TOC entry 5014 (class 1259 OID 80246)
+-- TOC entry 5021 (class 1259 OID 80246)
 -- Name: cdrf_org_received_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7127,7 +7150,7 @@ CREATE INDEX cdrf_org_received_idx ON public.campaign_delivery_receipt_failures 
 
 
 --
--- TOC entry 4858 (class 1259 OID 62632)
+-- TOC entry 4864 (class 1259 OID 62632)
 -- Name: contacts_org_phone_uq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7135,7 +7158,7 @@ CREATE UNIQUE INDEX contacts_org_phone_uq ON public.contacts USING btree (organi
 
 
 --
--- TOC entry 4866 (class 1259 OID 80205)
+-- TOC entry 4872 (class 1259 OID 80205)
 -- Name: conversations_ai_locked_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7143,7 +7166,7 @@ CREATE INDEX conversations_ai_locked_idx ON public.conversations USING btree (or
 
 
 --
--- TOC entry 4867 (class 1259 OID 80247)
+-- TOC entry 4873 (class 1259 OID 80247)
 -- Name: conversations_ai_locked_until_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7151,7 +7174,15 @@ CREATE INDEX conversations_ai_locked_until_idx ON public.conversations USING btr
 
 
 --
--- TOC entry 4868 (class 1259 OID 94086)
+-- TOC entry 4874 (class 1259 OID 121484)
+-- Name: conversations_org_intent_updated_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX conversations_org_intent_updated_at_idx ON public.conversations USING btree (organization_id, intent_updated_at DESC);
+
+
+--
+-- TOC entry 4875 (class 1259 OID 94086)
 -- Name: conversations_org_last_message_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7159,7 +7190,7 @@ CREATE INDEX conversations_org_last_message_at_idx ON public.conversations USING
 
 
 --
--- TOC entry 4871 (class 1259 OID 95327)
+-- TOC entry 4878 (class 1259 OID 95327)
 -- Name: conversations_unique_contact_channel; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7167,7 +7198,7 @@ CREATE UNIQUE INDEX conversations_unique_contact_channel ON public.conversations
 
 
 --
--- TOC entry 4872 (class 1259 OID 62644)
+-- TOC entry 4879 (class 1259 OID 62644)
 -- Name: conversations_whatsapp_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7175,7 +7206,7 @@ CREATE UNIQUE INDEX conversations_whatsapp_unique ON public.conversations USING 
 
 
 --
--- TOC entry 4959 (class 1259 OID 63800)
+-- TOC entry 4966 (class 1259 OID 63800)
 -- Name: idx_ai_settings_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7183,7 +7214,7 @@ CREATE INDEX idx_ai_settings_org ON public.ai_settings USING btree (organization
 
 
 --
--- TOC entry 4962 (class 1259 OID 63838)
+-- TOC entry 4969 (class 1259 OID 63838)
 -- Name: idx_ai_usage_logs_created; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7191,7 +7222,7 @@ CREATE INDEX idx_ai_usage_logs_created ON public.ai_usage_logs USING btree (crea
 
 
 --
--- TOC entry 4963 (class 1259 OID 63837)
+-- TOC entry 4970 (class 1259 OID 63837)
 -- Name: idx_ai_usage_logs_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7199,7 +7230,7 @@ CREATE INDEX idx_ai_usage_logs_org ON public.ai_usage_logs USING btree (organiza
 
 
 --
--- TOC entry 4841 (class 1259 OID 19014)
+-- TOC entry 4847 (class 1259 OID 19014)
 -- Name: idx_campaign_messages_campaign; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7207,7 +7238,7 @@ CREATE INDEX idx_campaign_messages_campaign ON public.campaign_messages USING bt
 
 
 --
--- TOC entry 4842 (class 1259 OID 62595)
+-- TOC entry 4848 (class 1259 OID 62595)
 -- Name: idx_campaign_messages_campaign_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7215,7 +7246,7 @@ CREATE INDEX idx_campaign_messages_campaign_status ON public.campaign_messages U
 
 
 --
--- TOC entry 4843 (class 1259 OID 62597)
+-- TOC entry 4849 (class 1259 OID 62597)
 -- Name: idx_campaign_messages_delivered_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7223,7 +7254,7 @@ CREATE INDEX idx_campaign_messages_delivered_at ON public.campaign_messages USIN
 
 
 --
--- TOC entry 4844 (class 1259 OID 62596)
+-- TOC entry 4850 (class 1259 OID 62596)
 -- Name: idx_campaign_messages_dispatched_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7231,7 +7262,7 @@ CREATE INDEX idx_campaign_messages_dispatched_at ON public.campaign_messages USI
 
 
 --
--- TOC entry 4845 (class 1259 OID 52706)
+-- TOC entry 4851 (class 1259 OID 52706)
 -- Name: idx_campaign_messages_org_phone_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7239,7 +7270,7 @@ CREATE INDEX idx_campaign_messages_org_phone_status ON public.campaign_messages 
 
 
 --
--- TOC entry 4846 (class 1259 OID 19015)
+-- TOC entry 4852 (class 1259 OID 19015)
 -- Name: idx_campaign_messages_org_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7247,7 +7278,7 @@ CREATE INDEX idx_campaign_messages_org_status ON public.campaign_messages USING 
 
 
 --
--- TOC entry 4847 (class 1259 OID 62598)
+-- TOC entry 4853 (class 1259 OID 62598)
 -- Name: idx_campaign_messages_replied_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7255,7 +7286,7 @@ CREATE INDEX idx_campaign_messages_replied_at ON public.campaign_messages USING 
 
 
 --
--- TOC entry 4848 (class 1259 OID 60340)
+-- TOC entry 4854 (class 1259 OID 60340)
 -- Name: idx_campaign_messages_reply; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7263,7 +7294,7 @@ CREATE INDEX idx_campaign_messages_reply ON public.campaign_messages USING btree
 
 
 --
--- TOC entry 4849 (class 1259 OID 19016)
+-- TOC entry 4855 (class 1259 OID 19016)
 -- Name: idx_campaign_messages_send_queue; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7271,7 +7302,7 @@ CREATE INDEX idx_campaign_messages_send_queue ON public.campaign_messages USING 
 
 
 --
--- TOC entry 4850 (class 1259 OID 74294)
+-- TOC entry 4856 (class 1259 OID 74294)
 -- Name: idx_campaign_messages_whatsapp_message_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7279,7 +7310,7 @@ CREATE INDEX idx_campaign_messages_whatsapp_message_id ON public.campaign_messag
 
 
 --
--- TOC entry 4853 (class 1259 OID 19017)
+-- TOC entry 4859 (class 1259 OID 19017)
 -- Name: idx_campaigns_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7287,7 +7318,7 @@ CREATE INDEX idx_campaigns_org ON public.campaigns USING btree (organization_id)
 
 
 --
--- TOC entry 4854 (class 1259 OID 19018)
+-- TOC entry 4860 (class 1259 OID 19018)
 -- Name: idx_campaigns_org_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7295,7 +7326,7 @@ CREATE INDEX idx_campaigns_org_status ON public.campaigns USING btree (organizat
 
 
 --
--- TOC entry 4855 (class 1259 OID 52704)
+-- TOC entry 4861 (class 1259 OID 52704)
 -- Name: idx_campaigns_org_template; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7303,7 +7334,7 @@ CREATE INDEX idx_campaigns_org_template ON public.campaigns USING btree (organiz
 
 
 --
--- TOC entry 4856 (class 1259 OID 19019)
+-- TOC entry 4862 (class 1259 OID 19019)
 -- Name: idx_campaigns_scheduled_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7311,7 +7342,7 @@ CREATE INDEX idx_campaigns_scheduled_at ON public.campaigns USING btree (status,
 
 
 --
--- TOC entry 4857 (class 1259 OID 59230)
+-- TOC entry 4863 (class 1259 OID 59230)
 -- Name: idx_campaigns_whatsapp_template_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7319,7 +7350,7 @@ CREATE INDEX idx_campaigns_whatsapp_template_id ON public.campaigns USING btree 
 
 
 --
--- TOC entry 4861 (class 1259 OID 84150)
+-- TOC entry 4867 (class 1259 OID 84150)
 -- Name: idx_contacts_org_metadata; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7327,7 +7358,7 @@ CREATE INDEX idx_contacts_org_metadata ON public.contacts USING gin (metadata);
 
 
 --
--- TOC entry 4862 (class 1259 OID 52702)
+-- TOC entry 4868 (class 1259 OID 52702)
 -- Name: idx_contacts_org_model; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7335,7 +7366,7 @@ CREATE INDEX idx_contacts_org_model ON public.contacts USING btree (organization
 
 
 --
--- TOC entry 4863 (class 1259 OID 61487)
+-- TOC entry 4869 (class 1259 OID 61487)
 -- Name: idx_contacts_org_name; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7343,7 +7374,7 @@ CREATE INDEX idx_contacts_org_name ON public.contacts USING btree (organization_
 
 
 --
--- TOC entry 4864 (class 1259 OID 52701)
+-- TOC entry 4870 (class 1259 OID 52701)
 -- Name: idx_contacts_org_phone; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7351,7 +7382,7 @@ CREATE INDEX idx_contacts_org_phone ON public.contacts USING btree (organization
 
 
 --
--- TOC entry 4873 (class 1259 OID 75418)
+-- TOC entry 4880 (class 1259 OID 75418)
 -- Name: idx_conversations_ai_context; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7359,7 +7390,7 @@ CREATE INDEX idx_conversations_ai_context ON public.conversations USING btree (a
 
 
 --
--- TOC entry 4874 (class 1259 OID 87668)
+-- TOC entry 4881 (class 1259 OID 87668)
 -- Name: idx_conversations_campaign_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7367,7 +7398,7 @@ CREATE INDEX idx_conversations_campaign_id ON public.conversations USING btree (
 
 
 --
--- TOC entry 4875 (class 1259 OID 61483)
+-- TOC entry 4882 (class 1259 OID 61483)
 -- Name: idx_conversations_intent; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7375,7 +7406,7 @@ CREATE INDEX idx_conversations_intent ON public.conversations USING btree (inten
 
 
 --
--- TOC entry 4876 (class 1259 OID 61489)
+-- TOC entry 4883 (class 1259 OID 61489)
 -- Name: idx_conversations_org_assigned; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7383,7 +7414,7 @@ CREATE INDEX idx_conversations_org_assigned ON public.conversations USING btree 
 
 
 --
--- TOC entry 4877 (class 1259 OID 62600)
+-- TOC entry 4884 (class 1259 OID 62600)
 -- Name: idx_conversations_org_channel_last; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7391,7 +7422,7 @@ CREATE INDEX idx_conversations_org_channel_last ON public.conversations USING bt
 
 
 --
--- TOC entry 4878 (class 1259 OID 61486)
+-- TOC entry 4885 (class 1259 OID 61486)
 -- Name: idx_conversations_org_intent; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7399,7 +7430,7 @@ CREATE INDEX idx_conversations_org_intent ON public.conversations USING btree (o
 
 
 --
--- TOC entry 4879 (class 1259 OID 61488)
+-- TOC entry 4886 (class 1259 OID 61488)
 -- Name: idx_conversations_org_last_message_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7407,7 +7438,7 @@ CREATE INDEX idx_conversations_org_last_message_at ON public.conversations USING
 
 
 --
--- TOC entry 4880 (class 1259 OID 87669)
+-- TOC entry 4887 (class 1259 OID 87669)
 -- Name: idx_conversations_workflow_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7415,7 +7446,7 @@ CREATE INDEX idx_conversations_workflow_id ON public.conversations USING btree (
 
 
 --
--- TOC entry 4934 (class 1259 OID 42868)
+-- TOC entry 4941 (class 1259 OID 42868)
 -- Name: idx_kb_chunks_embedding; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7423,7 +7454,7 @@ CREATE INDEX idx_kb_chunks_embedding ON public.knowledge_chunks USING ivfflat (e
 
 
 --
--- TOC entry 4935 (class 1259 OID 90372)
+-- TOC entry 4942 (class 1259 OID 90372)
 -- Name: idx_kb_chunks_org_article; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7431,7 +7462,7 @@ CREATE INDEX idx_kb_chunks_org_article ON public.knowledge_chunks USING btree (o
 
 
 --
--- TOC entry 4881 (class 1259 OID 74267)
+-- TOC entry 4888 (class 1259 OID 74267)
 -- Name: idx_kb_keywords_gin; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7439,7 +7470,7 @@ CREATE INDEX idx_kb_keywords_gin ON public.knowledge_articles USING gin (keyword
 
 
 --
--- TOC entry 4882 (class 1259 OID 92831)
+-- TOC entry 4889 (class 1259 OID 92831)
 -- Name: idx_knowledge_articles_org_updated; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7447,7 +7478,7 @@ CREATE INDEX idx_knowledge_articles_org_updated ON public.knowledge_articles USI
 
 
 --
--- TOC entry 4883 (class 1259 OID 75419)
+-- TOC entry 4890 (class 1259 OID 75419)
 -- Name: idx_knowledge_articles_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7455,7 +7486,7 @@ CREATE INDEX idx_knowledge_articles_status ON public.knowledge_articles USING bt
 
 
 --
--- TOC entry 4936 (class 1259 OID 89951)
+-- TOC entry 4943 (class 1259 OID 89951)
 -- Name: idx_knowledge_chunks_article_chunk; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7463,7 +7494,7 @@ CREATE INDEX idx_knowledge_chunks_article_chunk ON public.knowledge_chunks USING
 
 
 --
--- TOC entry 4937 (class 1259 OID 89957)
+-- TOC entry 4944 (class 1259 OID 89957)
 -- Name: idx_knowledge_chunks_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7471,7 +7502,7 @@ CREATE INDEX idx_knowledge_chunks_org ON public.knowledge_chunks USING btree (or
 
 
 --
--- TOC entry 4888 (class 1259 OID 95302)
+-- TOC entry 4895 (class 1259 OID 95302)
 -- Name: idx_messages_campaign_message_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7479,7 +7510,7 @@ CREATE INDEX idx_messages_campaign_message_id ON public.messages USING btree (ca
 
 
 --
--- TOC entry 4889 (class 1259 OID 62599)
+-- TOC entry 4896 (class 1259 OID 62599)
 -- Name: idx_messages_conversation_created; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7487,7 +7518,7 @@ CREATE INDEX idx_messages_conversation_created ON public.messages USING btree (c
 
 
 --
--- TOC entry 4890 (class 1259 OID 92837)
+-- TOC entry 4897 (class 1259 OID 92837)
 -- Name: idx_messages_org_conversation_created; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7495,7 +7526,7 @@ CREATE INDEX idx_messages_org_conversation_created ON public.messages USING btre
 
 
 --
--- TOC entry 4891 (class 1259 OID 80254)
+-- TOC entry 4898 (class 1259 OID 80254)
 -- Name: idx_messages_whatsapp_receipts; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7503,7 +7534,7 @@ CREATE INDEX idx_messages_whatsapp_receipts ON public.messages USING btree (what
 
 
 --
--- TOC entry 4900 (class 1259 OID 78910)
+-- TOC entry 4907 (class 1259 OID 78910)
 -- Name: idx_org_users_user_last_active; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7511,7 +7542,7 @@ CREATE INDEX idx_org_users_user_last_active ON public.organization_users USING b
 
 
 --
--- TOC entry 5001 (class 1259 OID 79075)
+-- TOC entry 5008 (class 1259 OID 79075)
 -- Name: idx_psf_cases_action_required; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7519,7 +7550,7 @@ CREATE INDEX idx_psf_cases_action_required ON public.psf_cases USING btree (acti
 
 
 --
--- TOC entry 5002 (class 1259 OID 79073)
+-- TOC entry 5009 (class 1259 OID 79073)
 -- Name: idx_psf_cases_campaign_phone; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7527,7 +7558,7 @@ CREATE INDEX idx_psf_cases_campaign_phone ON public.psf_cases USING btree (campa
 
 
 --
--- TOC entry 5003 (class 1259 OID 79074)
+-- TOC entry 5010 (class 1259 OID 79074)
 -- Name: idx_psf_cases_conversation; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7535,7 +7566,7 @@ CREATE INDEX idx_psf_cases_conversation ON public.psf_cases USING btree (convers
 
 
 --
--- TOC entry 5004 (class 1259 OID 77713)
+-- TOC entry 5011 (class 1259 OID 77713)
 -- Name: idx_psf_cases_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7543,7 +7574,7 @@ CREATE INDEX idx_psf_cases_org ON public.psf_cases USING btree (organization_id)
 
 
 --
--- TOC entry 5005 (class 1259 OID 79072)
+-- TOC entry 5012 (class 1259 OID 79072)
 -- Name: idx_psf_cases_org_created; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7551,7 +7582,7 @@ CREATE INDEX idx_psf_cases_org_created ON public.psf_cases USING btree (organiza
 
 
 --
--- TOC entry 5006 (class 1259 OID 77715)
+-- TOC entry 5013 (class 1259 OID 77715)
 -- Name: idx_psf_cases_resolution; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7559,7 +7590,7 @@ CREATE INDEX idx_psf_cases_resolution ON public.psf_cases USING btree (resolutio
 
 
 --
--- TOC entry 5007 (class 1259 OID 77714)
+-- TOC entry 5014 (class 1259 OID 77714)
 -- Name: idx_psf_cases_sentiment; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7567,7 +7598,7 @@ CREATE INDEX idx_psf_cases_sentiment ON public.psf_cases USING btree (sentiment)
 
 
 --
--- TOC entry 4982 (class 1259 OID 74233)
+-- TOC entry 4989 (class 1259 OID 74233)
 -- Name: idx_razorpay_orders_created; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7575,7 +7606,7 @@ CREATE INDEX idx_razorpay_orders_created ON public.razorpay_orders USING btree (
 
 
 --
--- TOC entry 4983 (class 1259 OID 74231)
+-- TOC entry 4990 (class 1259 OID 74231)
 -- Name: idx_razorpay_orders_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7583,7 +7614,7 @@ CREATE INDEX idx_razorpay_orders_org ON public.razorpay_orders USING btree (orga
 
 
 --
--- TOC entry 4984 (class 1259 OID 74232)
+-- TOC entry 4991 (class 1259 OID 74232)
 -- Name: idx_razorpay_orders_wallet; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7591,7 +7622,7 @@ CREATE INDEX idx_razorpay_orders_wallet ON public.razorpay_orders USING btree (w
 
 
 --
--- TOC entry 4989 (class 1259 OID 74260)
+-- TOC entry 4996 (class 1259 OID 74260)
 -- Name: idx_razorpay_payments_order; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7599,7 +7630,7 @@ CREATE INDEX idx_razorpay_payments_order ON public.razorpay_payments USING btree
 
 
 --
--- TOC entry 4990 (class 1259 OID 74258)
+-- TOC entry 4997 (class 1259 OID 74258)
 -- Name: idx_razorpay_payments_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7607,7 +7638,7 @@ CREATE INDEX idx_razorpay_payments_org ON public.razorpay_payments USING btree (
 
 
 --
--- TOC entry 4991 (class 1259 OID 74259)
+-- TOC entry 4998 (class 1259 OID 74259)
 -- Name: idx_razorpay_payments_wallet; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7615,7 +7646,7 @@ CREATE INDEX idx_razorpay_payments_wallet ON public.razorpay_payments USING btre
 
 
 --
--- TOC entry 4905 (class 1259 OID 74273)
+-- TOC entry 4912 (class 1259 OID 74273)
 -- Name: idx_unanswered_last_seen; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7623,7 +7654,7 @@ CREATE INDEX idx_unanswered_last_seen ON public.unanswered_questions USING btree
 
 
 --
--- TOC entry 4906 (class 1259 OID 74272)
+-- TOC entry 4913 (class 1259 OID 74272)
 -- Name: idx_unanswered_org_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7631,7 +7662,7 @@ CREATE INDEX idx_unanswered_org_status ON public.unanswered_questions USING btre
 
 
 --
--- TOC entry 4977 (class 1259 OID 63933)
+-- TOC entry 4984 (class 1259 OID 63933)
 -- Name: idx_wallet_alerts_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7639,7 +7670,7 @@ CREATE INDEX idx_wallet_alerts_org ON public.wallet_alert_logs USING btree (orga
 
 
 --
--- TOC entry 4978 (class 1259 OID 63934)
+-- TOC entry 4985 (class 1259 OID 63934)
 -- Name: idx_wallet_alerts_wallet; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7647,7 +7678,7 @@ CREATE INDEX idx_wallet_alerts_wallet ON public.wallet_alert_logs USING btree (w
 
 
 --
--- TOC entry 4970 (class 1259 OID 63889)
+-- TOC entry 4977 (class 1259 OID 63889)
 -- Name: idx_wallet_transactions_created; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7655,7 +7686,7 @@ CREATE INDEX idx_wallet_transactions_created ON public.wallet_transactions USING
 
 
 --
--- TOC entry 4971 (class 1259 OID 74200)
+-- TOC entry 4978 (class 1259 OID 74200)
 -- Name: idx_wallet_transactions_created_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7663,7 +7694,7 @@ CREATE INDEX idx_wallet_transactions_created_by ON public.wallet_transactions US
 
 
 --
--- TOC entry 4972 (class 1259 OID 74199)
+-- TOC entry 4979 (class 1259 OID 74199)
 -- Name: idx_wallet_transactions_purpose; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7671,7 +7702,7 @@ CREATE INDEX idx_wallet_transactions_purpose ON public.wallet_transactions USING
 
 
 --
--- TOC entry 4973 (class 1259 OID 63890)
+-- TOC entry 4980 (class 1259 OID 63890)
 -- Name: idx_wallet_transactions_reference; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7679,7 +7710,7 @@ CREATE INDEX idx_wallet_transactions_reference ON public.wallet_transactions USI
 
 
 --
--- TOC entry 4974 (class 1259 OID 63888)
+-- TOC entry 4981 (class 1259 OID 63888)
 -- Name: idx_wallet_transactions_wallet; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7687,7 +7718,7 @@ CREATE INDEX idx_wallet_transactions_wallet ON public.wallet_transactions USING 
 
 
 --
--- TOC entry 4965 (class 1259 OID 63867)
+-- TOC entry 4972 (class 1259 OID 63867)
 -- Name: idx_wallets_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7695,7 +7726,7 @@ CREATE INDEX idx_wallets_org ON public.wallets USING btree (organization_id);
 
 
 --
--- TOC entry 4951 (class 1259 OID 59207)
+-- TOC entry 4958 (class 1259 OID 59207)
 -- Name: idx_whatsapp_templates_org; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7703,7 +7734,7 @@ CREATE INDEX idx_whatsapp_templates_org ON public.whatsapp_templates USING btree
 
 
 --
--- TOC entry 4913 (class 1259 OID 35855)
+-- TOC entry 4920 (class 1259 OID 35855)
 -- Name: idx_workflow_logs_conversation_active; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7711,7 +7742,7 @@ CREATE INDEX idx_workflow_logs_conversation_active ON public.workflow_logs USING
 
 
 --
--- TOC entry 4914 (class 1259 OID 92845)
+-- TOC entry 4921 (class 1259 OID 92845)
 -- Name: idx_workflow_logs_org_conversation_created; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7719,7 +7750,7 @@ CREATE INDEX idx_workflow_logs_org_conversation_created ON public.workflow_logs 
 
 
 --
--- TOC entry 4915 (class 1259 OID 35856)
+-- TOC entry 4922 (class 1259 OID 35856)
 -- Name: idx_workflow_logs_workflow; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7727,7 +7758,7 @@ CREATE INDEX idx_workflow_logs_workflow ON public.workflow_logs USING btree (wor
 
 
 --
--- TOC entry 4884 (class 1259 OID 89934)
+-- TOC entry 4891 (class 1259 OID 89934)
 -- Name: knowledge_articles_org_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7735,7 +7766,7 @@ CREATE INDEX knowledge_articles_org_status_idx ON public.knowledge_articles USIN
 
 
 --
--- TOC entry 4885 (class 1259 OID 94089)
+-- TOC entry 4892 (class 1259 OID 94089)
 -- Name: knowledge_articles_org_updated_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7743,7 +7774,7 @@ CREATE INDEX knowledge_articles_org_updated_at_idx ON public.knowledge_articles 
 
 
 --
--- TOC entry 4938 (class 1259 OID 99155)
+-- TOC entry 4945 (class 1259 OID 99155)
 -- Name: knowledge_chunks_chunk_tsv_gin; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7751,7 +7782,7 @@ CREATE INDEX knowledge_chunks_chunk_tsv_gin ON public.knowledge_chunks USING gin
 
 
 --
--- TOC entry 4939 (class 1259 OID 89936)
+-- TOC entry 4946 (class 1259 OID 89936)
 -- Name: knowledge_chunks_embedding_hnsw; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7759,7 +7790,7 @@ CREATE INDEX knowledge_chunks_embedding_hnsw ON public.knowledge_chunks USING hn
 
 
 --
--- TOC entry 5021 (class 1259 OID 92870)
+-- TOC entry 5028 (class 1259 OID 92870)
 -- Name: message_delivery_dlq_org_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7767,7 +7798,7 @@ CREATE INDEX message_delivery_dlq_org_created_at_idx ON public.message_delivery_
 
 
 --
--- TOC entry 5028 (class 1259 OID 94046)
+-- TOC entry 5035 (class 1259 OID 94046)
 -- Name: message_delivery_events_campaign_message_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7775,7 +7806,7 @@ CREATE INDEX message_delivery_events_campaign_message_idx ON public.message_deli
 
 
 --
--- TOC entry 5029 (class 1259 OID 94045)
+-- TOC entry 5036 (class 1259 OID 94045)
 -- Name: message_delivery_events_message_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7783,7 +7814,7 @@ CREATE INDEX message_delivery_events_message_idx ON public.message_delivery_even
 
 
 --
--- TOC entry 5030 (class 1259 OID 94044)
+-- TOC entry 5037 (class 1259 OID 94044)
 -- Name: message_delivery_events_org_event_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7791,7 +7822,7 @@ CREATE INDEX message_delivery_events_org_event_at_idx ON public.message_delivery
 
 
 --
--- TOC entry 4892 (class 1259 OID 92849)
+-- TOC entry 4899 (class 1259 OID 92849)
 -- Name: messages_conversation_order_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7799,7 +7830,7 @@ CREATE INDEX messages_conversation_order_at_idx ON public.messages USING btree (
 
 
 --
--- TOC entry 4893 (class 1259 OID 94087)
+-- TOC entry 4900 (class 1259 OID 94087)
 -- Name: messages_org_conversation_order_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7807,7 +7838,7 @@ CREATE INDEX messages_org_conversation_order_at_idx ON public.messages USING btr
 
 
 --
--- TOC entry 4894 (class 1259 OID 94088)
+-- TOC entry 4901 (class 1259 OID 94088)
 -- Name: messages_org_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7815,7 +7846,7 @@ CREATE INDEX messages_org_created_at_idx ON public.messages USING btree (organiz
 
 
 --
--- TOC entry 4895 (class 1259 OID 92850)
+-- TOC entry 4902 (class 1259 OID 92850)
 -- Name: messages_org_outbound_dedupe_key_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7823,7 +7854,7 @@ CREATE UNIQUE INDEX messages_org_outbound_dedupe_key_uniq ON public.messages USI
 
 
 --
--- TOC entry 5033 (class 1259 OID 94066)
+-- TOC entry 5040 (class 1259 OID 94066)
 -- Name: replay_requests_org_requested_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7831,7 +7862,7 @@ CREATE INDEX replay_requests_org_requested_at_idx ON public.replay_requests USIN
 
 
 --
--- TOC entry 4865 (class 1259 OID 62630)
+-- TOC entry 4871 (class 1259 OID 62630)
 -- Name: uniq_contacts_org_phone; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7839,7 +7870,7 @@ CREATE UNIQUE INDEX uniq_contacts_org_phone ON public.contacts USING btree (orga
 
 
 --
--- TOC entry 4898 (class 1259 OID 80232)
+-- TOC entry 4905 (class 1259 OID 80232)
 -- Name: uniq_messages_outbound_dedupe_key; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7847,7 +7878,7 @@ CREATE UNIQUE INDEX uniq_messages_outbound_dedupe_key ON public.messages USING b
 
 
 --
--- TOC entry 4899 (class 1259 OID 24136)
+-- TOC entry 4906 (class 1259 OID 24136)
 -- Name: uniq_messages_whatsapp_message_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7855,7 +7886,7 @@ CREATE UNIQUE INDEX uniq_messages_whatsapp_message_id ON public.messages USING b
 
 
 --
--- TOC entry 4964 (class 1259 OID 63896)
+-- TOC entry 4971 (class 1259 OID 63896)
 -- Name: uq_ai_usage_logs_wallet_transaction_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7863,7 +7894,7 @@ CREATE UNIQUE INDEX uq_ai_usage_logs_wallet_transaction_id ON public.ai_usage_lo
 
 
 --
--- TOC entry 4979 (class 1259 OID 63932)
+-- TOC entry 4986 (class 1259 OID 63932)
 -- Name: uq_wallet_active_alert; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7871,7 +7902,7 @@ CREATE UNIQUE INDEX uq_wallet_active_alert ON public.wallet_alert_logs USING btr
 
 
 --
--- TOC entry 4952 (class 1259 OID 84153)
+-- TOC entry 4959 (class 1259 OID 84153)
 -- Name: whatsapp_templates_org_name_lang; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7879,7 +7910,7 @@ CREATE UNIQUE INDEX whatsapp_templates_org_name_lang ON public.whatsapp_template
 
 
 --
--- TOC entry 4916 (class 1259 OID 95326)
+-- TOC entry 4923 (class 1259 OID 95326)
 -- Name: workflow_logs_active_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7887,7 +7918,7 @@ CREATE UNIQUE INDEX workflow_logs_active_unique ON public.workflow_logs USING bt
 
 
 --
--- TOC entry 4811 (class 1259 OID 17484)
+-- TOC entry 4817 (class 1259 OID 17484)
 -- Name: ix_realtime_subscription_entity; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7895,7 +7926,7 @@ CREATE INDEX ix_realtime_subscription_entity ON realtime.subscription USING btre
 
 
 --
--- TOC entry 4923 (class 1259 OID 19020)
+-- TOC entry 4930 (class 1259 OID 19020)
 -- Name: messages_inserted_at_topic_index; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7903,39 +7934,7 @@ CREATE INDEX messages_inserted_at_topic_index ON ONLY realtime.messages USING bt
 
 
 --
--- TOC entry 5048 (class 1259 OID 110959)
--- Name: messages_2026_02_04_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2026_02_04_inserted_at_topic_idx ON realtime.messages_2026_02_04 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- TOC entry 5051 (class 1259 OID 112139)
--- Name: messages_2026_02_05_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2026_02_05_inserted_at_topic_idx ON realtime.messages_2026_02_05 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- TOC entry 5054 (class 1259 OID 113572)
--- Name: messages_2026_02_06_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2026_02_06_inserted_at_topic_idx ON realtime.messages_2026_02_06 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- TOC entry 5057 (class 1259 OID 115565)
--- Name: messages_2026_02_07_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2026_02_07_inserted_at_topic_idx ON realtime.messages_2026_02_07 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- TOC entry 5060 (class 1259 OID 116985)
+-- TOC entry 5055 (class 1259 OID 116985)
 -- Name: messages_2026_02_08_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7943,7 +7942,7 @@ CREATE INDEX messages_2026_02_08_inserted_at_topic_idx ON realtime.messages_2026
 
 
 --
--- TOC entry 5063 (class 1259 OID 118105)
+-- TOC entry 5058 (class 1259 OID 118105)
 -- Name: messages_2026_02_09_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7951,7 +7950,7 @@ CREATE INDEX messages_2026_02_09_inserted_at_topic_idx ON realtime.messages_2026
 
 
 --
--- TOC entry 5066 (class 1259 OID 119228)
+-- TOC entry 5061 (class 1259 OID 119228)
 -- Name: messages_2026_02_10_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7959,7 +7958,7 @@ CREATE INDEX messages_2026_02_10_inserted_at_topic_idx ON realtime.messages_2026
 
 
 --
--- TOC entry 5069 (class 1259 OID 121447)
+-- TOC entry 5064 (class 1259 OID 121447)
 -- Name: messages_2026_02_11_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7967,7 +7966,7 @@ CREATE INDEX messages_2026_02_11_inserted_at_topic_idx ON realtime.messages_2026
 
 
 --
--- TOC entry 5072 (class 1259 OID 121459)
+-- TOC entry 5067 (class 1259 OID 121459)
 -- Name: messages_2026_02_12_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7975,7 +7974,31 @@ CREATE INDEX messages_2026_02_12_inserted_at_topic_idx ON realtime.messages_2026
 
 
 --
--- TOC entry 4814 (class 1259 OID 115554)
+-- TOC entry 5070 (class 1259 OID 122597)
+-- Name: messages_2026_02_13_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2026_02_13_inserted_at_topic_idx ON realtime.messages_2026_02_13 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- TOC entry 5075 (class 1259 OID 123759)
+-- Name: messages_2026_02_14_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2026_02_14_inserted_at_topic_idx ON realtime.messages_2026_02_14 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- TOC entry 5078 (class 1259 OID 124874)
+-- Name: messages_2026_02_15_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2026_02_15_inserted_at_topic_idx ON realtime.messages_2026_02_15 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- TOC entry 4820 (class 1259 OID 115554)
 -- Name: subscription_subscription_id_entity_filters_action_filter_key; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -7983,7 +8006,7 @@ CREATE UNIQUE INDEX subscription_subscription_id_entity_filters_action_filter_ke
 
 
 --
--- TOC entry 4711 (class 1259 OID 16560)
+-- TOC entry 4717 (class 1259 OID 16560)
 -- Name: bname; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -7991,7 +8014,7 @@ CREATE UNIQUE INDEX bname ON storage.buckets USING btree (name);
 
 
 --
--- TOC entry 4714 (class 1259 OID 16582)
+-- TOC entry 4720 (class 1259 OID 16582)
 -- Name: bucketid_objname; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -7999,7 +8022,7 @@ CREATE UNIQUE INDEX bucketid_objname ON storage.objects USING btree (bucket_id, 
 
 
 --
--- TOC entry 4817 (class 1259 OID 17339)
+-- TOC entry 4823 (class 1259 OID 17339)
 -- Name: buckets_analytics_unique_name_idx; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8007,7 +8030,7 @@ CREATE UNIQUE INDEX buckets_analytics_unique_name_idx ON storage.buckets_analyti
 
 
 --
--- TOC entry 4803 (class 1259 OID 17183)
+-- TOC entry 4809 (class 1259 OID 17183)
 -- Name: idx_multipart_uploads_list; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8015,7 +8038,7 @@ CREATE INDEX idx_multipart_uploads_list ON storage.s3_multipart_uploads USING bt
 
 
 --
--- TOC entry 4715 (class 1259 OID 17229)
+-- TOC entry 4721 (class 1259 OID 17229)
 -- Name: idx_name_bucket_level_unique; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8023,7 +8046,7 @@ CREATE UNIQUE INDEX idx_name_bucket_level_unique ON storage.objects USING btree 
 
 
 --
--- TOC entry 4716 (class 1259 OID 17148)
+-- TOC entry 4722 (class 1259 OID 17148)
 -- Name: idx_objects_bucket_id_name; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8031,7 +8054,7 @@ CREATE INDEX idx_objects_bucket_id_name ON storage.objects USING btree (bucket_i
 
 
 --
--- TOC entry 4717 (class 1259 OID 17262)
+-- TOC entry 4723 (class 1259 OID 17262)
 -- Name: idx_objects_lower_name; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8039,7 +8062,7 @@ CREATE INDEX idx_objects_lower_name ON storage.objects USING btree ((path_tokens
 
 
 --
--- TOC entry 4808 (class 1259 OID 17263)
+-- TOC entry 4814 (class 1259 OID 17263)
 -- Name: idx_prefixes_lower_name; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8047,7 +8070,7 @@ CREATE INDEX idx_prefixes_lower_name ON storage.prefixes USING btree (bucket_id,
 
 
 --
--- TOC entry 4718 (class 1259 OID 16583)
+-- TOC entry 4724 (class 1259 OID 16583)
 -- Name: name_prefix_search; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8055,7 +8078,7 @@ CREATE INDEX name_prefix_search ON storage.objects USING btree (name text_patter
 
 
 --
--- TOC entry 4719 (class 1259 OID 17259)
+-- TOC entry 4725 (class 1259 OID 17259)
 -- Name: objects_bucket_id_level_idx; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8063,7 +8086,7 @@ CREATE UNIQUE INDEX objects_bucket_id_level_idx ON storage.objects USING btree (
 
 
 --
--- TOC entry 4820 (class 1259 OID 17330)
+-- TOC entry 4826 (class 1259 OID 17330)
 -- Name: vector_indexes_name_bucket_id_idx; Type: INDEX; Schema: storage; Owner: -
 --
 
@@ -8071,7 +8094,7 @@ CREATE UNIQUE INDEX vector_indexes_name_bucket_id_idx ON storage.vector_indexes 
 
 
 --
--- TOC entry 4928 (class 1259 OID 19028)
+-- TOC entry 4935 (class 1259 OID 19028)
 -- Name: supabase_functions_hooks_h_table_id_h_name_idx; Type: INDEX; Schema: supabase_functions; Owner: -
 --
 
@@ -8079,7 +8102,7 @@ CREATE INDEX supabase_functions_hooks_h_table_id_h_name_idx ON supabase_function
 
 
 --
--- TOC entry 4929 (class 1259 OID 19029)
+-- TOC entry 4936 (class 1259 OID 19029)
 -- Name: supabase_functions_hooks_request_id_idx; Type: INDEX; Schema: supabase_functions; Owner: -
 --
 
@@ -8087,71 +8110,7 @@ CREATE INDEX supabase_functions_hooks_request_id_idx ON supabase_functions.hooks
 
 
 --
--- TOC entry 5075 (class 0 OID 0)
--- Name: messages_2026_02_04_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2026_02_04_inserted_at_topic_idx;
-
-
---
--- TOC entry 5076 (class 0 OID 0)
--- Name: messages_2026_02_04_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_04_pkey;
-
-
---
--- TOC entry 5077 (class 0 OID 0)
--- Name: messages_2026_02_05_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2026_02_05_inserted_at_topic_idx;
-
-
---
--- TOC entry 5078 (class 0 OID 0)
--- Name: messages_2026_02_05_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_05_pkey;
-
-
---
--- TOC entry 5079 (class 0 OID 0)
--- Name: messages_2026_02_06_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2026_02_06_inserted_at_topic_idx;
-
-
---
--- TOC entry 5080 (class 0 OID 0)
--- Name: messages_2026_02_06_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_06_pkey;
-
-
---
 -- TOC entry 5081 (class 0 OID 0)
--- Name: messages_2026_02_07_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2026_02_07_inserted_at_topic_idx;
-
-
---
--- TOC entry 5082 (class 0 OID 0)
--- Name: messages_2026_02_07_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_07_pkey;
-
-
---
--- TOC entry 5083 (class 0 OID 0)
 -- Name: messages_2026_02_08_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8159,7 +8118,7 @@ ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.
 
 
 --
--- TOC entry 5084 (class 0 OID 0)
+-- TOC entry 5082 (class 0 OID 0)
 -- Name: messages_2026_02_08_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8167,7 +8126,7 @@ ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_08
 
 
 --
--- TOC entry 5085 (class 0 OID 0)
+-- TOC entry 5083 (class 0 OID 0)
 -- Name: messages_2026_02_09_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8175,7 +8134,7 @@ ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.
 
 
 --
--- TOC entry 5086 (class 0 OID 0)
+-- TOC entry 5084 (class 0 OID 0)
 -- Name: messages_2026_02_09_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8183,7 +8142,7 @@ ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_09
 
 
 --
--- TOC entry 5087 (class 0 OID 0)
+-- TOC entry 5085 (class 0 OID 0)
 -- Name: messages_2026_02_10_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8191,7 +8150,7 @@ ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.
 
 
 --
--- TOC entry 5088 (class 0 OID 0)
+-- TOC entry 5086 (class 0 OID 0)
 -- Name: messages_2026_02_10_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8199,7 +8158,7 @@ ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_10
 
 
 --
--- TOC entry 5089 (class 0 OID 0)
+-- TOC entry 5087 (class 0 OID 0)
 -- Name: messages_2026_02_11_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8207,7 +8166,7 @@ ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.
 
 
 --
--- TOC entry 5090 (class 0 OID 0)
+-- TOC entry 5088 (class 0 OID 0)
 -- Name: messages_2026_02_11_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8215,7 +8174,7 @@ ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_11
 
 
 --
--- TOC entry 5091 (class 0 OID 0)
+-- TOC entry 5089 (class 0 OID 0)
 -- Name: messages_2026_02_12_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8223,7 +8182,7 @@ ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.
 
 
 --
--- TOC entry 5092 (class 0 OID 0)
+-- TOC entry 5090 (class 0 OID 0)
 -- Name: messages_2026_02_12_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -8231,7 +8190,55 @@ ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_12
 
 
 --
--- TOC entry 5182 (class 2620 OID 77719)
+-- TOC entry 5091 (class 0 OID 0)
+-- Name: messages_2026_02_13_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2026_02_13_inserted_at_topic_idx;
+
+
+--
+-- TOC entry 5092 (class 0 OID 0)
+-- Name: messages_2026_02_13_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_13_pkey;
+
+
+--
+-- TOC entry 5093 (class 0 OID 0)
+-- Name: messages_2026_02_14_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2026_02_14_inserted_at_topic_idx;
+
+
+--
+-- TOC entry 5094 (class 0 OID 0)
+-- Name: messages_2026_02_14_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_14_pkey;
+
+
+--
+-- TOC entry 5095 (class 0 OID 0)
+-- Name: messages_2026_02_15_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2026_02_15_inserted_at_topic_idx;
+
+
+--
+-- TOC entry 5096 (class 0 OID 0)
+-- Name: messages_2026_02_15_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2026_02_15_pkey;
+
+
+--
+-- TOC entry 5189 (class 2620 OID 77719)
 -- Name: campaign_messages trg_create_psf_case; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8239,7 +8246,7 @@ CREATE TRIGGER trg_create_psf_case AFTER INSERT ON public.campaign_messages FOR 
 
 
 --
--- TOC entry 5183 (class 2620 OID 96462)
+-- TOC entry 5190 (class 2620 OID 96462)
 -- Name: messages trg_messages_recompute_conversation_last_message_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8247,7 +8254,7 @@ CREATE TRIGGER trg_messages_recompute_conversation_last_message_at AFTER DELETE 
 
 
 --
--- TOC entry 5184 (class 2620 OID 92848)
+-- TOC entry 5191 (class 2620 OID 92848)
 -- Name: messages trg_messages_set_order_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8255,7 +8262,7 @@ CREATE TRIGGER trg_messages_set_order_at BEFORE INSERT OR UPDATE OF wa_received_
 
 
 --
--- TOC entry 5185 (class 2620 OID 96461)
+-- TOC entry 5192 (class 2620 OID 96461)
 -- Name: messages trg_messages_touch_conversation_last_message_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8263,7 +8270,7 @@ CREATE TRIGGER trg_messages_touch_conversation_last_message_at AFTER INSERT OR U
 
 
 --
--- TOC entry 5187 (class 2620 OID 63898)
+-- TOC entry 5194 (class 2620 OID 63898)
 -- Name: organizations trg_phase5_create_wallet_for_org; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8271,7 +8278,7 @@ CREATE TRIGGER trg_phase5_create_wallet_for_org AFTER INSERT ON public.organizat
 
 
 --
--- TOC entry 5189 (class 2620 OID 63902)
+-- TOC entry 5196 (class 2620 OID 63902)
 -- Name: wallet_transactions trg_phase5_wallet_apply_transaction; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8279,7 +8286,7 @@ CREATE TRIGGER trg_phase5_wallet_apply_transaction AFTER INSERT ON public.wallet
 
 
 --
--- TOC entry 5190 (class 2620 OID 63900)
+-- TOC entry 5197 (class 2620 OID 63900)
 -- Name: wallet_transactions trg_phase5_wallet_prevent_negative_balance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8287,7 +8294,7 @@ CREATE TRIGGER trg_phase5_wallet_prevent_negative_balance BEFORE INSERT ON publi
 
 
 --
--- TOC entry 5192 (class 2620 OID 79076)
+-- TOC entry 5199 (class 2620 OID 79076)
 -- Name: psf_cases trg_psf_cases_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8295,7 +8302,7 @@ CREATE TRIGGER trg_psf_cases_updated_at BEFORE UPDATE ON public.psf_cases FOR EA
 
 
 --
--- TOC entry 5191 (class 2620 OID 74264)
+-- TOC entry 5198 (class 2620 OID 74264)
 -- Name: razorpay_orders trg_razorpay_orders_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8303,7 +8310,15 @@ CREATE TRIGGER trg_razorpay_orders_updated_at BEFORE UPDATE ON public.razorpay_o
 
 
 --
--- TOC entry 5186 (class 2620 OID 92839)
+-- TOC entry 5200 (class 2620 OID 122640)
+-- Name: service_tickets trg_service_tickets_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_service_tickets_updated_at BEFORE UPDATE ON public.service_tickets FOR EACH ROW EXECUTE FUNCTION public.set_service_tickets_updated_at();
+
+
+--
+-- TOC entry 5193 (class 2620 OID 92839)
 -- Name: messages trg_set_message_organization_id; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8311,7 +8326,7 @@ CREATE TRIGGER trg_set_message_organization_id BEFORE INSERT OR UPDATE OF conver
 
 
 --
--- TOC entry 5188 (class 2620 OID 74275)
+-- TOC entry 5195 (class 2620 OID 74275)
 -- Name: unanswered_questions trg_unanswered_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8319,7 +8334,7 @@ CREATE TRIGGER trg_unanswered_updated_at BEFORE UPDATE ON public.unanswered_ques
 
 
 --
--- TOC entry 5181 (class 2620 OID 19030)
+-- TOC entry 5188 (class 2620 OID 19030)
 -- Name: subscription tr_check_filters; Type: TRIGGER; Schema: realtime; Owner: -
 --
 
@@ -8327,7 +8342,7 @@ CREATE TRIGGER tr_check_filters BEFORE INSERT OR UPDATE ON realtime.subscription
 
 
 --
--- TOC entry 5174 (class 2620 OID 19031)
+-- TOC entry 5181 (class 2620 OID 19031)
 -- Name: buckets enforce_bucket_name_length_trigger; Type: TRIGGER; Schema: storage; Owner: -
 --
 
@@ -8335,7 +8350,7 @@ CREATE TRIGGER enforce_bucket_name_length_trigger BEFORE INSERT OR UPDATE OF nam
 
 
 --
--- TOC entry 5175 (class 2620 OID 19032)
+-- TOC entry 5182 (class 2620 OID 19032)
 -- Name: objects objects_delete_delete_prefix; Type: TRIGGER; Schema: storage; Owner: -
 --
 
@@ -8343,7 +8358,7 @@ CREATE TRIGGER objects_delete_delete_prefix AFTER DELETE ON storage.objects FOR 
 
 
 --
--- TOC entry 5176 (class 2620 OID 19033)
+-- TOC entry 5183 (class 2620 OID 19033)
 -- Name: objects objects_insert_create_prefix; Type: TRIGGER; Schema: storage; Owner: -
 --
 
@@ -8351,7 +8366,7 @@ CREATE TRIGGER objects_insert_create_prefix BEFORE INSERT ON storage.objects FOR
 
 
 --
--- TOC entry 5177 (class 2620 OID 19034)
+-- TOC entry 5184 (class 2620 OID 19034)
 -- Name: objects objects_update_create_prefix; Type: TRIGGER; Schema: storage; Owner: -
 --
 
@@ -8359,7 +8374,7 @@ CREATE TRIGGER objects_update_create_prefix BEFORE UPDATE ON storage.objects FOR
 
 
 --
--- TOC entry 5179 (class 2620 OID 19035)
+-- TOC entry 5186 (class 2620 OID 19035)
 -- Name: prefixes prefixes_create_hierarchy; Type: TRIGGER; Schema: storage; Owner: -
 --
 
@@ -8367,7 +8382,7 @@ CREATE TRIGGER prefixes_create_hierarchy BEFORE INSERT ON storage.prefixes FOR E
 
 
 --
--- TOC entry 5180 (class 2620 OID 19036)
+-- TOC entry 5187 (class 2620 OID 19036)
 -- Name: prefixes prefixes_delete_hierarchy; Type: TRIGGER; Schema: storage; Owner: -
 --
 
@@ -8375,7 +8390,7 @@ CREATE TRIGGER prefixes_delete_hierarchy AFTER DELETE ON storage.prefixes FOR EA
 
 
 --
--- TOC entry 5178 (class 2620 OID 19037)
+-- TOC entry 5185 (class 2620 OID 19037)
 -- Name: objects update_objects_updated_at; Type: TRIGGER; Schema: storage; Owner: -
 --
 
@@ -8383,7 +8398,7 @@ CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EA
 
 
 --
--- TOC entry 5115 (class 2606 OID 19038)
+-- TOC entry 5119 (class 2606 OID 19038)
 -- Name: extensions extensions_tenant_external_id_fkey; Type: FK CONSTRAINT; Schema: _realtime; Owner: -
 --
 
@@ -8392,7 +8407,7 @@ ALTER TABLE ONLY _realtime.extensions
 
 
 --
--- TOC entry 5095 (class 2606 OID 16734)
+-- TOC entry 5099 (class 2606 OID 16734)
 -- Name: identities identities_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8401,7 +8416,7 @@ ALTER TABLE ONLY auth.identities
 
 
 --
--- TOC entry 5100 (class 2606 OID 16823)
+-- TOC entry 5104 (class 2606 OID 16823)
 -- Name: mfa_amr_claims mfa_amr_claims_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8410,7 +8425,7 @@ ALTER TABLE ONLY auth.mfa_amr_claims
 
 
 --
--- TOC entry 5099 (class 2606 OID 16811)
+-- TOC entry 5103 (class 2606 OID 16811)
 -- Name: mfa_challenges mfa_challenges_auth_factor_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8419,7 +8434,7 @@ ALTER TABLE ONLY auth.mfa_challenges
 
 
 --
--- TOC entry 5098 (class 2606 OID 16798)
+-- TOC entry 5102 (class 2606 OID 16798)
 -- Name: mfa_factors mfa_factors_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8428,7 +8443,7 @@ ALTER TABLE ONLY auth.mfa_factors
 
 
 --
--- TOC entry 5106 (class 2606 OID 17063)
+-- TOC entry 5110 (class 2606 OID 17063)
 -- Name: oauth_authorizations oauth_authorizations_client_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8437,7 +8452,7 @@ ALTER TABLE ONLY auth.oauth_authorizations
 
 
 --
--- TOC entry 5107 (class 2606 OID 17068)
+-- TOC entry 5111 (class 2606 OID 17068)
 -- Name: oauth_authorizations oauth_authorizations_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8446,7 +8461,7 @@ ALTER TABLE ONLY auth.oauth_authorizations
 
 
 --
--- TOC entry 5108 (class 2606 OID 17092)
+-- TOC entry 5112 (class 2606 OID 17092)
 -- Name: oauth_consents oauth_consents_client_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8455,7 +8470,7 @@ ALTER TABLE ONLY auth.oauth_consents
 
 
 --
--- TOC entry 5109 (class 2606 OID 17087)
+-- TOC entry 5113 (class 2606 OID 17087)
 -- Name: oauth_consents oauth_consents_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8464,7 +8479,7 @@ ALTER TABLE ONLY auth.oauth_consents
 
 
 --
--- TOC entry 5105 (class 2606 OID 16989)
+-- TOC entry 5109 (class 2606 OID 16989)
 -- Name: one_time_tokens one_time_tokens_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8473,7 +8488,7 @@ ALTER TABLE ONLY auth.one_time_tokens
 
 
 --
--- TOC entry 5093 (class 2606 OID 16767)
+-- TOC entry 5097 (class 2606 OID 16767)
 -- Name: refresh_tokens refresh_tokens_session_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8482,7 +8497,7 @@ ALTER TABLE ONLY auth.refresh_tokens
 
 
 --
--- TOC entry 5102 (class 2606 OID 16870)
+-- TOC entry 5106 (class 2606 OID 16870)
 -- Name: saml_providers saml_providers_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8491,7 +8506,7 @@ ALTER TABLE ONLY auth.saml_providers
 
 
 --
--- TOC entry 5103 (class 2606 OID 16943)
+-- TOC entry 5107 (class 2606 OID 16943)
 -- Name: saml_relay_states saml_relay_states_flow_state_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8500,7 +8515,7 @@ ALTER TABLE ONLY auth.saml_relay_states
 
 
 --
--- TOC entry 5104 (class 2606 OID 16884)
+-- TOC entry 5108 (class 2606 OID 16884)
 -- Name: saml_relay_states saml_relay_states_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8509,7 +8524,7 @@ ALTER TABLE ONLY auth.saml_relay_states
 
 
 --
--- TOC entry 5096 (class 2606 OID 17106)
+-- TOC entry 5100 (class 2606 OID 17106)
 -- Name: sessions sessions_oauth_client_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8518,7 +8533,7 @@ ALTER TABLE ONLY auth.sessions
 
 
 --
--- TOC entry 5097 (class 2606 OID 16762)
+-- TOC entry 5101 (class 2606 OID 16762)
 -- Name: sessions sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8527,7 +8542,7 @@ ALTER TABLE ONLY auth.sessions
 
 
 --
--- TOC entry 5101 (class 2606 OID 16851)
+-- TOC entry 5105 (class 2606 OID 16851)
 -- Name: sso_domains sso_domains_sso_provider_id_fkey; Type: FK CONSTRAINT; Schema: auth; Owner: -
 --
 
@@ -8536,7 +8551,7 @@ ALTER TABLE ONLY auth.sso_domains
 
 
 --
--- TOC entry 5170 (class 2606 OID 94101)
+-- TOC entry 5174 (class 2606 OID 94101)
 -- Name: ai_embeddings_cache ai_embeddings_cache_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8545,7 +8560,7 @@ ALTER TABLE ONLY public.ai_embeddings_cache
 
 
 --
--- TOC entry 5172 (class 2606 OID 94129)
+-- TOC entry 5176 (class 2606 OID 94129)
 -- Name: ai_org_rate_limit_usage ai_org_rate_limit_usage_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8554,7 +8569,7 @@ ALTER TABLE ONLY public.ai_org_rate_limit_usage
 
 
 --
--- TOC entry 5171 (class 2606 OID 94117)
+-- TOC entry 5175 (class 2606 OID 94117)
 -- Name: ai_org_rate_limits ai_org_rate_limits_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8563,7 +8578,7 @@ ALTER TABLE ONLY public.ai_org_rate_limits
 
 
 --
--- TOC entry 5144 (class 2606 OID 63790)
+-- TOC entry 5148 (class 2606 OID 63790)
 -- Name: ai_settings ai_settings_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8572,7 +8587,7 @@ ALTER TABLE ONLY public.ai_settings
 
 
 --
--- TOC entry 5161 (class 2606 OID 93995)
+-- TOC entry 5165 (class 2606 OID 93995)
 -- Name: ai_turn_traces ai_turn_traces_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8581,7 +8596,7 @@ ALTER TABLE ONLY public.ai_turn_traces
 
 
 --
--- TOC entry 5162 (class 2606 OID 94000)
+-- TOC entry 5166 (class 2606 OID 94000)
 -- Name: ai_turn_traces ai_turn_traces_input_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8590,7 +8605,7 @@ ALTER TABLE ONLY public.ai_turn_traces
 
 
 --
--- TOC entry 5163 (class 2606 OID 93990)
+-- TOC entry 5167 (class 2606 OID 93990)
 -- Name: ai_turn_traces ai_turn_traces_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8599,7 +8614,7 @@ ALTER TABLE ONLY public.ai_turn_traces
 
 
 --
--- TOC entry 5164 (class 2606 OID 94005)
+-- TOC entry 5168 (class 2606 OID 94005)
 -- Name: ai_turn_traces ai_turn_traces_output_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8608,7 +8623,7 @@ ALTER TABLE ONLY public.ai_turn_traces
 
 
 --
--- TOC entry 5165 (class 2606 OID 94010)
+-- TOC entry 5169 (class 2606 OID 94010)
 -- Name: ai_turn_traces ai_turn_traces_workflow_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8617,7 +8632,7 @@ ALTER TABLE ONLY public.ai_turn_traces
 
 
 --
--- TOC entry 5145 (class 2606 OID 63827)
+-- TOC entry 5149 (class 2606 OID 63827)
 -- Name: ai_usage_logs ai_usage_logs_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8626,7 +8641,7 @@ ALTER TABLE ONLY public.ai_usage_logs
 
 
 --
--- TOC entry 5146 (class 2606 OID 63832)
+-- TOC entry 5150 (class 2606 OID 63832)
 -- Name: ai_usage_logs ai_usage_logs_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8635,7 +8650,7 @@ ALTER TABLE ONLY public.ai_usage_logs
 
 
 --
--- TOC entry 5147 (class 2606 OID 63817)
+-- TOC entry 5151 (class 2606 OID 63817)
 -- Name: ai_usage_logs ai_usage_logs_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8644,7 +8659,7 @@ ALTER TABLE ONLY public.ai_usage_logs
 
 
 --
--- TOC entry 5148 (class 2606 OID 63891)
+-- TOC entry 5152 (class 2606 OID 63891)
 -- Name: ai_usage_logs ai_usage_logs_wallet_transaction_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8653,7 +8668,7 @@ ALTER TABLE ONLY public.ai_usage_logs
 
 
 --
--- TOC entry 5173 (class 2606 OID 94153)
+-- TOC entry 5177 (class 2606 OID 94153)
 -- Name: background_jobs background_jobs_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8662,7 +8677,7 @@ ALTER TABLE ONLY public.background_jobs
 
 
 --
--- TOC entry 5116 (class 2606 OID 19043)
+-- TOC entry 5120 (class 2606 OID 19043)
 -- Name: bot_instructions bot_instructions_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8671,7 +8686,7 @@ ALTER TABLE ONLY public.bot_instructions
 
 
 --
--- TOC entry 5117 (class 2606 OID 19048)
+-- TOC entry 5121 (class 2606 OID 19048)
 -- Name: bot_personality bot_personality_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8680,7 +8695,7 @@ ALTER TABLE ONLY public.bot_personality
 
 
 --
--- TOC entry 5118 (class 2606 OID 19053)
+-- TOC entry 5122 (class 2606 OID 19053)
 -- Name: campaign_messages campaign_messages_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8689,7 +8704,7 @@ ALTER TABLE ONLY public.campaign_messages
 
 
 --
--- TOC entry 5119 (class 2606 OID 19058)
+-- TOC entry 5123 (class 2606 OID 19058)
 -- Name: campaign_messages campaign_messages_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8698,7 +8713,7 @@ ALTER TABLE ONLY public.campaign_messages
 
 
 --
--- TOC entry 5120 (class 2606 OID 19063)
+-- TOC entry 5124 (class 2606 OID 19063)
 -- Name: campaign_messages campaign_messages_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8707,7 +8722,7 @@ ALTER TABLE ONLY public.campaign_messages
 
 
 --
--- TOC entry 5121 (class 2606 OID 19068)
+-- TOC entry 5125 (class 2606 OID 19068)
 -- Name: campaigns campaigns_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8716,7 +8731,7 @@ ALTER TABLE ONLY public.campaigns
 
 
 --
--- TOC entry 5122 (class 2606 OID 77666)
+-- TOC entry 5126 (class 2606 OID 77666)
 -- Name: campaigns campaigns_parent_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8725,7 +8740,7 @@ ALTER TABLE ONLY public.campaigns
 
 
 --
--- TOC entry 5123 (class 2606 OID 59225)
+-- TOC entry 5127 (class 2606 OID 59225)
 -- Name: campaigns campaigns_whatsapp_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8734,7 +8749,7 @@ ALTER TABLE ONLY public.campaigns
 
 
 --
--- TOC entry 5124 (class 2606 OID 19073)
+-- TOC entry 5128 (class 2606 OID 19073)
 -- Name: contacts contacts_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8743,7 +8758,7 @@ ALTER TABLE ONLY public.contacts
 
 
 --
--- TOC entry 5125 (class 2606 OID 19078)
+-- TOC entry 5129 (class 2606 OID 19078)
 -- Name: conversations conversations_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8752,7 +8767,7 @@ ALTER TABLE ONLY public.conversations
 
 
 --
--- TOC entry 5126 (class 2606 OID 19083)
+-- TOC entry 5130 (class 2606 OID 19083)
 -- Name: conversations conversations_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8761,7 +8776,7 @@ ALTER TABLE ONLY public.conversations
 
 
 --
--- TOC entry 5127 (class 2606 OID 19088)
+-- TOC entry 5131 (class 2606 OID 19088)
 -- Name: knowledge_articles knowledge_articles_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8770,7 +8785,7 @@ ALTER TABLE ONLY public.knowledge_articles
 
 
 --
--- TOC entry 5140 (class 2606 OID 42862)
+-- TOC entry 5144 (class 2606 OID 42862)
 -- Name: knowledge_chunks knowledge_chunks_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8779,7 +8794,7 @@ ALTER TABLE ONLY public.knowledge_chunks
 
 
 --
--- TOC entry 5141 (class 2606 OID 89952)
+-- TOC entry 5145 (class 2606 OID 89952)
 -- Name: knowledge_chunks knowledge_chunks_org_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8788,7 +8803,7 @@ ALTER TABLE ONLY public.knowledge_chunks
 
 
 --
--- TOC entry 5160 (class 2606 OID 92865)
+-- TOC entry 5164 (class 2606 OID 92865)
 -- Name: message_delivery_dlq message_delivery_dlq_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8797,7 +8812,7 @@ ALTER TABLE ONLY public.message_delivery_dlq
 
 
 --
--- TOC entry 5166 (class 2606 OID 94039)
+-- TOC entry 5170 (class 2606 OID 94039)
 -- Name: message_delivery_events message_delivery_events_campaign_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8806,7 +8821,7 @@ ALTER TABLE ONLY public.message_delivery_events
 
 
 --
--- TOC entry 5167 (class 2606 OID 94034)
+-- TOC entry 5171 (class 2606 OID 94034)
 -- Name: message_delivery_events message_delivery_events_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8815,7 +8830,7 @@ ALTER TABLE ONLY public.message_delivery_events
 
 
 --
--- TOC entry 5168 (class 2606 OID 94029)
+-- TOC entry 5172 (class 2606 OID 94029)
 -- Name: message_delivery_events message_delivery_events_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8824,7 +8839,7 @@ ALTER TABLE ONLY public.message_delivery_events
 
 
 --
--- TOC entry 5128 (class 2606 OID 77671)
+-- TOC entry 5132 (class 2606 OID 77671)
 -- Name: messages messages_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8833,7 +8848,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- TOC entry 5129 (class 2606 OID 19093)
+-- TOC entry 5133 (class 2606 OID 19093)
 -- Name: messages messages_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8842,7 +8857,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- TOC entry 5130 (class 2606 OID 92832)
+-- TOC entry 5134 (class 2606 OID 92832)
 -- Name: messages messages_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8851,7 +8866,7 @@ ALTER TABLE ONLY public.messages
 
 
 --
--- TOC entry 5131 (class 2606 OID 19098)
+-- TOC entry 5135 (class 2606 OID 19098)
 -- Name: organization_users organization_users_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8860,7 +8875,7 @@ ALTER TABLE ONLY public.organization_users
 
 
 --
--- TOC entry 5157 (class 2606 OID 77703)
+-- TOC entry 5161 (class 2606 OID 77703)
 -- Name: psf_cases psf_cases_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8869,7 +8884,7 @@ ALTER TABLE ONLY public.psf_cases
 
 
 --
--- TOC entry 5158 (class 2606 OID 77708)
+-- TOC entry 5162 (class 2606 OID 77708)
 -- Name: psf_cases psf_cases_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8878,7 +8893,7 @@ ALTER TABLE ONLY public.psf_cases
 
 
 --
--- TOC entry 5159 (class 2606 OID 77693)
+-- TOC entry 5163 (class 2606 OID 77693)
 -- Name: psf_cases psf_cases_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8887,7 +8902,7 @@ ALTER TABLE ONLY public.psf_cases
 
 
 --
--- TOC entry 5153 (class 2606 OID 74221)
+-- TOC entry 5157 (class 2606 OID 74221)
 -- Name: razorpay_orders razorpay_orders_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8896,7 +8911,7 @@ ALTER TABLE ONLY public.razorpay_orders
 
 
 --
--- TOC entry 5154 (class 2606 OID 74226)
+-- TOC entry 5158 (class 2606 OID 74226)
 -- Name: razorpay_orders razorpay_orders_wallet_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8905,7 +8920,7 @@ ALTER TABLE ONLY public.razorpay_orders
 
 
 --
--- TOC entry 5155 (class 2606 OID 74248)
+-- TOC entry 5159 (class 2606 OID 74248)
 -- Name: razorpay_payments razorpay_payments_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8914,7 +8929,7 @@ ALTER TABLE ONLY public.razorpay_payments
 
 
 --
--- TOC entry 5156 (class 2606 OID 74253)
+-- TOC entry 5160 (class 2606 OID 74253)
 -- Name: razorpay_payments razorpay_payments_wallet_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8923,7 +8938,7 @@ ALTER TABLE ONLY public.razorpay_payments
 
 
 --
--- TOC entry 5169 (class 2606 OID 94061)
+-- TOC entry 5173 (class 2606 OID 94061)
 -- Name: replay_requests replay_requests_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8932,7 +8947,34 @@ ALTER TABLE ONLY public.replay_requests
 
 
 --
--- TOC entry 5132 (class 2606 OID 19103)
+-- TOC entry 5178 (class 2606 OID 122634)
+-- Name: service_tickets service_tickets_contact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.service_tickets
+    ADD CONSTRAINT service_tickets_contact_id_fkey FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE SET NULL;
+
+
+--
+-- TOC entry 5179 (class 2606 OID 122629)
+-- Name: service_tickets service_tickets_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.service_tickets
+    ADD CONSTRAINT service_tickets_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES public.conversations(id) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5180 (class 2606 OID 122624)
+-- Name: service_tickets service_tickets_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.service_tickets
+    ADD CONSTRAINT service_tickets_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+
+
+--
+-- TOC entry 5136 (class 2606 OID 19103)
 -- Name: unanswered_questions unanswered_questions_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8941,7 +8983,7 @@ ALTER TABLE ONLY public.unanswered_questions
 
 
 --
--- TOC entry 5151 (class 2606 OID 63922)
+-- TOC entry 5155 (class 2606 OID 63922)
 -- Name: wallet_alert_logs wallet_alert_logs_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8950,7 +8992,7 @@ ALTER TABLE ONLY public.wallet_alert_logs
 
 
 --
--- TOC entry 5152 (class 2606 OID 63927)
+-- TOC entry 5156 (class 2606 OID 63927)
 -- Name: wallet_alert_logs wallet_alert_logs_wallet_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8959,7 +9001,7 @@ ALTER TABLE ONLY public.wallet_alert_logs
 
 
 --
--- TOC entry 5150 (class 2606 OID 63883)
+-- TOC entry 5154 (class 2606 OID 63883)
 -- Name: wallet_transactions wallet_transactions_wallet_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8968,7 +9010,7 @@ ALTER TABLE ONLY public.wallet_transactions
 
 
 --
--- TOC entry 5149 (class 2606 OID 63862)
+-- TOC entry 5153 (class 2606 OID 63862)
 -- Name: wallets wallets_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8977,7 +9019,7 @@ ALTER TABLE ONLY public.wallets
 
 
 --
--- TOC entry 5142 (class 2606 OID 80214)
+-- TOC entry 5146 (class 2606 OID 80214)
 -- Name: whatsapp_bulk_logs whatsapp_bulk_logs_org_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8986,7 +9028,7 @@ ALTER TABLE ONLY public.whatsapp_bulk_logs
 
 
 --
--- TOC entry 5133 (class 2606 OID 19108)
+-- TOC entry 5137 (class 2606 OID 19108)
 -- Name: whatsapp_settings whatsapp_settings_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8995,7 +9037,7 @@ ALTER TABLE ONLY public.whatsapp_settings
 
 
 --
--- TOC entry 5143 (class 2606 OID 59196)
+-- TOC entry 5147 (class 2606 OID 59196)
 -- Name: whatsapp_templates whatsapp_templates_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9004,7 +9046,7 @@ ALTER TABLE ONLY public.whatsapp_templates
 
 
 --
--- TOC entry 5134 (class 2606 OID 19113)
+-- TOC entry 5138 (class 2606 OID 19113)
 -- Name: workflow_logs workflow_logs_conversation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9013,7 +9055,7 @@ ALTER TABLE ONLY public.workflow_logs
 
 
 --
--- TOC entry 5135 (class 2606 OID 92840)
+-- TOC entry 5139 (class 2606 OID 92840)
 -- Name: workflow_logs workflow_logs_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9022,7 +9064,7 @@ ALTER TABLE ONLY public.workflow_logs
 
 
 --
--- TOC entry 5136 (class 2606 OID 19118)
+-- TOC entry 5140 (class 2606 OID 19118)
 -- Name: workflow_logs workflow_logs_step_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9031,7 +9073,7 @@ ALTER TABLE ONLY public.workflow_logs
 
 
 --
--- TOC entry 5137 (class 2606 OID 19123)
+-- TOC entry 5141 (class 2606 OID 19123)
 -- Name: workflow_logs workflow_logs_workflow_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9040,7 +9082,7 @@ ALTER TABLE ONLY public.workflow_logs
 
 
 --
--- TOC entry 5138 (class 2606 OID 19128)
+-- TOC entry 5142 (class 2606 OID 19128)
 -- Name: workflow_steps workflow_steps_workflow_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9049,7 +9091,7 @@ ALTER TABLE ONLY public.workflow_steps
 
 
 --
--- TOC entry 5139 (class 2606 OID 19133)
+-- TOC entry 5143 (class 2606 OID 19133)
 -- Name: workflows workflows_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9058,7 +9100,7 @@ ALTER TABLE ONLY public.workflows
 
 
 --
--- TOC entry 5094 (class 2606 OID 16572)
+-- TOC entry 5098 (class 2606 OID 16572)
 -- Name: objects objects_bucketId_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -9067,7 +9109,7 @@ ALTER TABLE ONLY storage.objects
 
 
 --
--- TOC entry 5113 (class 2606 OID 17212)
+-- TOC entry 5117 (class 2606 OID 17212)
 -- Name: prefixes prefixes_bucketId_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -9076,7 +9118,7 @@ ALTER TABLE ONLY storage.prefixes
 
 
 --
--- TOC entry 5110 (class 2606 OID 17158)
+-- TOC entry 5114 (class 2606 OID 17158)
 -- Name: s3_multipart_uploads s3_multipart_uploads_bucket_id_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -9085,7 +9127,7 @@ ALTER TABLE ONLY storage.s3_multipart_uploads
 
 
 --
--- TOC entry 5111 (class 2606 OID 17178)
+-- TOC entry 5115 (class 2606 OID 17178)
 -- Name: s3_multipart_uploads_parts s3_multipart_uploads_parts_bucket_id_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -9094,7 +9136,7 @@ ALTER TABLE ONLY storage.s3_multipart_uploads_parts
 
 
 --
--- TOC entry 5112 (class 2606 OID 17173)
+-- TOC entry 5116 (class 2606 OID 17173)
 -- Name: s3_multipart_uploads_parts s3_multipart_uploads_parts_upload_id_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -9103,7 +9145,7 @@ ALTER TABLE ONLY storage.s3_multipart_uploads_parts
 
 
 --
--- TOC entry 5114 (class 2606 OID 17325)
+-- TOC entry 5118 (class 2606 OID 17325)
 -- Name: vector_indexes vector_indexes_bucket_id_fkey; Type: FK CONSTRAINT; Schema: storage; Owner: -
 --
 
@@ -9112,7 +9154,7 @@ ALTER TABLE ONLY storage.vector_indexes
 
 
 --
--- TOC entry 5356 (class 0 OID 16525)
+-- TOC entry 5364 (class 0 OID 16525)
 -- Dependencies: 362
 -- Name: audit_log_entries; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9120,7 +9162,7 @@ ALTER TABLE ONLY storage.vector_indexes
 ALTER TABLE auth.audit_log_entries ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5370 (class 0 OID 16929)
+-- TOC entry 5378 (class 0 OID 16929)
 -- Dependencies: 379
 -- Name: flow_state; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9128,7 +9170,7 @@ ALTER TABLE auth.audit_log_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.flow_state ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5361 (class 0 OID 16727)
+-- TOC entry 5369 (class 0 OID 16727)
 -- Dependencies: 370
 -- Name: identities; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9136,7 +9178,7 @@ ALTER TABLE auth.flow_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.identities ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5355 (class 0 OID 16518)
+-- TOC entry 5363 (class 0 OID 16518)
 -- Dependencies: 361
 -- Name: instances; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9144,7 +9186,7 @@ ALTER TABLE auth.identities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.instances ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5365 (class 0 OID 16816)
+-- TOC entry 5373 (class 0 OID 16816)
 -- Dependencies: 374
 -- Name: mfa_amr_claims; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9152,7 +9194,7 @@ ALTER TABLE auth.instances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.mfa_amr_claims ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5364 (class 0 OID 16804)
+-- TOC entry 5372 (class 0 OID 16804)
 -- Dependencies: 373
 -- Name: mfa_challenges; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9160,7 +9202,7 @@ ALTER TABLE auth.mfa_amr_claims ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.mfa_challenges ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5363 (class 0 OID 16791)
+-- TOC entry 5371 (class 0 OID 16791)
 -- Dependencies: 372
 -- Name: mfa_factors; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9168,7 +9210,7 @@ ALTER TABLE auth.mfa_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.mfa_factors ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5371 (class 0 OID 16979)
+-- TOC entry 5379 (class 0 OID 16979)
 -- Dependencies: 380
 -- Name: one_time_tokens; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9176,7 +9218,7 @@ ALTER TABLE auth.mfa_factors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.one_time_tokens ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5354 (class 0 OID 16507)
+-- TOC entry 5362 (class 0 OID 16507)
 -- Dependencies: 360
 -- Name: refresh_tokens; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9184,7 +9226,7 @@ ALTER TABLE auth.one_time_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.refresh_tokens ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5368 (class 0 OID 16858)
+-- TOC entry 5376 (class 0 OID 16858)
 -- Dependencies: 377
 -- Name: saml_providers; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9192,7 +9234,7 @@ ALTER TABLE auth.refresh_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.saml_providers ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5369 (class 0 OID 16876)
+-- TOC entry 5377 (class 0 OID 16876)
 -- Dependencies: 378
 -- Name: saml_relay_states; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9200,7 +9242,7 @@ ALTER TABLE auth.saml_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.saml_relay_states ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5357 (class 0 OID 16533)
+-- TOC entry 5365 (class 0 OID 16533)
 -- Dependencies: 363
 -- Name: schema_migrations; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9208,7 +9250,7 @@ ALTER TABLE auth.saml_relay_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.schema_migrations ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5362 (class 0 OID 16757)
+-- TOC entry 5370 (class 0 OID 16757)
 -- Dependencies: 371
 -- Name: sessions; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9216,7 +9258,7 @@ ALTER TABLE auth.schema_migrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.sessions ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5367 (class 0 OID 16843)
+-- TOC entry 5375 (class 0 OID 16843)
 -- Dependencies: 376
 -- Name: sso_domains; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9224,7 +9266,7 @@ ALTER TABLE auth.sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.sso_domains ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5366 (class 0 OID 16834)
+-- TOC entry 5374 (class 0 OID 16834)
 -- Dependencies: 375
 -- Name: sso_providers; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9232,7 +9274,7 @@ ALTER TABLE auth.sso_domains ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.sso_providers ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5353 (class 0 OID 16495)
+-- TOC entry 5361 (class 0 OID 16495)
 -- Dependencies: 358
 -- Name: users; Type: ROW SECURITY; Schema: auth; Owner: -
 --
@@ -9240,7 +9282,7 @@ ALTER TABLE auth.sso_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5475 (class 3256 OID 41553)
+-- TOC entry 5484 (class 3256 OID 41553)
 -- Name: bot_instructions Allow insert instructions; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9250,7 +9292,7 @@ CREATE POLICY "Allow insert instructions" ON public.bot_instructions FOR INSERT 
 
 
 --
--- TOC entry 5474 (class 3256 OID 41552)
+-- TOC entry 5483 (class 3256 OID 41552)
 -- Name: bot_personality Allow insert personality; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9260,7 +9302,7 @@ CREATE POLICY "Allow insert personality" ON public.bot_personality FOR INSERT WI
 
 
 --
--- TOC entry 5473 (class 3256 OID 41551)
+-- TOC entry 5482 (class 3256 OID 41551)
 -- Name: bot_instructions Allow select instructions; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9270,7 +9312,7 @@ CREATE POLICY "Allow select instructions" ON public.bot_instructions FOR SELECT 
 
 
 --
--- TOC entry 5472 (class 3256 OID 41550)
+-- TOC entry 5481 (class 3256 OID 41550)
 -- Name: bot_personality Allow select personality; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9280,7 +9322,7 @@ CREATE POLICY "Allow select personality" ON public.bot_personality FOR SELECT US
 
 
 --
--- TOC entry 5478 (class 3256 OID 41556)
+-- TOC entry 5487 (class 3256 OID 41556)
 -- Name: bot_instructions Allow update instructions; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9292,7 +9334,7 @@ CREATE POLICY "Allow update instructions" ON public.bot_instructions FOR UPDATE 
 
 
 --
--- TOC entry 5476 (class 3256 OID 41554)
+-- TOC entry 5485 (class 3256 OID 41554)
 -- Name: bot_personality Allow update personality; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9304,7 +9346,7 @@ CREATE POLICY "Allow update personality" ON public.bot_personality FOR UPDATE US
 
 
 --
--- TOC entry 5414 (class 0 OID 94090)
+-- TOC entry 5422 (class 0 OID 94090)
 -- Dependencies: 467
 -- Name: ai_embeddings_cache; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9312,7 +9354,7 @@ CREATE POLICY "Allow update personality" ON public.bot_personality FOR UPDATE US
 ALTER TABLE public.ai_embeddings_cache ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5541 (class 3256 OID 94106)
+-- TOC entry 5550 (class 3256 OID 94106)
 -- Name: ai_embeddings_cache ai_embeddings_cache_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9320,7 +9362,7 @@ CREATE POLICY ai_embeddings_cache_service_only ON public.ai_embeddings_cache USI
 
 
 --
--- TOC entry 5416 (class 0 OID 94122)
+-- TOC entry 5424 (class 0 OID 94122)
 -- Dependencies: 469
 -- Name: ai_org_rate_limit_usage; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9328,7 +9370,7 @@ CREATE POLICY ai_embeddings_cache_service_only ON public.ai_embeddings_cache USI
 ALTER TABLE public.ai_org_rate_limit_usage ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5544 (class 3256 OID 94136)
+-- TOC entry 5553 (class 3256 OID 94136)
 -- Name: ai_org_rate_limit_usage ai_org_rate_limit_usage_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9336,7 +9378,7 @@ CREATE POLICY ai_org_rate_limit_usage_service_only ON public.ai_org_rate_limit_u
 
 
 --
--- TOC entry 5415 (class 0 OID 94107)
+-- TOC entry 5423 (class 0 OID 94107)
 -- Dependencies: 468
 -- Name: ai_org_rate_limits; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9344,7 +9386,7 @@ CREATE POLICY ai_org_rate_limit_usage_service_only ON public.ai_org_rate_limit_u
 ALTER TABLE public.ai_org_rate_limits ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5542 (class 3256 OID 94134)
+-- TOC entry 5551 (class 3256 OID 94134)
 -- Name: ai_org_rate_limits ai_org_rate_limits_read_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9354,7 +9396,7 @@ CREATE POLICY ai_org_rate_limits_read_org ON public.ai_org_rate_limits FOR SELEC
 
 
 --
--- TOC entry 5543 (class 3256 OID 94135)
+-- TOC entry 5552 (class 3256 OID 94135)
 -- Name: ai_org_rate_limits ai_org_rate_limits_write_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9362,7 +9404,7 @@ CREATE POLICY ai_org_rate_limits_write_service_only ON public.ai_org_rate_limits
 
 
 --
--- TOC entry 5400 (class 0 OID 63775)
+-- TOC entry 5408 (class 0 OID 63775)
 -- Dependencies: 428
 -- Name: ai_settings; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9370,7 +9412,7 @@ CREATE POLICY ai_org_rate_limits_write_service_only ON public.ai_org_rate_limits
 ALTER TABLE public.ai_settings ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5498 (class 3256 OID 78940)
+-- TOC entry 5507 (class 3256 OID 78940)
 -- Name: ai_settings ai_settings_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9382,7 +9424,7 @@ CREATE POLICY ai_settings_members_all ON public.ai_settings USING ((EXISTS ( SEL
 
 
 --
--- TOC entry 5411 (class 0 OID 93977)
+-- TOC entry 5419 (class 0 OID 93977)
 -- Dependencies: 461
 -- Name: ai_turn_traces; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9390,7 +9432,7 @@ CREATE POLICY ai_settings_members_all ON public.ai_settings USING ((EXISTS ( SEL
 ALTER TABLE public.ai_turn_traces ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5534 (class 3256 OID 94017)
+-- TOC entry 5543 (class 3256 OID 94017)
 -- Name: ai_turn_traces ai_turn_traces_read_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9400,7 +9442,7 @@ CREATE POLICY ai_turn_traces_read_org ON public.ai_turn_traces FOR SELECT USING 
 
 
 --
--- TOC entry 5535 (class 3256 OID 94018)
+-- TOC entry 5544 (class 3256 OID 94018)
 -- Name: ai_turn_traces ai_turn_traces_write_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9408,7 +9450,7 @@ CREATE POLICY ai_turn_traces_write_service_only ON public.ai_turn_traces USING (
 
 
 --
--- TOC entry 5401 (class 0 OID 63804)
+-- TOC entry 5409 (class 0 OID 63804)
 -- Dependencies: 429
 -- Name: ai_usage_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9416,7 +9458,7 @@ CREATE POLICY ai_turn_traces_write_service_only ON public.ai_turn_traces USING (
 ALTER TABLE public.ai_usage_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5499 (class 3256 OID 78942)
+-- TOC entry 5508 (class 3256 OID 78942)
 -- Name: ai_usage_logs ai_usage_logs_members_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9426,7 +9468,7 @@ CREATE POLICY ai_usage_logs_members_read ON public.ai_usage_logs FOR SELECT USIN
 
 
 --
--- TOC entry 5407 (class 0 OID 74279)
+-- TOC entry 5415 (class 0 OID 74279)
 -- Dependencies: 435
 -- Name: audit_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9434,7 +9476,7 @@ CREATE POLICY ai_usage_logs_members_read ON public.ai_usage_logs FOR SELECT USIN
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5491 (class 3256 OID 74293)
+-- TOC entry 5500 (class 3256 OID 74293)
 -- Name: audit_logs audit_logs_insert_service_role; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9442,7 +9484,7 @@ CREATE POLICY audit_logs_insert_service_role ON public.audit_logs FOR INSERT WIT
 
 
 --
--- TOC entry 5490 (class 3256 OID 74292)
+-- TOC entry 5499 (class 3256 OID 74292)
 -- Name: audit_logs audit_logs_read_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9452,7 +9494,7 @@ CREATE POLICY audit_logs_read_org ON public.audit_logs FOR SELECT USING ((organi
 
 
 --
--- TOC entry 5417 (class 0 OID 94138)
+-- TOC entry 5425 (class 0 OID 94138)
 -- Dependencies: 470
 -- Name: background_jobs; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9460,7 +9502,7 @@ CREATE POLICY audit_logs_read_org ON public.audit_logs FOR SELECT USING ((organi
 ALTER TABLE public.background_jobs ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5545 (class 3256 OID 94160)
+-- TOC entry 5554 (class 3256 OID 94160)
 -- Name: background_jobs background_jobs_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9468,7 +9510,7 @@ CREATE POLICY background_jobs_service_only ON public.background_jobs USING ((aut
 
 
 --
--- TOC entry 5378 (class 0 OID 18731)
+-- TOC entry 5386 (class 0 OID 18731)
 -- Dependencies: 400
 -- Name: bot_instructions; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9476,7 +9518,7 @@ CREATE POLICY background_jobs_service_only ON public.background_jobs USING ((aut
 ALTER TABLE public.bot_instructions ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5445 (class 3256 OID 19425)
+-- TOC entry 5454 (class 3256 OID 19425)
 -- Name: bot_instructions bot_instructions_mod_service_role_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9484,7 +9526,7 @@ CREATE POLICY bot_instructions_mod_service_role_only ON public.bot_instructions 
 
 
 --
--- TOC entry 5477 (class 3256 OID 78863)
+-- TOC entry 5486 (class 3256 OID 78863)
 -- Name: bot_instructions bot_instructions_org_access; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9492,7 +9534,7 @@ CREATE POLICY bot_instructions_org_access ON public.bot_instructions USING ((org
 
 
 --
--- TOC entry 5379 (class 0 OID 18739)
+-- TOC entry 5387 (class 0 OID 18739)
 -- Dependencies: 401
 -- Name: bot_personality; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9500,7 +9542,7 @@ CREATE POLICY bot_instructions_org_access ON public.bot_instructions USING ((org
 ALTER TABLE public.bot_personality ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5444 (class 3256 OID 19423)
+-- TOC entry 5453 (class 3256 OID 19423)
 -- Name: bot_personality bot_personality_mod_service_role_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9508,7 +9550,7 @@ CREATE POLICY bot_personality_mod_service_role_only ON public.bot_personality US
 
 
 --
--- TOC entry 5452 (class 3256 OID 78862)
+-- TOC entry 5461 (class 3256 OID 78862)
 -- Name: bot_personality bot_personality_org_access; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9516,7 +9558,7 @@ CREATE POLICY bot_personality_org_access ON public.bot_personality USING ((organ
 
 
 --
--- TOC entry 5398 (class 0 OID 57900)
+-- TOC entry 5406 (class 0 OID 57900)
 -- Dependencies: 426
 -- Name: campaign_delivery_import; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9524,7 +9566,7 @@ CREATE POLICY bot_personality_org_access ON public.bot_personality USING ((organ
 ALTER TABLE public.campaign_delivery_import ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5520 (class 3256 OID 80231)
+-- TOC entry 5529 (class 3256 OID 80231)
 -- Name: campaign_delivery_import campaign_delivery_import_service_role_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9532,7 +9574,7 @@ CREATE POLICY campaign_delivery_import_service_role_all ON public.campaign_deliv
 
 
 --
--- TOC entry 5409 (class 0 OID 80233)
+-- TOC entry 5417 (class 0 OID 80233)
 -- Dependencies: 447
 -- Name: campaign_delivery_receipt_failures; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9540,7 +9582,7 @@ CREATE POLICY campaign_delivery_import_service_role_all ON public.campaign_deliv
 ALTER TABLE public.campaign_delivery_receipt_failures ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5380 (class 0 OID 18750)
+-- TOC entry 5388 (class 0 OID 18750)
 -- Dependencies: 402
 -- Name: campaign_messages; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9548,7 +9590,7 @@ ALTER TABLE public.campaign_delivery_receipt_failures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.campaign_messages ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5495 (class 3256 OID 78945)
+-- TOC entry 5504 (class 3256 OID 78945)
 -- Name: campaign_messages campaign_messages_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9560,7 +9602,7 @@ CREATE POLICY campaign_messages_members_all ON public.campaign_messages USING ((
 
 
 --
--- TOC entry 5381 (class 0 OID 18758)
+-- TOC entry 5389 (class 0 OID 18758)
 -- Dependencies: 403
 -- Name: campaigns; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9568,7 +9610,7 @@ CREATE POLICY campaign_messages_members_all ON public.campaign_messages USING ((
 ALTER TABLE public.campaigns ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5500 (class 3256 OID 78943)
+-- TOC entry 5509 (class 3256 OID 78943)
 -- Name: campaigns campaigns_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9580,7 +9622,7 @@ CREATE POLICY campaigns_members_all ON public.campaigns USING (((auth.role() = '
 
 
 --
--- TOC entry 5521 (class 3256 OID 80244)
+-- TOC entry 5530 (class 3256 OID 80244)
 -- Name: campaign_delivery_receipt_failures cdrf_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9590,7 +9632,7 @@ CREATE POLICY cdrf_select_org ON public.campaign_delivery_receipt_failures FOR S
 
 
 --
--- TOC entry 5522 (class 3256 OID 80245)
+-- TOC entry 5531 (class 3256 OID 80245)
 -- Name: campaign_delivery_receipt_failures cdrf_service_role_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9598,7 +9640,7 @@ CREATE POLICY cdrf_service_role_all ON public.campaign_delivery_receipt_failures
 
 
 --
--- TOC entry 5396 (class 0 OID 52732)
+-- TOC entry 5404 (class 0 OID 52732)
 -- Dependencies: 424
 -- Name: contact_uploads; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9606,7 +9648,7 @@ CREATE POLICY cdrf_service_role_all ON public.campaign_delivery_receipt_failures
 ALTER TABLE public.contact_uploads ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5518 (class 3256 OID 80228)
+-- TOC entry 5527 (class 3256 OID 80228)
 -- Name: contact_uploads contact_uploads_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9618,7 +9660,7 @@ CREATE POLICY contact_uploads_members_all ON public.contact_uploads TO authentic
 
 
 --
--- TOC entry 5519 (class 3256 OID 80230)
+-- TOC entry 5528 (class 3256 OID 80230)
 -- Name: contact_uploads contact_uploads_service_role_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9626,7 +9668,7 @@ CREATE POLICY contact_uploads_service_role_all ON public.contact_uploads TO serv
 
 
 --
--- TOC entry 5382 (class 0 OID 18771)
+-- TOC entry 5390 (class 0 OID 18771)
 -- Dependencies: 404
 -- Name: contacts; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9634,7 +9676,7 @@ CREATE POLICY contact_uploads_service_role_all ON public.contact_uploads TO serv
 ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5440 (class 3256 OID 19388)
+-- TOC entry 5449 (class 3256 OID 19388)
 -- Name: contacts contacts_delete_org_members; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9644,7 +9686,7 @@ CREATE POLICY contacts_delete_org_members ON public.contacts FOR DELETE USING ((
 
 
 --
--- TOC entry 5438 (class 3256 OID 19385)
+-- TOC entry 5447 (class 3256 OID 19385)
 -- Name: contacts contacts_insert_org_members; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9654,7 +9696,7 @@ CREATE POLICY contacts_insert_org_members ON public.contacts FOR INSERT WITH CHE
 
 
 --
--- TOC entry 5501 (class 3256 OID 78947)
+-- TOC entry 5510 (class 3256 OID 78947)
 -- Name: contacts contacts_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9666,7 +9708,7 @@ CREATE POLICY contacts_members_all ON public.contacts USING (((auth.role() = 'se
 
 
 --
--- TOC entry 5437 (class 3256 OID 19384)
+-- TOC entry 5446 (class 3256 OID 19384)
 -- Name: contacts contacts_select_org_members; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9676,7 +9718,7 @@ CREATE POLICY contacts_select_org_members ON public.contacts FOR SELECT USING ((
 
 
 --
--- TOC entry 5439 (class 3256 OID 19386)
+-- TOC entry 5448 (class 3256 OID 19386)
 -- Name: contacts contacts_update_org_members; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9688,7 +9730,7 @@ CREATE POLICY contacts_update_org_members ON public.contacts FOR UPDATE USING ((
 
 
 --
--- TOC entry 5397 (class 0 OID 55014)
+-- TOC entry 5405 (class 0 OID 55014)
 -- Dependencies: 425
 -- Name: conversation_state; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9696,7 +9738,7 @@ CREATE POLICY contacts_update_org_members ON public.contacts FOR UPDATE USING ((
 ALTER TABLE public.conversation_state ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5511 (class 3256 OID 80219)
+-- TOC entry 5520 (class 3256 OID 80219)
 -- Name: conversation_state conversation_state_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9707,7 +9749,7 @@ CREATE POLICY conversation_state_select_org ON public.conversation_state FOR SEL
 
 
 --
--- TOC entry 5512 (class 3256 OID 80221)
+-- TOC entry 5521 (class 3256 OID 80221)
 -- Name: conversation_state conversation_state_write_service_role; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9715,7 +9757,7 @@ CREATE POLICY conversation_state_write_service_role ON public.conversation_state
 
 
 --
--- TOC entry 5383 (class 0 OID 18779)
+-- TOC entry 5391 (class 0 OID 18779)
 -- Dependencies: 405
 -- Name: conversations; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9723,7 +9765,7 @@ CREATE POLICY conversation_state_write_service_role ON public.conversation_state
 ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5502 (class 3256 OID 78949)
+-- TOC entry 5511 (class 3256 OID 78949)
 -- Name: conversations conversations_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9735,7 +9777,7 @@ CREATE POLICY conversations_members_all ON public.conversations USING (((auth.ro
 
 
 --
--- TOC entry 5384 (class 0 OID 18789)
+-- TOC entry 5392 (class 0 OID 18789)
 -- Dependencies: 406
 -- Name: knowledge_articles; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9743,7 +9785,7 @@ CREATE POLICY conversations_members_all ON public.conversations USING (((auth.ro
 ALTER TABLE public.knowledge_articles ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5504 (class 3256 OID 78954)
+-- TOC entry 5513 (class 3256 OID 78954)
 -- Name: knowledge_articles knowledge_articles_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9755,7 +9797,7 @@ CREATE POLICY knowledge_articles_members_all ON public.knowledge_articles USING 
 
 
 --
--- TOC entry 5394 (class 0 OID 42854)
+-- TOC entry 5402 (class 0 OID 42854)
 -- Dependencies: 420
 -- Name: knowledge_chunks; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9763,7 +9805,7 @@ CREATE POLICY knowledge_articles_members_all ON public.knowledge_articles USING 
 ALTER TABLE public.knowledge_chunks ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5532 (class 3256 OID 92816)
+-- TOC entry 5541 (class 3256 OID 92816)
 -- Name: knowledge_chunks knowledge_chunks_select_members; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9773,7 +9815,7 @@ CREATE POLICY knowledge_chunks_select_members ON public.knowledge_chunks FOR SEL
 
 
 --
--- TOC entry 5410 (class 0 OID 92855)
+-- TOC entry 5418 (class 0 OID 92855)
 -- Dependencies: 460
 -- Name: message_delivery_dlq; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9781,7 +9823,7 @@ CREATE POLICY knowledge_chunks_select_members ON public.knowledge_chunks FOR SEL
 ALTER TABLE public.message_delivery_dlq ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5533 (class 3256 OID 92871)
+-- TOC entry 5542 (class 3256 OID 92871)
 -- Name: message_delivery_dlq message_delivery_dlq_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9789,7 +9831,7 @@ CREATE POLICY message_delivery_dlq_service_only ON public.message_delivery_dlq U
 
 
 --
--- TOC entry 5412 (class 0 OID 94019)
+-- TOC entry 5420 (class 0 OID 94019)
 -- Dependencies: 462
 -- Name: message_delivery_events; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9797,7 +9839,7 @@ CREATE POLICY message_delivery_dlq_service_only ON public.message_delivery_dlq U
 ALTER TABLE public.message_delivery_events ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5536 (class 3256 OID 94047)
+-- TOC entry 5545 (class 3256 OID 94047)
 -- Name: message_delivery_events message_delivery_events_read_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9807,7 +9849,7 @@ CREATE POLICY message_delivery_events_read_org ON public.message_delivery_events
 
 
 --
--- TOC entry 5537 (class 3256 OID 94048)
+-- TOC entry 5546 (class 3256 OID 94048)
 -- Name: message_delivery_events message_delivery_events_write_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9815,7 +9857,7 @@ CREATE POLICY message_delivery_events_write_service_only ON public.message_deliv
 
 
 --
--- TOC entry 5385 (class 0 OID 18797)
+-- TOC entry 5393 (class 0 OID 18797)
 -- Dependencies: 407
 -- Name: messages; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -9823,7 +9865,7 @@ CREATE POLICY message_delivery_events_write_service_only ON public.message_deliv
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5503 (class 3256 OID 78951)
+-- TOC entry 5512 (class 3256 OID 78951)
 -- Name: messages messages_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9837,7 +9879,7 @@ CREATE POLICY messages_members_all ON public.messages USING (((auth.role() = 'se
 
 
 --
--- TOC entry 5471 (class 3256 OID 24330)
+-- TOC entry 5480 (class 3256 OID 24330)
 -- Name: organizations org_admin_update; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9847,7 +9889,7 @@ CREATE POLICY org_admin_update ON public.organizations FOR UPDATE USING ((EXISTS
 
 
 --
--- TOC entry 5523 (class 3256 OID 81394)
+-- TOC entry 5532 (class 3256 OID 81394)
 -- Name: bot_personality org_admin_update_bot_personality; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9859,7 +9901,7 @@ CREATE POLICY org_admin_update_bot_personality ON public.bot_personality FOR UPD
 
 
 --
--- TOC entry 5418 (class 3256 OID 19138)
+-- TOC entry 5427 (class 3256 OID 19138)
 -- Name: campaign_messages org_members_can_manage_campaign_messages; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9871,7 +9913,7 @@ CREATE POLICY org_members_can_manage_campaign_messages ON public.campaign_messag
 
 
 --
--- TOC entry 5419 (class 3256 OID 19140)
+-- TOC entry 5428 (class 3256 OID 19140)
 -- Name: campaigns org_members_can_manage_campaigns; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9883,7 +9925,7 @@ CREATE POLICY org_members_can_manage_campaigns ON public.campaigns USING ((EXIST
 
 
 --
--- TOC entry 5420 (class 3256 OID 19142)
+-- TOC entry 5429 (class 3256 OID 19142)
 -- Name: bot_instructions org_members_manage_bot_instructions; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9895,7 +9937,7 @@ CREATE POLICY org_members_manage_bot_instructions ON public.bot_instructions USI
 
 
 --
--- TOC entry 5421 (class 3256 OID 19144)
+-- TOC entry 5430 (class 3256 OID 19144)
 -- Name: bot_personality org_members_manage_bot_personality; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9907,7 +9949,7 @@ CREATE POLICY org_members_manage_bot_personality ON public.bot_personality USING
 
 
 --
--- TOC entry 5422 (class 3256 OID 19146)
+-- TOC entry 5431 (class 3256 OID 19146)
 -- Name: contacts org_members_manage_contacts; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9919,7 +9961,7 @@ CREATE POLICY org_members_manage_contacts ON public.contacts USING ((EXISTS ( SE
 
 
 --
--- TOC entry 5424 (class 3256 OID 19148)
+-- TOC entry 5433 (class 3256 OID 19148)
 -- Name: conversations org_members_manage_conversations; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9931,7 +9973,7 @@ CREATE POLICY org_members_manage_conversations ON public.conversations USING ((E
 
 
 --
--- TOC entry 5425 (class 3256 OID 19150)
+-- TOC entry 5434 (class 3256 OID 19150)
 -- Name: knowledge_articles org_members_manage_knowledge_articles; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9943,7 +9985,7 @@ CREATE POLICY org_members_manage_knowledge_articles ON public.knowledge_articles
 
 
 --
--- TOC entry 5426 (class 3256 OID 19152)
+-- TOC entry 5435 (class 3256 OID 19152)
 -- Name: messages org_members_manage_messages; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9957,7 +9999,7 @@ CREATE POLICY org_members_manage_messages ON public.messages USING ((EXISTS ( SE
 
 
 --
--- TOC entry 5427 (class 3256 OID 19154)
+-- TOC entry 5436 (class 3256 OID 19154)
 -- Name: unanswered_questions org_members_manage_unanswered_questions; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9969,7 +10011,7 @@ CREATE POLICY org_members_manage_unanswered_questions ON public.unanswered_quest
 
 
 --
--- TOC entry 5428 (class 3256 OID 19156)
+-- TOC entry 5437 (class 3256 OID 19156)
 -- Name: whatsapp_settings org_members_manage_whatsapp_settings; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9981,7 +10023,7 @@ CREATE POLICY org_members_manage_whatsapp_settings ON public.whatsapp_settings U
 
 
 --
--- TOC entry 5430 (class 3256 OID 19158)
+-- TOC entry 5439 (class 3256 OID 19158)
 -- Name: workflow_logs org_members_manage_workflow_logs; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -9995,7 +10037,7 @@ CREATE POLICY org_members_manage_workflow_logs ON public.workflow_logs USING ((E
 
 
 --
--- TOC entry 5431 (class 3256 OID 19160)
+-- TOC entry 5440 (class 3256 OID 19160)
 -- Name: workflow_steps org_members_manage_workflow_steps; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10009,7 +10051,7 @@ CREATE POLICY org_members_manage_workflow_steps ON public.workflow_steps USING (
 
 
 --
--- TOC entry 5432 (class 3256 OID 19162)
+-- TOC entry 5441 (class 3256 OID 19162)
 -- Name: workflows org_members_manage_workflows; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10021,7 +10063,7 @@ CREATE POLICY org_members_manage_workflows ON public.workflows USING ((EXISTS ( 
 
 
 --
--- TOC entry 5469 (class 3256 OID 22976)
+-- TOC entry 5478 (class 3256 OID 22976)
 -- Name: bot_personality org_members_modify_bot_personality; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10033,7 +10075,7 @@ CREATE POLICY org_members_modify_bot_personality ON public.bot_personality USING
 
 
 --
--- TOC entry 5467 (class 3256 OID 22972)
+-- TOC entry 5476 (class 3256 OID 22972)
 -- Name: campaign_messages org_members_modify_campaign_messages; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10047,7 +10089,7 @@ CREATE POLICY org_members_modify_campaign_messages ON public.campaign_messages U
 
 
 --
--- TOC entry 5465 (class 3256 OID 22968)
+-- TOC entry 5474 (class 3256 OID 22968)
 -- Name: campaigns org_members_modify_campaigns; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10059,7 +10101,7 @@ CREATE POLICY org_members_modify_campaigns ON public.campaigns USING ((EXISTS ( 
 
 
 --
--- TOC entry 5451 (class 3256 OID 22949)
+-- TOC entry 5460 (class 3256 OID 22949)
 -- Name: contacts org_members_modify_contacts; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10071,7 +10113,7 @@ CREATE POLICY org_members_modify_contacts ON public.contacts USING ((EXISTS ( SE
 
 
 --
--- TOC entry 5454 (class 3256 OID 22952)
+-- TOC entry 5463 (class 3256 OID 22952)
 -- Name: conversations org_members_modify_conversations; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10083,7 +10125,7 @@ CREATE POLICY org_members_modify_conversations ON public.conversations USING ((E
 
 
 --
--- TOC entry 5460 (class 3256 OID 22961)
+-- TOC entry 5469 (class 3256 OID 22961)
 -- Name: knowledge_articles org_members_modify_kb_articles; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10095,7 +10137,7 @@ CREATE POLICY org_members_modify_kb_articles ON public.knowledge_articles USING 
 
 
 --
--- TOC entry 5456 (class 3256 OID 22955)
+-- TOC entry 5465 (class 3256 OID 22955)
 -- Name: messages org_members_modify_messages; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10109,7 +10151,7 @@ CREATE POLICY org_members_modify_messages ON public.messages USING ((EXISTS ( SE
 
 
 --
--- TOC entry 5463 (class 3256 OID 22965)
+-- TOC entry 5472 (class 3256 OID 22965)
 -- Name: unanswered_questions org_members_modify_unanswered; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10121,7 +10163,7 @@ CREATE POLICY org_members_modify_unanswered ON public.unanswered_questions USING
 
 
 --
--- TOC entry 5458 (class 3256 OID 22958)
+-- TOC entry 5467 (class 3256 OID 22958)
 -- Name: whatsapp_settings org_members_modify_wa_settings; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10133,7 +10175,7 @@ CREATE POLICY org_members_modify_wa_settings ON public.whatsapp_settings USING (
 
 
 --
--- TOC entry 5470 (class 3256 OID 22979)
+-- TOC entry 5479 (class 3256 OID 22979)
 -- Name: workflows org_members_modify_workflows; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10145,7 +10187,7 @@ CREATE POLICY org_members_modify_workflows ON public.workflows USING ((EXISTS ( 
 
 
 --
--- TOC entry 5488 (class 3256 OID 74261)
+-- TOC entry 5497 (class 3256 OID 74261)
 -- Name: razorpay_orders org_members_read_razorpay_orders; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10155,7 +10197,7 @@ CREATE POLICY org_members_read_razorpay_orders ON public.razorpay_orders FOR SEL
 
 
 --
--- TOC entry 5489 (class 3256 OID 74262)
+-- TOC entry 5498 (class 3256 OID 74262)
 -- Name: razorpay_payments org_members_read_razorpay_payments; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10165,7 +10207,7 @@ CREATE POLICY org_members_read_razorpay_payments ON public.razorpay_payments FOR
 
 
 --
--- TOC entry 5468 (class 3256 OID 22975)
+-- TOC entry 5477 (class 3256 OID 22975)
 -- Name: bot_personality org_members_select_bot_personality; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10175,7 +10217,7 @@ CREATE POLICY org_members_select_bot_personality ON public.bot_personality FOR S
 
 
 --
--- TOC entry 5466 (class 3256 OID 22970)
+-- TOC entry 5475 (class 3256 OID 22970)
 -- Name: campaign_messages org_members_select_campaign_messages; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10186,7 +10228,7 @@ CREATE POLICY org_members_select_campaign_messages ON public.campaign_messages F
 
 
 --
--- TOC entry 5464 (class 3256 OID 22967)
+-- TOC entry 5473 (class 3256 OID 22967)
 -- Name: campaigns org_members_select_campaigns; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10196,7 +10238,7 @@ CREATE POLICY org_members_select_campaigns ON public.campaigns FOR SELECT USING 
 
 
 --
--- TOC entry 5450 (class 3256 OID 22948)
+-- TOC entry 5459 (class 3256 OID 22948)
 -- Name: contacts org_members_select_contacts; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10206,7 +10248,7 @@ CREATE POLICY org_members_select_contacts ON public.contacts FOR SELECT USING ((
 
 
 --
--- TOC entry 5453 (class 3256 OID 22951)
+-- TOC entry 5462 (class 3256 OID 22951)
 -- Name: conversations org_members_select_conversations; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10216,7 +10258,7 @@ CREATE POLICY org_members_select_conversations ON public.conversations FOR SELEC
 
 
 --
--- TOC entry 5459 (class 3256 OID 22960)
+-- TOC entry 5468 (class 3256 OID 22960)
 -- Name: knowledge_articles org_members_select_kb_articles; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10226,7 +10268,7 @@ CREATE POLICY org_members_select_kb_articles ON public.knowledge_articles FOR SE
 
 
 --
--- TOC entry 5455 (class 3256 OID 22954)
+-- TOC entry 5464 (class 3256 OID 22954)
 -- Name: messages org_members_select_messages; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10237,7 +10279,7 @@ CREATE POLICY org_members_select_messages ON public.messages FOR SELECT USING ((
 
 
 --
--- TOC entry 5447 (class 3256 OID 22938)
+-- TOC entry 5456 (class 3256 OID 22938)
 -- Name: organizations org_members_select_organizations; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10247,7 +10289,7 @@ CREATE POLICY org_members_select_organizations ON public.organizations FOR SELEC
 
 
 --
--- TOC entry 5461 (class 3256 OID 22964)
+-- TOC entry 5470 (class 3256 OID 22964)
 -- Name: unanswered_questions org_members_select_unanswered; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10257,7 +10299,7 @@ CREATE POLICY org_members_select_unanswered ON public.unanswered_questions FOR S
 
 
 --
--- TOC entry 5457 (class 3256 OID 22957)
+-- TOC entry 5466 (class 3256 OID 22957)
 -- Name: whatsapp_settings org_members_select_wa_settings; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10267,7 +10309,7 @@ CREATE POLICY org_members_select_wa_settings ON public.whatsapp_settings FOR SEL
 
 
 --
--- TOC entry 5480 (class 3256 OID 59209)
+-- TOC entry 5489 (class 3256 OID 59209)
 -- Name: whatsapp_templates org_members_select_whatsapp_templates; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10277,7 +10319,7 @@ CREATE POLICY org_members_select_whatsapp_templates ON public.whatsapp_templates
 
 
 --
--- TOC entry 5462 (class 3256 OID 22978)
+-- TOC entry 5471 (class 3256 OID 22978)
 -- Name: workflows org_members_select_workflows; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10287,7 +10329,7 @@ CREATE POLICY org_members_select_workflows ON public.workflows FOR SELECT USING 
 
 
 --
--- TOC entry 5434 (class 3256 OID 19375)
+-- TOC entry 5443 (class 3256 OID 19375)
 -- Name: organizations org_mod_service_role_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10295,7 +10337,7 @@ CREATE POLICY org_mod_service_role_only ON public.organizations USING ((auth.rol
 
 
 --
--- TOC entry 5433 (class 3256 OID 19374)
+-- TOC entry 5442 (class 3256 OID 19374)
 -- Name: organizations org_select_visible_to_members; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10305,7 +10347,7 @@ CREATE POLICY org_select_visible_to_members ON public.organizations FOR SELECT U
 
 
 --
--- TOC entry 5436 (class 3256 OID 19377)
+-- TOC entry 5445 (class 3256 OID 19377)
 -- Name: organization_users org_users_mod_service_role_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10313,7 +10355,7 @@ CREATE POLICY org_users_mod_service_role_only ON public.organization_users USING
 
 
 --
--- TOC entry 5435 (class 3256 OID 19376)
+-- TOC entry 5444 (class 3256 OID 19376)
 -- Name: organization_users org_users_select_self; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10321,7 +10363,7 @@ CREATE POLICY org_users_select_self ON public.organization_users FOR SELECT USIN
 
 
 --
--- TOC entry 5386 (class 0 OID 18807)
+-- TOC entry 5394 (class 0 OID 18807)
 -- Dependencies: 408
 -- Name: organization_users; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10329,7 +10371,7 @@ CREATE POLICY org_users_select_self ON public.organization_users FOR SELECT USIN
 ALTER TABLE public.organization_users ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5387 (class 0 OID 18816)
+-- TOC entry 5395 (class 0 OID 18816)
 -- Dependencies: 409
 -- Name: organizations; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10337,7 +10379,7 @@ ALTER TABLE public.organization_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5509 (class 3256 OID 79083)
+-- TOC entry 5518 (class 3256 OID 79083)
 -- Name: psf_cases psf insert org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10347,7 +10389,7 @@ CREATE POLICY "psf insert org" ON public.psf_cases FOR INSERT WITH CHECK ((organ
 
 
 --
--- TOC entry 5508 (class 3256 OID 79082)
+-- TOC entry 5517 (class 3256 OID 79082)
 -- Name: psf_cases psf read org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10357,7 +10399,7 @@ CREATE POLICY "psf read org" ON public.psf_cases FOR SELECT USING ((organization
 
 
 --
--- TOC entry 5510 (class 3256 OID 79084)
+-- TOC entry 5519 (class 3256 OID 79084)
 -- Name: psf_cases psf update org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10369,7 +10411,7 @@ CREATE POLICY "psf update org" ON public.psf_cases FOR UPDATE USING ((organizati
 
 
 --
--- TOC entry 5408 (class 0 OID 77676)
+-- TOC entry 5416 (class 0 OID 77676)
 -- Dependencies: 437
 -- Name: psf_cases; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10377,7 +10419,7 @@ CREATE POLICY "psf update org" ON public.psf_cases FOR UPDATE USING ((organizati
 ALTER TABLE public.psf_cases ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5441 (class 3256 OID 78865)
+-- TOC entry 5450 (class 3256 OID 78865)
 -- Name: psf_cases psf_cases_org_access; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10385,7 +10427,7 @@ CREATE POLICY psf_cases_org_access ON public.psf_cases USING ((organization_id =
 
 
 --
--- TOC entry 5492 (class 3256 OID 77725)
+-- TOC entry 5501 (class 3256 OID 77725)
 -- Name: psf_cases psf_cases_org_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10395,7 +10437,7 @@ CREATE POLICY psf_cases_org_read ON public.psf_cases FOR SELECT USING ((organiza
 
 
 --
--- TOC entry 5493 (class 3256 OID 77726)
+-- TOC entry 5502 (class 3256 OID 77726)
 -- Name: psf_cases psf_cases_org_write; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10405,7 +10447,7 @@ CREATE POLICY psf_cases_org_write ON public.psf_cases FOR UPDATE USING ((organiz
 
 
 --
--- TOC entry 5405 (class 0 OID 74205)
+-- TOC entry 5413 (class 0 OID 74205)
 -- Dependencies: 433
 -- Name: razorpay_orders; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10413,7 +10455,7 @@ CREATE POLICY psf_cases_org_write ON public.psf_cases FOR UPDATE USING ((organiz
 ALTER TABLE public.razorpay_orders ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5406 (class 0 OID 74234)
+-- TOC entry 5414 (class 0 OID 74234)
 -- Dependencies: 434
 -- Name: razorpay_payments; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10421,7 +10463,7 @@ ALTER TABLE public.razorpay_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.razorpay_payments ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5413 (class 0 OID 94049)
+-- TOC entry 5421 (class 0 OID 94049)
 -- Dependencies: 463
 -- Name: replay_requests; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10429,7 +10471,7 @@ ALTER TABLE public.razorpay_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.replay_requests ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5539 (class 3256 OID 94068)
+-- TOC entry 5548 (class 3256 OID 94068)
 -- Name: replay_requests replay_requests_insert_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10439,7 +10481,7 @@ CREATE POLICY replay_requests_insert_org ON public.replay_requests FOR INSERT WI
 
 
 --
--- TOC entry 5538 (class 3256 OID 94067)
+-- TOC entry 5547 (class 3256 OID 94067)
 -- Name: replay_requests replay_requests_read_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10449,7 +10491,7 @@ CREATE POLICY replay_requests_read_org ON public.replay_requests FOR SELECT USIN
 
 
 --
--- TOC entry 5540 (class 3256 OID 94069)
+-- TOC entry 5549 (class 3256 OID 94069)
 -- Name: replay_requests replay_requests_update_service_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10457,7 +10499,7 @@ CREATE POLICY replay_requests_update_service_only ON public.replay_requests FOR 
 
 
 --
--- TOC entry 5525 (class 3256 OID 89958)
+-- TOC entry 5534 (class 3256 OID 89958)
 -- Name: knowledge_chunks service role can manage knowledge chunks; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10465,7 +10507,7 @@ CREATE POLICY "service role can manage knowledge chunks" ON public.knowledge_chu
 
 
 --
--- TOC entry 5531 (class 3256 OID 91563)
+-- TOC entry 5540 (class 3256 OID 91563)
 -- Name: knowledge_articles service role read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10473,7 +10515,7 @@ CREATE POLICY "service role read" ON public.knowledge_articles FOR SELECT TO ser
 
 
 --
--- TOC entry 5524 (class 3256 OID 81533)
+-- TOC entry 5533 (class 3256 OID 81533)
 -- Name: wallet_transactions service_role_insert_wallet_txn; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10481,7 +10523,7 @@ CREATE POLICY service_role_insert_wallet_txn ON public.wallet_transactions FOR I
 
 
 --
--- TOC entry 5479 (class 3256 OID 42867)
+-- TOC entry 5488 (class 3256 OID 42867)
 -- Name: knowledge_chunks service_role_kb_chunks; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10489,7 +10531,47 @@ CREATE POLICY service_role_kb_chunks ON public.knowledge_chunks TO service_role 
 
 
 --
--- TOC entry 5388 (class 0 OID 18823)
+-- TOC entry 5426 (class 0 OID 122608)
+-- Dependencies: 477
+-- Name: service_tickets; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.service_tickets ENABLE ROW LEVEL SECURITY;
+
+--
+-- TOC entry 5556 (class 3256 OID 122642)
+-- Name: service_tickets service_tickets_insert_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_tickets_insert_org ON public.service_tickets FOR INSERT TO authenticated WITH CHECK ((organization_id IN ( SELECT organization_users.organization_id
+   FROM public.organization_users
+  WHERE (organization_users.user_id = auth.uid()))));
+
+
+--
+-- TOC entry 5555 (class 3256 OID 122641)
+-- Name: service_tickets service_tickets_select_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_tickets_select_org ON public.service_tickets FOR SELECT TO authenticated USING ((organization_id IN ( SELECT organization_users.organization_id
+   FROM public.organization_users
+  WHERE (organization_users.user_id = auth.uid()))));
+
+
+--
+-- TOC entry 5557 (class 3256 OID 122643)
+-- Name: service_tickets service_tickets_update_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_tickets_update_org ON public.service_tickets FOR UPDATE TO authenticated USING ((organization_id IN ( SELECT organization_users.organization_id
+   FROM public.organization_users
+  WHERE (organization_users.user_id = auth.uid())))) WITH CHECK ((organization_id IN ( SELECT organization_users.organization_id
+   FROM public.organization_users
+  WHERE (organization_users.user_id = auth.uid()))));
+
+
+--
+-- TOC entry 5396 (class 0 OID 18823)
 -- Dependencies: 410
 -- Name: unanswered_questions; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10497,7 +10579,7 @@ CREATE POLICY service_role_kb_chunks ON public.knowledge_chunks TO service_role 
 ALTER TABLE public.unanswered_questions ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5443 (class 3256 OID 78869)
+-- TOC entry 5452 (class 3256 OID 78869)
 -- Name: unanswered_questions unanswered_questions_org_access; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10507,7 +10589,7 @@ CREATE POLICY unanswered_questions_org_access ON public.unanswered_questions USI
 
 
 --
--- TOC entry 5429 (class 3256 OID 22942)
+-- TOC entry 5438 (class 3256 OID 22942)
 -- Name: organization_users user_delete_own_org_membership; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10515,7 +10597,7 @@ CREATE POLICY user_delete_own_org_membership ON public.organization_users FOR DE
 
 
 --
--- TOC entry 5449 (class 3256 OID 22940)
+-- TOC entry 5458 (class 3256 OID 22940)
 -- Name: organization_users user_insert_own_org_membership; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10523,7 +10605,7 @@ CREATE POLICY user_insert_own_org_membership ON public.organization_users FOR IN
 
 
 --
--- TOC entry 5448 (class 3256 OID 22939)
+-- TOC entry 5457 (class 3256 OID 22939)
 -- Name: organization_users user_select_own_org_membership; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10531,7 +10613,7 @@ CREATE POLICY user_select_own_org_membership ON public.organization_users FOR SE
 
 
 --
--- TOC entry 5423 (class 3256 OID 22941)
+-- TOC entry 5432 (class 3256 OID 22941)
 -- Name: organization_users user_update_own_org_membership; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10539,7 +10621,7 @@ CREATE POLICY user_update_own_org_membership ON public.organization_users FOR UP
 
 
 --
--- TOC entry 5446 (class 3256 OID 19427)
+-- TOC entry 5455 (class 3256 OID 19427)
 -- Name: whatsapp_settings wa_settings_mod_service_role_only; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10547,7 +10629,7 @@ CREATE POLICY wa_settings_mod_service_role_only ON public.whatsapp_settings USIN
 
 
 --
--- TOC entry 5404 (class 0 OID 63911)
+-- TOC entry 5412 (class 0 OID 63911)
 -- Dependencies: 432
 -- Name: wallet_alert_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10555,7 +10637,7 @@ CREATE POLICY wa_settings_mod_service_role_only ON public.whatsapp_settings USIN
 ALTER TABLE public.wallet_alert_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5442 (class 3256 OID 78867)
+-- TOC entry 5451 (class 3256 OID 78867)
 -- Name: wallet_alert_logs wallet_alert_logs_org_access; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10565,7 +10647,7 @@ CREATE POLICY wallet_alert_logs_org_access ON public.wallet_alert_logs USING ((E
 
 
 --
--- TOC entry 5513 (class 3256 OID 80222)
+-- TOC entry 5522 (class 3256 OID 80222)
 -- Name: wallet_alert_logs wallet_alert_logs_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10575,7 +10657,7 @@ CREATE POLICY wallet_alert_logs_select_org ON public.wallet_alert_logs FOR SELEC
 
 
 --
--- TOC entry 5514 (class 3256 OID 80223)
+-- TOC entry 5523 (class 3256 OID 80223)
 -- Name: wallet_alert_logs wallet_alert_logs_update_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10587,7 +10669,7 @@ CREATE POLICY wallet_alert_logs_update_org ON public.wallet_alert_logs FOR UPDAT
 
 
 --
--- TOC entry 5515 (class 3256 OID 80225)
+-- TOC entry 5524 (class 3256 OID 80225)
 -- Name: wallet_alert_logs wallet_alert_logs_write_service_role; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10595,7 +10677,7 @@ CREATE POLICY wallet_alert_logs_write_service_role ON public.wallet_alert_logs T
 
 
 --
--- TOC entry 5403 (class 0 OID 63868)
+-- TOC entry 5411 (class 0 OID 63868)
 -- Dependencies: 431
 -- Name: wallet_transactions; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10603,7 +10685,7 @@ CREATE POLICY wallet_alert_logs_write_service_role ON public.wallet_alert_logs T
 ALTER TABLE public.wallet_transactions ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5486 (class 3256 OID 63904)
+-- TOC entry 5495 (class 3256 OID 63904)
 -- Name: wallet_transactions wallet_transactions_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10614,7 +10696,7 @@ CREATE POLICY wallet_transactions_read ON public.wallet_transactions FOR SELECT 
 
 
 --
--- TOC entry 5402 (class 0 OID 63844)
+-- TOC entry 5410 (class 0 OID 63844)
 -- Dependencies: 430
 -- Name: wallets; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10622,7 +10704,7 @@ CREATE POLICY wallet_transactions_read ON public.wallet_transactions FOR SELECT 
 ALTER TABLE public.wallets ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5497 (class 3256 OID 78939)
+-- TOC entry 5506 (class 3256 OID 78939)
 -- Name: wallets wallets_members_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10632,7 +10714,7 @@ CREATE POLICY wallets_members_read ON public.wallets FOR SELECT USING ((EXISTS (
 
 
 --
--- TOC entry 5485 (class 3256 OID 63903)
+-- TOC entry 5494 (class 3256 OID 63903)
 -- Name: wallets wallets_read; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10642,7 +10724,7 @@ CREATE POLICY wallets_read ON public.wallets FOR SELECT USING ((EXISTS ( SELECT 
 
 
 --
--- TOC entry 5395 (class 0 OID 50952)
+-- TOC entry 5403 (class 0 OID 50952)
 -- Dependencies: 422
 -- Name: whatsapp_bulk_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10650,7 +10732,7 @@ CREATE POLICY wallets_read ON public.wallets FOR SELECT USING ((EXISTS ( SELECT 
 ALTER TABLE public.whatsapp_bulk_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5516 (class 3256 OID 80226)
+-- TOC entry 5525 (class 3256 OID 80226)
 -- Name: whatsapp_bulk_logs whatsapp_bulk_logs_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10660,7 +10742,7 @@ CREATE POLICY whatsapp_bulk_logs_select_org ON public.whatsapp_bulk_logs FOR SEL
 
 
 --
--- TOC entry 5517 (class 3256 OID 80227)
+-- TOC entry 5526 (class 3256 OID 80227)
 -- Name: whatsapp_bulk_logs whatsapp_bulk_logs_write_service_role; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10668,7 +10750,7 @@ CREATE POLICY whatsapp_bulk_logs_write_service_role ON public.whatsapp_bulk_logs
 
 
 --
--- TOC entry 5389 (class 0 OID 18831)
+-- TOC entry 5397 (class 0 OID 18831)
 -- Dependencies: 411
 -- Name: whatsapp_settings; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10676,7 +10758,7 @@ CREATE POLICY whatsapp_bulk_logs_write_service_role ON public.whatsapp_bulk_logs
 ALTER TABLE public.whatsapp_settings ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5505 (class 3256 OID 78956)
+-- TOC entry 5514 (class 3256 OID 78956)
 -- Name: whatsapp_settings whatsapp_settings_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10688,7 +10770,7 @@ CREATE POLICY whatsapp_settings_members_all ON public.whatsapp_settings USING ((
 
 
 --
--- TOC entry 5399 (class 0 OID 59183)
+-- TOC entry 5407 (class 0 OID 59183)
 -- Dependencies: 427
 -- Name: whatsapp_templates; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10696,7 +10778,7 @@ CREATE POLICY whatsapp_settings_members_all ON public.whatsapp_settings USING ((
 ALTER TABLE public.whatsapp_templates ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5506 (class 3256 OID 78958)
+-- TOC entry 5515 (class 3256 OID 78958)
 -- Name: whatsapp_templates whatsapp_templates_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10708,7 +10790,7 @@ CREATE POLICY whatsapp_templates_members_all ON public.whatsapp_templates USING 
 
 
 --
--- TOC entry 5390 (class 0 OID 18840)
+-- TOC entry 5398 (class 0 OID 18840)
 -- Dependencies: 412
 -- Name: workflow_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10716,7 +10798,7 @@ CREATE POLICY whatsapp_templates_members_all ON public.whatsapp_templates USING 
 ALTER TABLE public.workflow_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5496 (class 3256 OID 78937)
+-- TOC entry 5505 (class 3256 OID 78937)
 -- Name: workflow_logs workflow_logs_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10730,7 +10812,7 @@ CREATE POLICY workflow_logs_members_all ON public.workflow_logs USING ((EXISTS (
 
 
 --
--- TOC entry 5391 (class 0 OID 18847)
+-- TOC entry 5399 (class 0 OID 18847)
 -- Dependencies: 413
 -- Name: workflow_steps; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10738,7 +10820,7 @@ CREATE POLICY workflow_logs_members_all ON public.workflow_logs USING ((EXISTS (
 ALTER TABLE public.workflow_steps ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5494 (class 3256 OID 78935)
+-- TOC entry 5503 (class 3256 OID 78935)
 -- Name: workflow_steps workflow_steps_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10752,7 +10834,7 @@ CREATE POLICY workflow_steps_members_all ON public.workflow_steps USING ((EXISTS
 
 
 --
--- TOC entry 5392 (class 0 OID 18854)
+-- TOC entry 5400 (class 0 OID 18854)
 -- Dependencies: 414
 -- Name: workflows; Type: ROW SECURITY; Schema: public; Owner: -
 --
@@ -10760,7 +10842,7 @@ CREATE POLICY workflow_steps_members_all ON public.workflow_steps USING ((EXISTS
 ALTER TABLE public.workflows ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5507 (class 3256 OID 78960)
+-- TOC entry 5516 (class 3256 OID 78960)
 -- Name: workflows workflows_members_all; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -10772,7 +10854,7 @@ CREATE POLICY workflows_members_all ON public.workflows USING (((auth.role() = '
 
 
 --
--- TOC entry 5393 (class 0 OID 18861)
+-- TOC entry 5401 (class 0 OID 18861)
 -- Dependencies: 415
 -- Name: messages; Type: ROW SECURITY; Schema: realtime; Owner: -
 --
@@ -10780,7 +10862,7 @@ CREATE POLICY workflows_members_all ON public.workflows USING (((auth.role() = '
 ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5487 (class 3256 OID 65074)
+-- TOC entry 5496 (class 3256 OID 65074)
 -- Name: objects Authenticated users can upload knowledge documents; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10788,7 +10870,7 @@ CREATE POLICY "Authenticated users can upload knowledge documents" ON storage.ob
 
 
 --
--- TOC entry 5526 (class 3256 OID 90374)
+-- TOC entry 5535 (class 3256 OID 90374)
 -- Name: objects Service role can access knowledge base; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10796,7 +10878,7 @@ CREATE POLICY "Service role can access knowledge base" ON storage.objects TO ser
 
 
 --
--- TOC entry 5484 (class 3256 OID 65073)
+-- TOC entry 5493 (class 3256 OID 65073)
 -- Name: objects Service role can access knowledge documents; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10804,7 +10886,7 @@ CREATE POLICY "Service role can access knowledge documents" ON storage.objects T
 
 
 --
--- TOC entry 5358 (class 0 OID 16546)
+-- TOC entry 5366 (class 0 OID 16546)
 -- Dependencies: 364
 -- Name: buckets; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10812,7 +10894,7 @@ CREATE POLICY "Service role can access knowledge documents" ON storage.objects T
 ALTER TABLE storage.buckets ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5375 (class 0 OID 17278)
+-- TOC entry 5383 (class 0 OID 17278)
 -- Dependencies: 391
 -- Name: buckets_analytics; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10820,7 +10902,7 @@ ALTER TABLE storage.buckets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE storage.buckets_analytics ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5376 (class 0 OID 17305)
+-- TOC entry 5384 (class 0 OID 17305)
 -- Dependencies: 392
 -- Name: buckets_vectors; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10828,7 +10910,7 @@ ALTER TABLE storage.buckets_analytics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE storage.buckets_vectors ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5530 (class 3256 OID 90379)
+-- TOC entry 5539 (class 3256 OID 90379)
 -- Name: objects kb_auth_delete_scoped; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10838,7 +10920,7 @@ CREATE POLICY kb_auth_delete_scoped ON storage.objects FOR DELETE TO authenticat
 
 
 --
--- TOC entry 5528 (class 3256 OID 90376)
+-- TOC entry 5537 (class 3256 OID 90376)
 -- Name: objects kb_auth_insert_scoped; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10848,7 +10930,7 @@ CREATE POLICY kb_auth_insert_scoped ON storage.objects FOR INSERT TO authenticat
 
 
 --
--- TOC entry 5527 (class 3256 OID 90375)
+-- TOC entry 5536 (class 3256 OID 90375)
 -- Name: objects kb_auth_read_scoped; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10858,7 +10940,7 @@ CREATE POLICY kb_auth_read_scoped ON storage.objects FOR SELECT TO authenticated
 
 
 --
--- TOC entry 5529 (class 3256 OID 90377)
+-- TOC entry 5538 (class 3256 OID 90377)
 -- Name: objects kb_auth_update_scoped; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10870,7 +10952,7 @@ CREATE POLICY kb_auth_update_scoped ON storage.objects FOR UPDATE TO authenticat
 
 
 --
--- TOC entry 5360 (class 0 OID 16588)
+-- TOC entry 5368 (class 0 OID 16588)
 -- Dependencies: 366
 -- Name: migrations; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10878,7 +10960,7 @@ CREATE POLICY kb_auth_update_scoped ON storage.objects FOR UPDATE TO authenticat
 ALTER TABLE storage.migrations ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5359 (class 0 OID 16561)
+-- TOC entry 5367 (class 0 OID 16561)
 -- Dependencies: 365
 -- Name: objects; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10886,7 +10968,7 @@ ALTER TABLE storage.migrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5374 (class 0 OID 17202)
+-- TOC entry 5382 (class 0 OID 17202)
 -- Dependencies: 387
 -- Name: prefixes; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10894,7 +10976,7 @@ ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE storage.prefixes ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5483 (class 3256 OID 62647)
+-- TOC entry 5492 (class 3256 OID 62647)
 -- Name: objects public read template media; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10902,7 +10984,7 @@ CREATE POLICY "public read template media" ON storage.objects FOR SELECT USING (
 
 
 --
--- TOC entry 5372 (class 0 OID 17149)
+-- TOC entry 5380 (class 0 OID 17149)
 -- Dependencies: 385
 -- Name: s3_multipart_uploads; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10910,7 +10992,7 @@ CREATE POLICY "public read template media" ON storage.objects FOR SELECT USING (
 ALTER TABLE storage.s3_multipart_uploads ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5373 (class 0 OID 17163)
+-- TOC entry 5381 (class 0 OID 17163)
 -- Dependencies: 386
 -- Name: s3_multipart_uploads_parts; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10918,7 +11000,7 @@ ALTER TABLE storage.s3_multipart_uploads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE storage.s3_multipart_uploads_parts ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5482 (class 3256 OID 62646)
+-- TOC entry 5491 (class 3256 OID 62646)
 -- Name: objects upload template documents; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10926,7 +11008,7 @@ CREATE POLICY "upload template documents" ON storage.objects FOR INSERT TO authe
 
 
 --
--- TOC entry 5481 (class 3256 OID 62645)
+-- TOC entry 5490 (class 3256 OID 62645)
 -- Name: objects upload template images; Type: POLICY; Schema: storage; Owner: -
 --
 
@@ -10934,7 +11016,7 @@ CREATE POLICY "upload template images" ON storage.objects FOR INSERT TO authenti
 
 
 --
--- TOC entry 5377 (class 0 OID 17315)
+-- TOC entry 5385 (class 0 OID 17315)
 -- Dependencies: 393
 -- Name: vector_indexes; Type: ROW SECURITY; Schema: storage; Owner: -
 --
@@ -10942,7 +11024,7 @@ CREATE POLICY "upload template images" ON storage.objects FOR INSERT TO authenti
 ALTER TABLE storage.vector_indexes ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 5547 (class 6104 OID 19164)
+-- TOC entry 5559 (class 6104 OID 19164)
 -- Name: supabase_realtime; Type: PUBLICATION; Schema: -; Owner: -
 --
 
@@ -10950,7 +11032,7 @@ CREATE PUBLICATION supabase_realtime WITH (publish = 'insert, update, delete, tr
 
 
 --
--- TOC entry 5546 (class 6104 OID 19165)
+-- TOC entry 5558 (class 6104 OID 19165)
 -- Name: supabase_realtime_messages_publication; Type: PUBLICATION; Schema: -; Owner: -
 --
 
@@ -10958,7 +11040,7 @@ CREATE PUBLICATION supabase_realtime_messages_publication WITH (publish = 'inser
 
 
 --
--- TOC entry 5550 (class 6106 OID 43116)
+-- TOC entry 5562 (class 6106 OID 43116)
 -- Name: supabase_realtime conversations; Type: PUBLICATION TABLE; Schema: public; Owner: -
 --
 
@@ -10966,7 +11048,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE ONLY public.conversations;
 
 
 --
--- TOC entry 5549 (class 6106 OID 43115)
+-- TOC entry 5561 (class 6106 OID 43115)
 -- Name: supabase_realtime messages; Type: PUBLICATION TABLE; Schema: public; Owner: -
 --
 
@@ -10974,7 +11056,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE ONLY public.messages;
 
 
 --
--- TOC entry 5548 (class 6106 OID 19166)
+-- TOC entry 5560 (class 6106 OID 19166)
 -- Name: supabase_realtime_messages_publication messages; Type: PUBLICATION TABLE; Schema: realtime; Owner: -
 --
 
@@ -10982,7 +11064,7 @@ ALTER PUBLICATION supabase_realtime_messages_publication ADD TABLE ONLY realtime
 
 
 --
--- TOC entry 4298 (class 3466 OID 16621)
+-- TOC entry 4299 (class 3466 OID 16621)
 -- Name: issue_graphql_placeholder; Type: EVENT TRIGGER; Schema: -; Owner: -
 --
 
@@ -10992,7 +11074,7 @@ CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
 
 
 --
--- TOC entry 4303 (class 3466 OID 16700)
+-- TOC entry 4304 (class 3466 OID 16700)
 -- Name: issue_pg_cron_access; Type: EVENT TRIGGER; Schema: -; Owner: -
 --
 
@@ -11002,7 +11084,7 @@ CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
 
 
 --
--- TOC entry 4297 (class 3466 OID 16619)
+-- TOC entry 4298 (class 3466 OID 16619)
 -- Name: issue_pg_graphql_access; Type: EVENT TRIGGER; Schema: -; Owner: -
 --
 
@@ -11012,7 +11094,7 @@ CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
 
 
 --
--- TOC entry 4304 (class 3466 OID 16703)
+-- TOC entry 4305 (class 3466 OID 16703)
 -- Name: issue_pg_net_access; Type: EVENT TRIGGER; Schema: -; Owner: -
 --
 
@@ -11022,7 +11104,7 @@ CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
 
 
 --
--- TOC entry 4299 (class 3466 OID 16622)
+-- TOC entry 4300 (class 3466 OID 16622)
 -- Name: pgrst_ddl_watch; Type: EVENT TRIGGER; Schema: -; Owner: -
 --
 
@@ -11031,7 +11113,7 @@ CREATE EVENT TRIGGER pgrst_ddl_watch ON ddl_command_end
 
 
 --
--- TOC entry 4300 (class 3466 OID 16623)
+-- TOC entry 4301 (class 3466 OID 16623)
 -- Name: pgrst_drop_watch; Type: EVENT TRIGGER; Schema: -; Owner: -
 --
 
@@ -11039,11 +11121,11 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
    EXECUTE FUNCTION extensions.pgrst_drop_watch();
 
 
--- Completed on 2026-02-09 17:27:18 IST
+-- Completed on 2026-02-12 17:41:00 IST
 
 --
 -- PostgreSQL database dump complete
 --
 
-\unrestrict HBKI4CloiiKHMvjz2LKJKHJ2qzrVlKtgD60KfoLTA0P1H5qdZLKme4CSeQZ6XtL
+\unrestrict HYwN7iU0bfNlHC9D4oh2zjjMbtNyJK2KOhZAjRfKAGOiCGlqvHYNrXgqN6WjDK6
 
