@@ -100,12 +100,35 @@ export function ChatSidebarItem({
   /* -------------------------------------------------------
    * TIME FORMATTER
    * ------------------------------------------------------- */
-  const time = conversation.last_message_at
-    ? new Date(conversation.last_message_at).toLocaleTimeString([], {
+  const time = (() => {
+    if (!conversation.last_message_at) return "No messages";
+
+    const d = new Date(conversation.last_message_at);
+    if (Number.isNaN(d.getTime())) return "No messages";
+
+    const now = new Date();
+
+    const isSameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+
+    if (isSameDay) {
+      // Today → show time only (e.g. 14:35)
+      return d.toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
-      })
-    : "No messages";
+      });
+    }
+
+    // Older than today → show short date + time (e.g. 10 Feb, 14:35)
+    return d.toLocaleString([], {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  })();
 
   /* -------------------------------------------------------
    * UI
