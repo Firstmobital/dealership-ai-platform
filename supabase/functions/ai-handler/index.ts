@@ -106,6 +106,7 @@ type KBScoredRow = {
   similarity?: number; // undefined for lexical-only
   rank?: number; // keep lexical signal for debugging / confidence
   score: number;
+  keywords?: string[]; // knowledge_articles.keywords (optional)
 };
 
 /* ==========================================================================
@@ -271,13 +272,42 @@ function combinedScore(
   return 0.65 * v + 0.35 * l;
 }
 
+function normalizeKeywords(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => String(x || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function intentPreferredKeywords(
+  intent: "pricing" | "offer" | "features" | "service" | "other"
+): string[] {
+  if (intent === "pricing") return ["pricing", "price", "on-road", "on road", "ex-showroom", "ex showroom"];
+  if (intent === "offer") return ["offer", "offers", "discount", "scheme", "special offer", "stock offer"];
+  if (intent === "service") return ["service", "servicing", "workshop", "maintenance"];
+  if (intent === "features") return ["features", "feature", "specs", "spec", "specification", "specifications", "variants"];
+  return [];
+}
+
+function keywordMatchesIntent(params: {
+  articleKeywords: string[] | undefined;
+  intent: "pricing" | "offer" | "features" | "service" | "other";
+}): boolean {
+  const kws = (params.articleKeywords || []).map((k) => k.toLowerCase());
+  if (!kws.length) return false;
+  const preferred = intentPreferredKeywords(params.intent);
+  if (!preferred.length) return false;
+  // Match if any preferred keyword is present as a whole keyword token.
+  return preferred.some((p) => kws.includes(p));
+}
+
 /* ============================================================================
    SAFE HELPERS
 ============================================================================ */
 async function safeSupabase<T>(
   opName: string,
   logger: ReturnType<typeof createLogger>,
-  fn: () => Promise<{ data: T | null; error: any }>
+  fn: () => PromiseLike<{ data: T | null; error: any }>
 ): Promise<T | null> {
   try {
     const { data, error } = await fn();
@@ -883,6 +913,105 @@ type DeterministicIntentResult = {
   reasons: string[];
 };
 
+/* ==========================================================================
+   PRIMARY INTENT (DEALERSHIP WORKFLOWS) — DETERMINISTIC
+   - MUST NOT add new LLM calls
+   - Derived from existing extracted intent (pricing/offer/features/service/other)
+     + existing keyword heuristics already present in this file.
+   - Stored in conversations.ai_state.primary_intent
+   - Also sets conversations.intent (legacy bucket) for backward compatibility
+============================================================================ */
+type PrimaryIntent =
+  | "sales_new_car"
+  | "sales_variant_pricing"
+  | "sales_offer_stock"
+  | "service_booking"
+  | "service_status"
+  | "service_complaint"
+  | "general_inquiry"
+  | "off_topic";
+
+function classifyPrimaryIntent(params: {
+  userMessage: string;
+  extractedIntent: "pricing" | "offer" | "features" | "service" | "other";
+  intentBucket: "sales" | "service" | "finance" | "accessories";
+}): {
+  primary_intent: PrimaryIntent;
+  legacy_bucket: "sales" | "service" | "general";
+} {
+  const msg = (params.userMessage || "").toLowerCase();
+  const extracted = params.extractedIntent || "other";
+
+  // Conservative off-topic detector (do not steal legitimate car/service queries)
+  const isOffTopic =
+    /\b(weather|cricket|movie|movies|song|music|joke|meme|politics|election|bitcoin|crypto|stock market)\b/i.test(
+      msg
+    ) &&
+    !/\b(car|vehicle|test drive|price|pricing|variant|discount|offer|service|workshop|booking|appointment)\b/i.test(
+      msg
+    );
+  if (isOffTopic) {
+    return { primary_intent: "off_topic", legacy_bucket: "general" };
+  }
+
+  // Service split (mirrors existing detectServiceTicketType patterns)
+  if (params.intentBucket === "service" || extracted === "service") {
+    if (/(book|booking|appointment|slot|schedule|pickup|drop)/i.test(msg)) {
+      return { primary_intent: "service_booking", legacy_bucket: "service" };
+    }
+    if (/(status|job card|jobcard|ready|done|completed)/i.test(msg)) {
+      return { primary_intent: "service_status", legacy_bucket: "service" };
+    }
+    if (
+      /(complaint|issue|problem|noise|vibration|not working|failed|refund|consumer|court)/i.test(
+        msg
+      )
+    ) {
+      return { primary_intent: "service_complaint", legacy_bucket: "service" };
+    }
+    // If still service but subtype unclear, default safely
+    return { primary_intent: "general_inquiry", legacy_bucket: "service" };
+  }
+
+  // Sales offers: extracted offer OR strong offer keywords
+  if (
+    extracted === "offer" ||
+    /\b(discount|offer|scheme|deal|exchange bonus|exchange|corporate|loyalty|stock offer|stock offers)\b/i.test(
+      msg
+    )
+  ) {
+    return { primary_intent: "sales_offer_stock", legacy_bucket: "sales" };
+  }
+
+  // Sales pricing: extracted pricing OR strong pricing keywords
+  if (
+    extracted === "pricing" ||
+    /\b(price|pricing|on[- ]?road|ex[- ]?showroom|quotation|quote|emi|down payment|dp|insurance|rto|registration|tcs|breakup|cost)\b/i.test(
+      msg
+    )
+  ) {
+    return { primary_intent: "sales_variant_pricing", legacy_bucket: "sales" };
+  }
+
+  // New-car sales exploration: variants/features/test-drive, etc.
+  if (
+    extracted === "features" ||
+    /\b(variant|variants|feature|features|spec|specs|mileage|range|bhp|torque|safety|sunroof|brochure|compare|test drive|booking|book)\b/i.test(
+      msg
+    )
+  ) {
+    return { primary_intent: "sales_new_car", legacy_bucket: "sales" };
+  }
+
+  // If the handler already decided it's sales, keep it as sales_new_car.
+  if (params.intentBucket === "sales") {
+    return { primary_intent: "sales_new_car", legacy_bucket: "sales" };
+  }
+
+  // Default: general inquiry
+  return { primary_intent: "general_inquiry", legacy_bucket: "general" };
+}
+
 function classifyDeterministicConversationIntent(params: {
   userMessage: string;
   lockedIntent?: string | null;
@@ -1124,7 +1253,8 @@ function extractPricingFocusedContext(text: string, maxChars: number): string {
       t.includes("₹") ||
       t.includes("rs") ||
       t.includes("inr") ||
-      t.includes("ex-showroom") ||
+      t.includes("price") ||
+      t.includes("pricing") ||
       t.includes("on-road") ||
       t.includes("on road") ||
       t.includes("emi") ||
@@ -1984,38 +2114,75 @@ async function extractUserIntentWithAI(params: {
 }): Promise<AiExtractedIntent> {
   const { userMessage, logger } = params;
 
-  const prompt = `
-You are helping a car dealership chatbot.
+  // Keep prompts split as system + user for better JSON compliance.
+  const systemPrompt = `
+You are a strict JSON generator.
 
-From the customer message below, extract:
-- vehicle_model (example: Tigor, Nexon, Tiago) or null
-- vehicle_variant (full variant/trim string if mentioned, else null)
-- fuel_type (Petrol, Diesel, CNG, EV) or null
-- transmission: Manual | Automatic | DCA | AMT | null
-- manufacturing_year (4-digit year like 2024/2025/2026) or null
-- intent: pricing | features | service | offer | other
+Task: Extract structured entities from a customer message for a car dealership chatbot.
+
+Output requirements:
+- Return ONLY a single JSON object (no markdown, no prose, no code fences).
+- All keys must be present.
+- Use null when unknown.
+- Types must match exactly.
+
+Schema (all keys required):
+{
+  "vehicle_model": string | null,
+  "vehicle_variant": string | null,
+  "fuel_type": string | null,
+  "transmission": "Manual" | "Automatic" | "DCA" | "AMT" | null,
+  "manufacturing_year": string | null,
+  "intent": "pricing" | "features" | "service" | "offer" | "other"
+}
 
 Rules:
-- Insurance, on-road price, RTO, EMI all fall under "pricing"
-
-Rules:
-- Fix spelling mistakes silently
-- If unsure, return null for that field
-- Return STRICT JSON only
-
-Customer message:
-"${userMessage}"
+- Insurance, on-road price, RTO, EMI all fall under "pricing".
+- Fix spelling mistakes silently.
+- manufacturing_year must be a 4-digit year as a string (e.g., "2026") or null.
 `.trim();
+
+  // Provide the user message separately to avoid prompt injection and to keep it out of logs.
+  const userPayload = {
+    customer_message: userMessage,
+  };
 
   try {
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
-      messages: [{ role: "system", content: prompt }],
+      response_format: { type: "json_object" } as any,
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: JSON.stringify(userPayload),
+        },
+      ],
     });
 
     const text = resp.choices?.[0]?.message?.content ?? "{}";
-    return JSON.parse(text);
+
+    try {
+      return JSON.parse(text);
+    } catch (parseErr) {
+      // Log raw model output once for debugging, but do not leak PII.
+      logger.warn("[ai-extract] JSON.parse failed (response_format=json_object)", {
+        error: String(parseErr),
+        model: "gpt-4o-mini",
+        output_preview: String(text).slice(0, 600),
+        output_length: String(text).length,
+      });
+
+      return {
+        vehicle_model: null,
+        vehicle_variant: null,
+        fuel_type: null,
+        transmission: null,
+        manufacturing_year: null,
+        intent: "other",
+      };
+    }
   } catch (err) {
     logger.warn("[ai-extract] failed, falling back to nulls", { error: err });
     return {
@@ -2169,7 +2336,7 @@ async function runGeminiCompletion(params: {
     const resp = await chat.sendMessage(lastUser);
     const text = resp.response.text()?.trim() ?? null;
 
-    const usage = resp.response.usageMetadata ?? {};
+    const usage: any = resp.response.usageMetadata ?? {};
 
     return {
       text,
@@ -2569,14 +2736,14 @@ async function resolveKnowledgeContextSemantic(params: {
     used: {
       id: string;
       article_id: string;
-      similarity?: number;
       title: string;
+      similarity?: number;
     }[];
     rejected: {
       id: string;
       article_id: string;
-      similarity?: number;
       title: string;
+      similarity?: number;
       reason: string;
     }[];
     thresholds: {
@@ -2745,6 +2912,36 @@ async function resolveKnowledgeContextSemantic(params: {
       if (!vectorData.length && !lexData.length) return null;
     }
 
+    // ------------------------------------------------------------------
+    // INTENT-SCOPED KEYWORDS (knowledge_articles.keywords)
+    // Fetch keywords for candidate article_ids and use them to prefer intent-relevant docs.
+    // Safe fallback: if no keyword matches exist, keep current behavior.
+    // ------------------------------------------------------------------
+    const candidateArticleIds = Array.from(
+      new Set([
+        ...vectorData.map((r) => String(r.article_id)),
+        ...lexData.map((r) => String(r.article_id)),
+      ].filter(Boolean))
+    );
+
+    const articleKeywordsMap = new Map<string, string[]>();
+    if (candidateArticleIds.length) {
+      const kwRows = await safeSupabase<{ id: string; keywords: any }[]>(
+        "load_article_keywords_for_kb_candidates",
+        logger,
+        async () =>
+          await supabase
+            .from("knowledge_articles")
+            .select("id,keywords")
+            .eq("organization_id", organizationId)
+            .in("id", candidateArticleIds)
+      );
+
+      for (const r of kwRows ?? []) {
+        articleKeywordsMap.set(String((r as any).id), normalizeKeywords((r as any).keywords));
+      }
+    }
+
     // Merge candidates by chunk id
     const merged = new Map<string, KBCandidate>();
 
@@ -2800,11 +2997,12 @@ async function resolveKnowledgeContextSemantic(params: {
       reason: string;
     }[] = [];
 
-    // Helper: boost if model string appears in title/chunk (never hard-drop)
+    // Helper: boost if model string appears in title/chunk or if article keywords match intent
     function boostScore(params: {
       baseScore: number;
       title: string;
       chunk: string;
+      article_id: string;
       intent: "pricing" | "offer" | "features" | "service" | "other";
     }): number {
       let score = params.baseScore;
@@ -2813,14 +3011,21 @@ async function resolveKnowledgeContextSemantic(params: {
       const c = normalizeForMatch(params.chunk);
       const text = `${t} ${c}`;
 
+      // 0) Intent-scoped keyword preference (primary)
+      const kws = articleKeywordsMap.get(params.article_id) ?? [];
+      const kwMatch = keywordMatchesIntent({ articleKeywords: kws, intent: params.intent });
+      if (kwMatch) {
+        // Strong but bounded bump; we still allow highly relevant non-keyword docs.
+        score += 0.18;
+      }
+
       // 1) Model boost (your existing logic)
       if (modelNorm) {
-        if (t.includes(modelNorm)) score += 0.06; // slightly stronger
+        if (t.includes(modelNorm)) score += 0.06;
         if (containsPhrase(c, modelNorm)) score += 0.04;
       }
 
-      // 1.5) Offer anchor boost: when intent is "offer", aggressively
-      // prioritize the dedicated offers article so it outranks generic pricing.
+      // 1.5) Offer anchor boost
       if (
         params.intent === "offer" &&
         isOfferArticle(params.title, params.chunk)
@@ -2828,7 +3033,7 @@ async function resolveKnowledgeContextSemantic(params: {
         score += 0.25;
       }
 
-      // 2) Intent boost: force pricing queries to rank pricing docs higher
+      // 2) Intent boost (existing)
       const pricingSignals = [
         "price",
         "pricing",
@@ -2877,10 +3082,9 @@ async function resolveKnowledgeContextSemantic(params: {
       const isFeaturesish = featuresSignals.some((k) => text.includes(k));
 
       if (params.intent === "pricing") {
-        if (isPricingish) score += 0.12; // ✅ big bump for pricing articles
-        if (isFeaturesish) score -= 0.05; // ✅ slight penalty for feature docs
+        if (isPricingish) score += 0.12;
+        if (isFeaturesish) score -= 0.05;
 
-        // If an "offers" doc matches strongly, allow it but don't let it outrank pricing tables.
         const offerSignals = [
           "discount",
           "offer",
@@ -2891,9 +3095,8 @@ async function resolveKnowledgeContextSemantic(params: {
           "loyalty",
         ];
         const isOfferish = offerSignals.some((k) => text.includes(k));
-        if (isOfferish) score += 0.03; // ✅ small bump only (keeps it secondary for pricing intent)
+        if (isOfferish) score += 0.03;
       } else if (params.intent === "offer") {
-        // Offers should prefer explicit offer/discount docs over generic pricing tables.
         const offerSignals = [
           "discount",
           "offer",
@@ -2905,8 +3108,7 @@ async function resolveKnowledgeContextSemantic(params: {
         ];
         const isOfferish = offerSignals.some((k) => text.includes(k));
 
-        if (isOfferish) score += 0.14; // ✅ strong bump for offer articles
-        // If it's only pricing-ish (tables) but not offer-ish, slightly de-prioritize.
+        if (isOfferish) score += 0.14;
         if (isPricingish && !isOfferish) score -= 0.04;
         if (isFeaturesish) score -= 0.05;
       } else if (params.intent === "features") {
@@ -2951,6 +3153,7 @@ async function resolveKnowledgeContextSemantic(params: {
       const rank = typeof r.rank === "number" ? r.rank : undefined;
 
       const baseScore = combinedScore(sim, rank, intent);
+      const articleKeywords = articleKeywordsMap.get(r.article_id) ?? [];
 
       viable.push({
         id: r.id,
@@ -2959,10 +3162,12 @@ async function resolveKnowledgeContextSemantic(params: {
         chunk,
         similarity: sim,
         rank,
+        keywords: articleKeywords,
         score: boostScore({
           baseScore,
           title: r.title,
           chunk,
+          article_id: r.article_id,
           intent,
         }),
       });
@@ -2971,9 +3176,35 @@ async function resolveKnowledgeContextSemantic(params: {
     if (!viable.length) return null;
 
     // ------------------------------------------------------------------
-    // OFFER ANCHOR: If the query is about offers/discounts and we have any
-    // candidates that look like they come from the dedicated offers article,
-    // restrict to those candidates to avoid cross-model leakage.
+    // INTENT-SCOPED FILTERING (SAFE-FALLBACK)
+    // If any viable chunks come from articles whose keywords match the intent,
+    // restrict to those to prevent cross-topic leakage.
+    // If none match (or keywords missing), keep current behavior.
+    // ------------------------------------------------------------------
+    const hasAnyKeywordMatches = viable.some((v) =>
+      keywordMatchesIntent({ articleKeywords: v.keywords, intent })
+    );
+    if (hasAnyKeywordMatches) {
+      const filtered = viable.filter((v) =>
+        keywordMatchesIntent({ articleKeywords: v.keywords, intent })
+      );
+      if (filtered.length) {
+        const dropped = viable.length - filtered.length;
+        if (dropped > 0) {
+          logger.info("[kb] intent_keyword_filter_applied", {
+            intent,
+            kept: filtered.length,
+            dropped,
+            kept_articles: Array.from(new Set(filtered.map((x) => x.article_id))).slice(0, 12),
+          });
+        }
+        viable.length = 0;
+        viable.push(...filtered);
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // OFFER ANCHOR: existing behavior (still applies after keyword filtering)
     // ------------------------------------------------------------------
     if (intent === "offer") {
       const offerOnly = viable.filter((v) => isOfferArticle(v.title, v.chunk));
@@ -3138,18 +3369,41 @@ async function resolveKnowledgeContextLexicalOnly(params: {
   }
   if (!data?.length) return null;
 
+  const rawRows = data as any[];
+  const articleIdsList = Array.from(
+    new Set(rawRows.map((r) => String(r.article_id)).filter(Boolean))
+  );
+
+  const articleKeywordsMap = new Map<string, string[]>();
+  if (articleIdsList.length) {
+    const kwRows = await safeSupabase<{ id: string; keywords: any }[]>(
+      "load_article_keywords_for_lexical_kb_candidates",
+      logger,
+      async () =>
+        await supabase
+          .from("knowledge_articles")
+          .select("id,keywords")
+          .eq("organization_id", organizationId)
+          .in("id", articleIdsList)
+    );
+
+    for (const r of kwRows ?? []) {
+      articleKeywordsMap.set(String((r as any).id), normalizeKeywords((r as any).keywords));
+    }
+  }
+
   // Convert to KBScoredRow so we can reuse the same packing/diversification.
-  const rows: KBScoredRow[] = (data as any[]).map((r) => {
+  const rows: KBScoredRow[] = rawRows.map((r) => {
     const rank = Number(r.rank ?? 0);
+    const article_id = String(r.article_id);
     return {
       id: String(r.id),
-      article_id: String(r.article_id),
+      article_id,
       title: String(r.article_title || "KB"),
       chunk: String(r.chunk || ""),
-      // lexical-only: no similarity
       similarity: undefined,
       rank,
-      // treat rank as a weak proxy for score
+      keywords: articleKeywordsMap.get(article_id) ?? [],
       score: combinedScore(undefined, rank),
     };
   });
@@ -3239,9 +3493,7 @@ async function detectWorkflowTrigger(
   for (const wf of keywordWorkflows) {
     const keywords: string[] = wf.trigger?.keywords ?? [];
     if (
-      keywords.some((k) =>
-        lowerMsg.includes((k ?? "").toString().toLowerCase())
-      )
+      keywords.some((k) => lowerMsg.includes((k ?? "").toString().toLowerCase()))
     ) {
       logger.info("[workflow] keyword trigger matched", {
         workflow_id: wf.id,
@@ -3474,6 +3726,119 @@ async function logUnansweredQuestion(params: {
     // 🔒 NEVER crash ai-handler because of logging
     params.logger.error("[unanswered_questions] fatal", { error: err });
   }
+}
+
+/* ============================================================================
+   DETERMINISTIC URGENCY DETECTION
+============================================================================ */
+type Urgency = "high" | "medium" | "low";
+
+function detectUrgency(text: string): Urgency {
+  const t = (text || "").toLowerCase();
+
+  // High urgency: price/availability/booking/immediacy intent
+  const highKeywords = [
+    "price",
+    "on-road",
+    "on road",
+    "discount",
+    "offer",
+    "available",
+    "availability",
+    "stock",
+    "booking",
+    "book",
+    "slot",
+    "today",
+    "tomorrow",
+    "test drive",
+    "testdrive",
+    "deliver",
+    "delivery",
+    "emi",
+    "down payment",
+    "downpayment",
+    "quote",
+    "final",
+  ];
+
+  // Medium urgency: comparison / variant / spec intent
+  const mediumKeywords = [
+    "compare",
+    "comparison",
+    "difference",
+    "vs",
+    "variant",
+    "model",
+    "features",
+    "feature",
+    "mileage",
+    "range",
+    "engine",
+    "battery",
+    "colour",
+    "color",
+    "spec",
+    "specs",
+    "safety",
+    "airbag",
+    "sunroof",
+    "automatic",
+    "manual",
+  ];
+
+  const greetingOnly = /^\s*(hi|hello|hey|good\s*(morning|afternoon|evening)|thanks|thank\s*you|ok|okay|cool)\s*[!.]*\s*$/i;
+
+  // Strong transactional patterns
+  const hasMoneyOrTime =
+    /\b(₹|rs\.?|inr|price|cost|on\s*-?road|otr|discount|offer|deal|quote)\b/i.test(t) ||
+    /\b(today|tomorrow|now|urgent|asap)\b/i.test(t);
+  const hasBooking = /\b(book|booking|reserve|slot|appointment|test\s*drive)\b/i.test(t);
+  const hasAvailability = /\b(available|availability|in\s*stock|stock)\b/i.test(t);
+
+  if (hasMoneyOrTime || hasBooking || hasAvailability) return "high";
+  if (highKeywords.some((k) => t.includes(k))) return "high";
+
+  const hasComparison = /\b(vs\b|compare|difference|better|which\s+one|variant|model)\b/i.test(t);
+  if (hasComparison) return "medium";
+  if (mediumKeywords.some((k) => t.includes(k))) return "medium";
+
+  if (greetingOnly.test(text || "")) return "low";
+
+  // Default: if it's not obviously transactional, treat as medium if it asks anything specific
+  const hasQuestionOrSpecific = /\?|\b(tell\s+me|info|details|explain|spec|features)\b/i.test(t);
+  return hasQuestionOrSpecific ? "medium" : "low";
+}
+
+function enforceHighUrgencyReply(reply: string): string {
+  const trimmed = (reply || "").trim();
+  if (!trimmed) return trimmed;
+
+  // Ensure at most one question.
+  const qCount = (trimmed.match(/\?/g) || []).length;
+  let out = trimmed;
+  if (qCount > 1) {
+    // Keep first question mark; replace subsequent question marks with periods.
+    let seen = 0;
+    out = out.replace(/\?/g, (m) => {
+      seen += 1;
+      return seen === 1 ? m : ".";
+    });
+  }
+
+  // Ensure a clear next step exists.
+  const hasNextStep =
+    /\b(next\s*step|i can|we can|let\s*me|shall\s*i|please\s*(share|send)|book|schedule|confirm|connect|call|visit|test\s*drive|quote)\b/i.test(
+      out.toLowerCase(),
+    );
+
+  if (!hasNextStep) {
+    // Add a deterministic, low-risk CTA without adding a second question.
+    out +=
+      "\n\nNext step: Share your preferred variant and city, and I’ll confirm the latest on-road price and availability.";
+  }
+
+  return out;
 }
 
 /* ============================================================================
@@ -4290,6 +4655,17 @@ ${personality.donts || "- None specified."}
       | "finance"
       | "accessories";
 
+    // ------------------------------------------------------------------
+    // PRIMARY INTENT (deterministic) — persisted for workflow routing
+    // ------------------------------------------------------------------
+    const primaryIntentResult = classifyPrimaryIntent({
+      userMessage: user_message,
+      extractedIntent: aiExtract.intent || "other",
+      intentBucket,
+    });
+    const primary_intent: PrimaryIntent =
+      primaryIntentResult?.primary_intent ?? "general_inquiry";
+
     const funnelStage = isServiceIntent
       ? "post_purchase"
       : /\b(book|booking|confirm|buy|purchase|delivery|ready|tests*drive|schedule|visit)\b/i.test(
@@ -4308,6 +4684,11 @@ ${personality.donts || "- None specified."}
         : aiExtract.intent && aiExtract.intent !== "other"
         ? 0.7
         : 0.55;
+
+    // ------------------------------------------------------------------
+    // URGENCY DETECTION (DETERMINISTIC)
+    // ------------------------------------------------------------------
+    const urgency: Urgency = detectUrgency(user_message);
 
     // 9) Campaign context (best-effort; fixed schema)
     let campaignContextText = "";
@@ -5524,6 +5905,7 @@ Respond now to the customer's latest message only.
     const kbArticleIds: string[] = (kbMatchMeta?.article_ids ?? []) as any;
     const mergedAiState: Record<string, any> = {
       ...((conv as any).ai_state || {}),
+      primary_intent,
       last_intent: aiExtract.intent || "other",
       last_intent_bucket: intentBucket,
       funnel_stage: funnelStage,
@@ -5532,6 +5914,7 @@ Respond now to the customer's latest message only.
       last_workflow_id: resolvedWorkflow?.workflow_id ?? null,
       last_workflow_run_at: resolvedWorkflow ? nowIso : null,
       last_kb: kbFound ? nextEntitiesWithKb?.last_kb ?? null : null,
+      urgency,
     };
 
     const conversationUpdate: Record<string, any> = {
@@ -5540,6 +5923,14 @@ Respond now to the customer's latest message only.
       funnel_stage: funnelStage,
       intent_confidence: intentConfidence,
       intent_updated_at: nowIso,
+      // Backward-compatible intent bucket for existing consumers
+      intent:
+        primaryIntentResult?.legacy_bucket ??
+        (intentBucket === "service"
+          ? "service"
+          : intentBucket === "sales"
+          ? "sales"
+          : "general"),
       last_workflow_id: resolvedWorkflow?.workflow_id ?? null,
       last_workflow_run_at: resolvedWorkflow ? nowIso : null,
       last_kb_hit_count: kbFound ? kbArticleIds.length || 0 : 0,
@@ -5636,6 +6027,11 @@ Respond now to the customer's latest message only.
       intentBucket,
       extractedIntent: aiExtract.intent || "other",
     });
+
+    // 15.6) Enforce high urgency reply rules
+    if (urgency === "high") {
+      aiResponseText = enforceHighUrgencyReply(aiResponseText);
+    }
 
     // 16) Phase 6.3 — Log unanswered question
     // - Classic fallback

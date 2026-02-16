@@ -37,7 +37,7 @@ function parseRequiredEntities(step: any): string[] {
   if (!exp) return [];
   return exp
     .split(",")
-    .map((s) => s.trim())
+    .map((s: string) => s.trim())
     .filter(Boolean);
 }
 

@@ -3,7 +3,6 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
-import OpenAI from "https://esm.sh/openai@4.47.0";
 
 import { logAuditEvent } from "../_shared/audit.ts";
 /* =====================================================================================
@@ -19,7 +18,6 @@ const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN");
 const WHATSAPP_APP_SECRET = Deno.env.get("WHATSAPP_APP_SECRET") || "";
 
 const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 const WHATSAPP_API_BASE_URL =
   Deno.env.get("WHATSAPP_API_BASE_URL") ?? "https://graph.facebook.com/v20.0";
 
@@ -57,8 +55,6 @@ async function logDeliveryEvent(params: {
     // never break inbound because of logging
   }
 }
-
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 /* =====================================================================================
    LOGGING
@@ -234,30 +230,8 @@ async function storeWhatsappMedia(
    AI HELPERS
 ===================================================================================== */
 
-async function classifyIntent(text: string) {
-  if (!openai) return "general";
-  try {
-    const r = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Classify message into EXACTLY one of: sales, service, finance, accessories, general.",
-        },
-        { role: "user", content: text.slice(0, MAX_TEXT_LENGTH) },
-      ],
-    });
-    const i = r.choices[0]?.message?.content?.trim().toLowerCase();
-    return ["sales", "service", "finance", "accessories"].includes(i)
-      ? i
-      : "general";
-  } catch {
-    return "general";
-  }
-}
-
+// Intent/stage detection is handled by ai-handler.
+// whatsapp-inbound should ONLY store inbound messages, trigger ai-handler, and log audits.
 
 async function triggerAIHandler(params: {
   conversationId: string;
@@ -798,19 +772,6 @@ if (text && replySheetTab) {
       entity_id: conversationId,
       metadata: { request_id, channel: "whatsapp" },
     });
-
-    const intent = await classifyIntent(safeText);
-    const { error: intentErr } = await supabase
-      .from("conversations")
-      .update({ intent, intent_source: "ai" })
-      .eq("id", conversationId);
-
-    if (intentErr) {
-      convLogger.error("INTENT_UPDATE_FAILED", {
-        error: intentErr,
-        conversationId,
-      });
-    }
   }
 
   convLogger.info("INBOUND_MESSAGE_OK");

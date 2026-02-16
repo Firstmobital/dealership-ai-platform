@@ -528,6 +528,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const aiEnabled = get().aiToggle[conversationId];
     if (!aiEnabled) return { noReply: false };
 
+    // Only trigger AI for customer/inbound messages.
+    const sender = (payload.sender ?? "agent").toString();
+    if (sender === "agent") return { noReply: false };
+
     const { data } = await supabase.functions.invoke("ai-handler", {
       body: { conversation_id: conversationId, user_message: text },
     });
