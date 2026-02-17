@@ -100,35 +100,25 @@ async function safeOpenAI(
 /* =====================================================================================
    CHUNK + ABSTRACT HELPERS
 ===================================================================================== */
-function chunkText(text: string, maxChars = 1200, maxChunks = 200): string[] {
-  const cleaned = text.replace(/\r\n/g, "\n").trim();
-  if (!cleaned) return [];
+function chunkText(
+  text: string,
+  maxWords = 180,
+  overlapWords = 30,
+  maxChunks = 200,
+): string[] {
+  const words = (text || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (!words.length) return [];
 
-  const paragraphs = cleaned.split(/\n{2,}/);
   const chunks: string[] = [];
-  let current = "";
-
-  for (const para of paragraphs) {
-    const p = para.trim();
-    if (!p) continue;
-
-    if ((current + "\n\n" + p).length <= maxChars) {
-      current = current ? `${current}\n\n${p}` : p;
-    } else {
-      if (current) chunks.push(current);
-      if (p.length > maxChars) {
-        for (let i = 0; i < p.length; i += maxChars) {
-          chunks.push(p.slice(i, i + maxChars));
-        }
-        current = "";
-      } else {
-        current = p;
-      }
-    }
-    if (chunks.length >= maxChunks) break;
+  let start = 0;
+  while (start < words.length && chunks.length < maxChunks) {
+    const end = Math.min(start + maxWords, words.length);
+    const chunk = words.slice(start, end).join(" ").trim();
+    if (chunk) chunks.push(chunk);
+    if (end >= words.length) break;
+    start = Math.max(0, end - overlapWords);
   }
 
-  if (current && chunks.length < maxChunks) chunks.push(current);
   return chunks;
 }
 

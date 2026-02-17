@@ -2517,6 +2517,40 @@ function packKbContext(params: {
     maxPerArticle = 4,
   } = params;
 
+  // Diversity inside an article:
+  // Avoid packing many near-duplicate chunks from the same region.
+  // We don’t have chunk_index here, so we use a lightweight similarity key.
+  const fingerprint = (text: string) => {
+    const n = normalizeForMatch(text || "");
+    // Focus near the start; chunks from same region tend to share leading tokens
+    return n.split(" ").slice(0, 40).join(" ").trim();
+  };
+
+  const jaccard = (a: string, b: string) => {
+    const as = new Set((a || "").split(" ").filter(Boolean));
+    const bs = new Set((b || "").split(" ").filter(Boolean));
+    if (!as.size || !bs.size) return 0;
+    let inter = 0;
+    for (const x of as) if (bs.has(x)) inter++;
+    const union = as.size + bs.size - inter;
+    return union ? inter / union : 0;
+  };
+
+  const tooSimilarToRecentInSameArticle = (
+    article_id: string,
+    chunkRaw: string,
+    recentByArticle: Map<string, string[]>
+  ) => {
+    const fp = fingerprint(chunkRaw);
+    const recent = recentByArticle.get(article_id) ?? [];
+    // Compare against last few accepted chunks in that same article
+    for (const prevFp of recent.slice(-3)) {
+      if (prevFp === fp) return true;
+      if (jaccard(prevFp, fp) >= 0.82) return true;
+    }
+    return false;
+  };
+
   // Diversify by article: prevent 8 chunks from the same doc.
   // Strategy:
   // 1) Group rows by article_id
@@ -2554,6 +2588,7 @@ function packKbContext(params: {
   const seen = new Set<string>();
   const usedCountByArticle = new Map<string, number>();
   const nextIndexByArticle = new Map<string, number>();
+  const recentFingerprintsByArticle = new Map<string, string[]>();
 
   let remaining = maxChars;
 
@@ -2577,14 +2612,24 @@ function packKbContext(params: {
       const raw = (r.chunk || "").trim();
       if (!raw) continue;
 
-      // Dedup by normalized prefix
+      // NEW: intra-article near-duplicate filter
+      if (
+        tooSimilarToRecentInSameArticle(
+          a.article_id,
+          raw,
+          recentFingerprintsByArticle
+        )
+      ) {
+        continue;
+      }
+
+      // Dedup by normalized prefix (global)
       const key = normalizeForMatch(raw).slice(0, 280);
       if (seen.has(key)) continue;
       seen.add(key);
 
       // Trim chunk to reduce token waste
-      const chunk =
-        raw.length > maxChunkChars ? raw.slice(0, maxChunkChars) : raw;
+      const chunk = raw.length > maxChunkChars ? raw.slice(0, maxChunkChars) : raw;
 
       const title = r.title || articleTitle.get(a.article_id) || "KB";
       const block = `### ${title}\n${chunk}`;
@@ -2603,6 +2648,12 @@ function packKbContext(params: {
 
       usedCountByArticle.set(a.article_id, already + 1);
       progressed = true;
+
+      // Remember fingerprints for near-dup checks within this article
+      const fp = fingerprint(raw);
+      const arr = recentFingerprintsByArticle.get(a.article_id) ?? [];
+      arr.push(fp);
+      recentFingerprintsByArticle.set(a.article_id, arr);
     }
 
     if (!progressed) break outer;

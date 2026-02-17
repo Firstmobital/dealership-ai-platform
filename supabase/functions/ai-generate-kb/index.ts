@@ -140,44 +140,26 @@ async function setProcessingError(
 /* =====================================================================================
    TEXT CHUNKING
 ===================================================================================== */
-function chunkText(text: string, maxChars = 1200, maxChunks = 200): string[] {
-  const cleaned = text.replace(/\r\n/g, "\n").trim();
-  if (!cleaned) return [];
+// NOTE: Keep KB chunking consistent across all ingestion paths.
+// We chunk by words with overlap to preserve context across boundaries.
+function chunkText(
+  text: string,
+  maxWords = 180,
+  overlapWords = 30,
+  maxChunks = 200,
+): string[] {
+  const words = (text || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (!words.length) return [];
 
-  // Prefer paragraph-ish chunking first
-  const paragraphs = cleaned.split(/\n{2,}/);
   const chunks: string[] = [];
-  let current = "";
-
-  for (const para of paragraphs) {
-    const p = para.trim();
-    if (!p) continue;
-
-    const candidate = current ? `${current}\n\n${p}` : p;
-
-    if (candidate.length <= maxChars) {
-      current = candidate;
-      continue;
-    }
-
-    if (current) chunks.push(current);
-    current = "";
-
-    // If paragraph itself is too big, hard-split
-    if (p.length > maxChars) {
-      for (let i = 0; i < p.length; i += maxChars) {
-        chunks.push(p.slice(i, i + maxChars));
-        if (chunks.length >= maxChunks) break;
-      }
-    } else {
-      current = p;
-    }
-
-    if (chunks.length >= maxChunks) break;
+  let start = 0;
+  while (start < words.length && chunks.length < maxChunks) {
+    const end = Math.min(start + maxWords, words.length);
+    const chunk = words.slice(start, end).join(" ").trim();
+    if (chunk) chunks.push(chunk);
+    if (end >= words.length) break;
+    start = Math.max(0, end - overlapWords);
   }
-
-  if (current && chunks.length < maxChunks) chunks.push(current);
-
   return chunks;
 }
 
@@ -545,6 +527,16 @@ async function extractTextFromFile(
 /* =====================================================================================
    EMBEDDINGS
 ===================================================================================== */
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 async function embedChunks(
   logger: ReturnType<typeof createLogger>,
   chunks: string[]
@@ -554,22 +546,145 @@ async function embedChunks(
     return null;
   }
 
-  try {
-    const resp = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: chunks,
-    });
+  if (!chunks.length) return [];
 
-    return resp.data.map((row: any) => row.embedding as number[]);
-  } catch (err) {
-    logger.error("EMBEDDING_ERROR", { error: String(err) });
+  const EMBED_MODEL = "text-embedding-3-small";
+  const inputBatches = chunkArray(chunks, 80); // keep payloads safe
+  const vectorsAll: number[][] = [];
+
+  const maxAttempts = 4;
+
+  for (let bi = 0; bi < inputBatches.length; bi++) {
+    const batch = inputBatches[bi];
+
+    let batchVectors: number[][] | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        // Guard against hangs
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60_000);
+
+        try {
+          logger.info("EMBED_BATCH_START", {
+            batch: bi + 1,
+            total_batches: inputBatches.length,
+            size: batch.length,
+            attempt,
+          });
+
+          const resp = await openai.embeddings.create(
+            {
+              model: EMBED_MODEL,
+              input: batch,
+            },
+            {
+              signal: controller.signal as any,
+            } as any,
+          );
+
+          const vectors = resp.data.map((row: any) => row.embedding as number[]);
+
+          if (vectors.length !== batch.length) {
+            logger.error("EMBEDDING_COUNT_MISMATCH", {
+              expected: batch.length,
+              got: vectors.length,
+              batch: bi + 1,
+            });
+            batchVectors = null;
+          } else {
+            batchVectors = vectors;
+          }
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (err: any) {
+        const status = err?.status ?? err?.response?.status ?? null;
+        const message = err?.message ? String(err.message) : String(err);
+
+        logger.error("EMBEDDING_ERROR", {
+          batch: bi + 1,
+          attempt,
+          status,
+          error: message,
+        });
+
+        const retryable =
+          status === 429 ||
+          (typeof status === "number" && status >= 500 && status <= 599) ||
+          message.toLowerCase().includes("abort") ||
+          message.toLowerCase().includes("timeout") ||
+          message.toLowerCase().includes("network");
+
+        if (retryable && attempt < maxAttempts) {
+          await sleep(400 * attempt);
+          continue;
+        }
+
+        batchVectors = null;
+      }
+
+      if (batchVectors) break;
+
+      // small backoff even on non-throw mismatch
+      if (attempt < maxAttempts) await sleep(250 * attempt);
+    }
+
+    if (!batchVectors) return null;
+    vectorsAll.push(...batchVectors);
+  }
+
+  if (vectorsAll.length !== chunks.length) {
+    logger.error("EMBEDDINGS_TOTAL_MISMATCH", {
+      expected: chunks.length,
+      got: vectorsAll.length,
+    });
     return null;
   }
+
+  return vectorsAll;
 }
 
 /* =====================================================================================
    MAIN HANDLER
 ===================================================================================== */
+async function insertKnowledgeChunksBatched(params: {
+  logger: ReturnType<typeof createLogger>;
+  records: any[];
+  batchSize?: number;
+}): Promise<boolean> {
+  const { logger } = params;
+  const records = params.records || [];
+  const batchSize = Math.max(1, Math.min(500, params.batchSize ?? 200));
+
+  if (!records.length) return true;
+
+  const batches = chunkArray(records, batchSize);
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+
+    logger.info("KB_CHUNKS_INSERT_BATCH", {
+      batch: i + 1,
+      total_batches: batches.length,
+      size: batch.length,
+    });
+
+    const { error } = await supabase
+      .from("knowledge_chunks")
+      .insert(batch, { returning: "minimal" });
+
+    if (error) {
+      logger.error("KB_CHUNKS_INSERT_ERROR_BATCH", {
+        error,
+        batch: i + 1,
+      });
+      return false;
+    }
+  }
+
+  return true;
+}
+
 serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return cors(new Response("ok", { status: 200 }));
 
@@ -846,10 +961,9 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
       embedding: vectors[i],
     }));
 
-    const { error: chunkError } = await supabase.from("knowledge_chunks").insert(records);
-    if (chunkError) {
+    const okChunks = await insertKnowledgeChunksBatched({ logger, records, batchSize: 200 });
+    if (!okChunks) {
       logger.error("KB_CHUNKS_INSERT_ERROR(model)", {
-        error: chunkError,
         article_id: articleId,
         model,
       });
@@ -898,7 +1012,7 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
         chunk,
         embedding: containerVectors[i],
       }));
-      await supabase.from("knowledge_chunks").insert(containerRecords);
+      await insertKnowledgeChunksBatched({ logger, records: containerRecords, batchSize: 200 });
     }
   } else {
     // Create mode: create a container (archived) for traceability
@@ -941,7 +1055,7 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
           chunk,
           embedding: containerVectors[i],
         }));
-        await supabase.from("knowledge_chunks").insert(containerRecords);
+        await insertKnowledgeChunksBatched({ logger, records: containerRecords, batchSize: 200 });
       }
     }
   }
@@ -1252,19 +1366,15 @@ if (!text) {
       embedding: vectors[i],
     }));
 
-    const { error: chunkError } = await supabase.from("knowledge_chunks").insert(records);
-
-    if (chunkError) {
-      logger.error("KB_CHUNKS_INSERT_ERROR", { error: chunkError, article_id: articleId });
-
-      const msg = `Failed to insert chunks: ${chunkError.message ?? "unknown"}`;
+    const chunksInserted = await insertKnowledgeChunksBatched({ logger, records, batchSize: 200 });
+    if (!chunksInserted) {
+      const msg = "Failed to insert chunks";
       await setProcessingError(logger, articleId, msg);
 
       return cors(
         new Response(
           JSON.stringify({
-            error: "Failed to insert chunks",
-            details: chunkError,
+            error: msg,
             request_id,
           }),
           { status: 500, headers: { "Content-Type": "application/json" } }
