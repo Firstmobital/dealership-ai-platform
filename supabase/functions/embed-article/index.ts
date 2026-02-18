@@ -12,6 +12,7 @@ import {
   requireOrgMembership,
   requireUser,
 } from "../_shared/auth.ts";
+import { chunkKnowledgeArticle } from "../_shared/kbChunking.ts";
 
 /* =====================================================================================
    ENV
@@ -224,24 +225,7 @@ async function safeEmbeddingsBatch(
 /* =====================================================================================
    CHUNKING
 ===================================================================================== */
-function chunkText(text: string, maxWords = 180, overlapWords = 30): string[] {
-  const words = (text || "").split(/\s+/).filter(Boolean);
-  const chunks: string[] = [];
-
-  let start = 0;
-  while (start < words.length) {
-    const end = Math.min(start + maxWords, words.length);
-    const chunk = words.slice(start, end).join(" ").trim();
-    if (chunk) chunks.push(chunk);
-
-    if (end === words.length) break;
-    start = Math.max(0, end - overlapWords);
-
-    if (chunks.length >= 200) break;
-  }
-
-  return chunks;
-}
+// (chunking implementation moved to _shared/kbChunking.ts)
 
 /* =====================================================================================
    MAIN
@@ -353,7 +337,7 @@ serve(async (req: Request): Promise<Response> => {
     return json(200, { skipped: true, reason: "Content too short", request_id });
   }
 
-  const chunks = chunkText(content, 180, 30);
+  const chunks = chunkKnowledgeArticle({ content, maxWords: 180, overlapWords: 30, maxChunks: 200 }).chunks;
   if (!chunks.length) {
     return json(200, { skipped: true, reason: "Chunking failed", request_id });
   }

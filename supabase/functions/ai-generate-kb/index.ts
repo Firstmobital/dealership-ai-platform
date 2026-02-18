@@ -7,6 +7,7 @@ import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
 import { logAuditEvent } from "../_shared/audit.ts";
 import { getRequestId, requireOrgMembership, requireUser } from "../_shared/auth.ts";
+import { chunkKnowledgeArticle } from "../_shared/kbChunking.ts";
 /* =====================================================================================
    ENV
 ===================================================================================== */
@@ -142,26 +143,8 @@ async function setProcessingError(
 ===================================================================================== */
 // NOTE: Keep KB chunking consistent across all ingestion paths.
 // We chunk by words with overlap to preserve context across boundaries.
-function chunkText(
-  text: string,
-  maxWords = 180,
-  overlapWords = 30,
-  maxChunks = 200,
-): string[] {
-  const words = (text || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-  if (!words.length) return [];
-
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < words.length && chunks.length < maxChunks) {
-    const end = Math.min(start + maxWords, words.length);
-    const chunk = words.slice(start, end).join(" ").trim();
-    if (chunk) chunks.push(chunk);
-    if (end >= words.length) break;
-    start = Math.max(0, end - overlapWords);
-  }
-  return chunks;
-}
+// (Implementation moved to _shared/kbChunking.ts to support variant-sheet block chunking.)
+// ...existing code...
 
 /* =====================================================================================
    FILE → TEXT EXTRACTION
@@ -885,7 +868,7 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
     });
 
     const modelKeywords = buildModelKeywords(model, keywords);
-    const chunks = chunkText(content);
+    const chunks = chunkKnowledgeArticle({ content, maxWords: 180, overlapWords: 30, maxChunks: 200, title, keywords: modelKeywords }).chunks;
 
     if (!chunks.length) continue;
 
@@ -1002,7 +985,7 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
       .eq("id", replaceArticleId);
 
     // Insert minimal chunk so container isn't empty for embeddings
-    const containerChunks = chunkText(containerNote);
+    const containerChunks = chunkKnowledgeArticle({ content: containerNote, maxWords: 180, overlapWords: 30, maxChunks: 200, title: incomingTitle, keywords }).chunks;
     const containerVectors = await embedChunks(logger, containerChunks);
     if (containerVectors && containerVectors.length === containerChunks.length) {
       const containerRecords = containerChunks.map((chunk, i) => ({
@@ -1045,7 +1028,7 @@ if (Array.isArray(excelRows) && excelRows.length > 0) {
     );
 
     if (container?.id) {
-      const containerChunks = chunkText(containerNote);
+      const containerChunks = chunkKnowledgeArticle({ content: containerNote, maxWords: 180, overlapWords: 30, maxChunks: 200, title: incomingTitle, keywords }).chunks;
       const containerVectors = await embedChunks(logger, containerChunks);
       if (containerVectors && containerVectors.length === containerChunks.length) {
         const containerRecords = containerChunks.map((chunk, i) => ({
@@ -1175,7 +1158,7 @@ if (!text) {
     /* ============================================
        CHUNKING
     ============================================ */
-    const chunks = chunkText(fullText);
+    const chunks = chunkKnowledgeArticle({ content: fullText, maxWords: 180, overlapWords: 30, maxChunks: 200, title: incomingTitle, keywords }).chunks;
     if (chunks.length === 0) {
       const msg = "Chunking failed";
       await setProcessingError(logger, articleIdForError, msg);

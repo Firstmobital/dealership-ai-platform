@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
 import OpenAI from "https://esm.sh/openai@4.47.0";
 import { logAuditEvent } from "../_shared/audit.ts";
 import { requireUser, requireOrgMembership, requireOrgRole } from "../_shared/auth.ts";
+import { chunkKnowledgeArticle } from "../_shared/kbChunking.ts";
 
 /* =====================================================================================
    ENV
@@ -98,38 +99,16 @@ async function safeOpenAI(
 }
 
 /* =====================================================================================
-   CHUNK + ABSTRACT HELPERS
+   SUMMARY + EMBEDDINGS HELPERS
 ===================================================================================== */
-function chunkText(
-  text: string,
-  maxWords = 180,
-  overlapWords = 30,
-  maxChunks = 200,
-): string[] {
-  const words = (text || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-  if (!words.length) return [];
-
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < words.length && chunks.length < maxChunks) {
-    const end = Math.min(start + maxWords, words.length);
-    const chunk = words.slice(start, end).join(" ").trim();
-    if (chunk) chunks.push(chunk);
-    if (end >= words.length) break;
-    start = Math.max(0, end - overlapWords);
-  }
-
-  return chunks;
-}
-
 async function generateSummary(
   logger: any,
   text: string,
-  title: string
+  title: string,
 ): Promise<string> {
   if (!openai) {
     logger.warn("No OpenAI – fallback summary used");
-    return text.slice(0, 600);
+    return String(text || "").slice(0, 600);
   }
 
   const prompt = `
@@ -137,7 +116,7 @@ Create a 4–6 sentence clean summary for a dealership knowledge base.
 Title: ${title}
 
 Content:
-${text.slice(0, 3000)}
+${String(text || "").slice(0, 3000)}
 
 Return ONLY the summary.
 `.trim();
@@ -148,13 +127,13 @@ Return ONLY the summary.
     messages: [{ role: "user", content: prompt }],
   });
 
-  if (!result.ok) return text.slice(0, 600);
-  return result.text || text.slice(0, 600);
+  if (!result.ok) return String(text || "").slice(0, 600);
+  return result.text || String(text || "").slice(0, 600);
 }
 
 async function embedChunks(
   logger: any,
-  chunks: string[]
+  chunks: string[],
 ): Promise<number[][] | null> {
   if (!openai) {
     logger.warn("No OpenAI – zero vectors used");
@@ -213,16 +192,15 @@ serve(async (req: Request): Promise<Response> => {
       return cors(
         new Response(
           JSON.stringify({ error: "Missing required fields", request_id }),
-          { status: 400, headers: { "Content-Type": "application/json" } }
-        )
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
       );
-    
+    }
 
     // PHASE 1 — Auth: org admin/owner
     const user = await requireUser(req);
     await requireOrgMembership({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id });
-    await requireOrgRole({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id, allowedRoles: ["owner","admin"] });
-}
+    await requireOrgRole({ supabaseAdmin: supabase, userId: user.id, organizationId: organization_id, allowedRoles: ["owner", "admin"] });
 
     logger.info("Processing KB save for unanswered question", { question_id });
 
@@ -301,7 +279,7 @@ serve(async (req: Request): Promise<Response> => {
     /* ------------------------------------------------------------------
        STEP 3 — Chunk + Embed
     ------------------------------------------------------------------ */
-    const chunks = chunkText(questionText);
+    const chunks = chunkKnowledgeArticle({ content: questionText, maxWords: 180, overlapWords: 30, maxChunks: 200, title: articleTitle }).chunks;
 
     const vectors = await embedChunks(logger, chunks);
     if (!vectors || vectors.length !== chunks.length) {
