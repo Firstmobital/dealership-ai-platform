@@ -105,11 +105,12 @@ function splitIntoVariantBlocks(content: string): string[] {
   let current: string[] = [];
   for (const line of lines) {
     if (variantLine.test(line)) {
+      // Flush any accumulated preface or previous variant block.
       if (current.length) blocks.push(current.join("\n").trimEnd());
       current = [line];
     } else {
-      // ignore leading content before first Variant:
-      if (current.length) current.push(line);
+      // Keep content before the first Variant: as a preface block.
+      current.push(line);
     }
   }
   if (current.length) blocks.push(current.join("\n").trimEnd());
@@ -216,36 +217,47 @@ export function chunkKnowledgeArticle(params: {
   }
 
   if (params.sanityCheck !== false) {
-    sanityCheckChunks({ mode, chunks });
+    const ok = sanityCheckChunks({ mode, chunks });
+    if (!ok) {
+      // Never crash ingestion: fall back to word chunking.
+      mode = "word";
+      chunks = chunkByWordsPreserveNewlines(content, maxWords, overlapWords, maxChunks);
+    }
   }
 
   return { mode, chunks };
 }
 
-export function sanityCheckChunks(result: ChunkingResult) {
+export function sanityCheckChunks(result: ChunkingResult): boolean {
   const { mode, chunks } = result;
-  if (!chunks?.length) return;
+  if (!chunks?.length) return true;
 
   // Check formatting/newlines preserved: at least one chunk should contain a line break if source is structured.
   // In word mode (narrative), may not necessarily contain line breaks; so only assert for variant_sheet.
   if (mode === "variant_sheet") {
     const hasAnyNewline = chunks.some((c) => c.includes("\n"));
     if (!hasAnyNewline) {
-      throw new Error("KB_CHUNK_SANITY_FAIL: variant_sheet chunks lost newlines");
+      console.warn("KB_CHUNK_SANITY_FAIL: variant_sheet chunks lost newlines");
+      return false;
     }
 
-    // Every chunk must contain Variant: at least once.
-    for (const c of chunks) {
-      if (!/^.*\bvariant\s*:/im.test(c)) {
-        throw new Error("KB_CHUNK_SANITY_FAIL: variant_sheet chunk missing 'Variant:'");
-      }
+    // Allow a preface chunk that may not include Variant:. Require that at least one chunk has Variant:.
+    const hasSomeVariant = chunks.some((c) => /^.*\bvariant\s*:/im.test(c));
+    if (!hasSomeVariant) {
+      console.warn("KB_CHUNK_SANITY_FAIL: variant_sheet chunks missing 'Variant:' entirely");
+      return false;
+    }
 
+    for (const c of chunks) {
       // No chunk should begin with a trailing pricing field label without Variant context.
       // This catches the exact retrieval failure mode described.
       const startsWithTrailingField = /^\s*(price|ex-?showroom|on\s*road|insurance|rto|registration)\b\s*[:\-–]/i.test(c);
       if (startsWithTrailingField && !/\bvariant\s*:/i.test(c)) {
-        throw new Error("KB_CHUNK_SANITY_FAIL: chunk begins with pricing field but has no Variant header");
+        console.warn("KB_CHUNK_SANITY_FAIL: chunk begins with pricing field but has no Variant header");
+        return false;
       }
     }
   }
+
+  return true;
 }
