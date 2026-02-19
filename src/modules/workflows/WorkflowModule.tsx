@@ -133,6 +133,9 @@ export function WorkflowModule() {
   const [templatePopoverPos, setTemplatePopoverPos] = useState<
     { top: number; left: number; width: number } | null
   >(null);
+  const [templatePopoverSide, setTemplatePopoverSide] = useState<"bottom" | "top">(
+    "bottom"
+  );
   const [templateTriggerEl, setTemplateTriggerEl] = useState<HTMLButtonElement | null>(
     null
   );
@@ -563,8 +566,28 @@ export function WorkflowModule() {
                     onClick={(e) => {
                       const el = e.currentTarget as HTMLButtonElement;
                       const rect = el.getBoundingClientRect();
+
+                      // Preferred: open down. Flip up if not enough space below.
+                      const sideOffset = 8;
+                      const collisionPadding = 8;
+                      const expectedPopoverHeight = 420; // matches max-h-[420px]
+                      const spaceBelow =
+                        window.innerHeight - rect.bottom - collisionPadding;
+                      const spaceAbove = rect.top - collisionPadding;
+                      const nextSide: "bottom" | "top" =
+                        spaceBelow < expectedPopoverHeight && spaceAbove > spaceBelow
+                          ? "top"
+                          : "bottom";
+
+                      setTemplatePopoverSide(nextSide);
+
+                      const top =
+                        nextSide === "bottom"
+                          ? rect.bottom + window.scrollY + sideOffset
+                          : rect.top + window.scrollY - sideOffset;
+
                       setTemplatePopoverPos({
-                        top: rect.bottom + window.scrollY,
+                        top,
                         left: rect.left + window.scrollX,
                         width: rect.width,
                       });
@@ -590,12 +613,19 @@ export function WorkflowModule() {
                         id="wf-template-popover"
                         className="fixed z-50 rounded-md border border-slate-200 bg-white shadow-lg"
                         style={{
-                          top: templatePopoverPos.top,
+                          ...(templatePopoverSide === "bottom"
+                            ? { top: templatePopoverPos.top }
+                            : { bottom: window.innerHeight - templatePopoverPos.top }),
                           left: templatePopoverPos.left,
                           width: Math.max(320, templatePopoverPos.width),
                         }}
                       >
-                        <div className="flex max-h-[420px] flex-col">
+                        <div
+                          className={
+                            "flex max-h-[420px] flex-col " +
+                            (templatePopoverSide === "top" ? "origin-bottom" : "origin-top")
+                          }
+                        >
                           <div className="p-3">
                             <input
                               className={inputClass}
