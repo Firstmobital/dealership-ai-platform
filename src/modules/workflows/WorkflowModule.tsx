@@ -220,13 +220,27 @@ export function WorkflowModule() {
     }
 
     if (form.trigger_type === "whatsapp_template") {
+      // IMPORTANT: persist template *names* (not ids)
       base.templates = Array.isArray(form.templates)
-        ? form.templates.map((t) => String(t || "").trim()).filter(Boolean)
+        ? form.templates
+            .map((t) => String(t || "").trim())
+            .filter(Boolean)
         : [];
     }
 
     return base;
   };
+
+  // Prevent stale template selection from carrying over when switching trigger types.
+  useEffect(() => {
+    if (form.trigger_type === "whatsapp_template") return;
+    if (form.templates.length === 0) return;
+    setForm((prev) => ({ ...prev, templates: [] }));
+    setTemplateDraft([]);
+    setTemplateQuery("");
+    setTemplatePopoverOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.trigger_type]);
 
   const handleSelectWorkflow = (wf: Workflow) => {
     setSelectedWorkflow(wf);

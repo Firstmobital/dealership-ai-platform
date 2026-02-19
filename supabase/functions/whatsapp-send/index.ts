@@ -577,6 +577,17 @@ try {
         if (!base && !body.rendered_text) return null;
         const out: any = { ...(base ?? {}) };
         if (body.rendered_text) out.rendered_text = body.rendered_text;
+
+        // Persist template info for later workflow trigger detection (metadata-only; no schema changes)
+        if (transportType === "template") {
+          out.whatsapp = {
+            ...((out as any).whatsapp ?? {}),
+            template_name: String(body.template_name ?? ""),
+            template_language: String(body.template_language ?? ""),
+            kind: "template",
+          };
+        }
+
         return Object.keys(out).length ? out : null;
       })();
 
@@ -926,20 +937,21 @@ if (!waPayload) {
         sent_at: nowIso,
         metadata: (() => {
           const base = body.metadata ?? null;
-          if (!base && !body.rendered_text) return null;
           const out: any = { ...(base ?? {}) };
           if (body.rendered_text) out.rendered_text = body.rendered_text;
+
+          // Persist template info for later workflow trigger detection (metadata-only; no schema changes)
+          if (type === "template") {
+            out.whatsapp = {
+              ...((out as any).whatsapp ?? {}),
+              template_name: String(body.template_name ?? ""),
+              template_language: String(body.template_language ?? ""),
+              kind: "template",
+            };
+          }
+
           return Object.keys(out).length ? out : null;
         })(),
-        message_type: businessType,
-        sender: businessType === "campaign" ? "bot" : (body.sender ?? "bot"),
-        text: type === "text" ? body.text ?? null : body.rendered_text ?? body.text ?? null,
-        ...(type === "template"
-          ? {
-              whatsapp_template_name: body.template_name ?? null,
-              whatsapp_template_language: body.template_language ?? null,
-            }
-          : {}),
 
         })
         .select('id')

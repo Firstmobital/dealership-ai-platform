@@ -3511,6 +3511,37 @@ type WorkflowStepRow = {
   } | null;
 };
 
+async function getLastOutboundTemplateName(params: {
+  conversationId: string;
+  organizationId: string;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<string | null> {
+  const { conversationId, organizationId, logger } = params;
+
+  const rows = await safeSupabase<any[]>(
+    "load_last_outbound_messages_for_template_trigger",
+    logger,
+    () =>
+      supabase
+        .from("messages")
+        .select("metadata, created_at")
+        .eq("organization_id", organizationId)
+        .eq("conversation_id", conversationId)
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: false })
+        .limit(10)
+  );
+
+  for (const r of rows ?? []) {
+    const whatsapp = (r as any)?.metadata?.whatsapp;
+    const kind = String(whatsapp?.kind ?? "").trim().toLowerCase();
+    const name = String(whatsapp?.template_name ?? "").trim();
+    if (kind === "template" && name) return name;
+  }
+
+  return null;
+}
+
 /* ============================================================================
    WORKFLOW — TRIGGER DETECTION
 ============================================================================ */
@@ -3575,24 +3606,12 @@ async function detectWorkflowTrigger(
 
   // 2) WHATSAPP TEMPLATE (latest outbound message)
   if (templateWorkflows.length && conversationId) {
-    const lastOutbound = await safeSupabase<{ whatsapp_template_name: string | null }>(
-      "load_latest_outbound_template_for_workflow_trigger",
+    const lastTemplateRaw = await getLastOutboundTemplateName({
+      conversationId,
+      organizationId,
       logger,
-      () =>
-        supabase
-          .from("messages")
-          .select("whatsapp_template_name")
-          .eq("organization_id", organizationId)
-          .eq("conversation_id", conversationId)
-          .in("sender", ["bot", "agent"])
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-    );
-
-    const lastTemplate = String(lastOutbound?.whatsapp_template_name ?? "")
-      .trim()
-      .toLowerCase();
+    });
+    const lastTemplate = String(lastTemplateRaw ?? "").trim().toLowerCase();
 
     if (lastTemplate) {
       for (const wf of templateWorkflows) {
