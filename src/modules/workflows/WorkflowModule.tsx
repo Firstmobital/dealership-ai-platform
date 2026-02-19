@@ -595,83 +595,85 @@ export function WorkflowModule() {
                           width: Math.max(320, templatePopoverPos.width),
                         }}
                       >
-                        <div className="p-3">
-                          <input
-                            className={inputClass}
-                            value={templateQuery}
-                            onChange={(e) => setTemplateQuery(e.target.value)}
-                            placeholder="Search templates…"
-                            autoFocus
-                          />
-                        </div>
-
-                        <div
-                          className="max-h-64 overflow-y-auto border-t border-slate-100"
-                          role="listbox"
-                          aria-label="WhatsApp templates"
-                        >
-                          {filteredTemplateOptions.length === 0 ? (
-                            <div className="px-3 py-3 text-sm text-slate-500">
-                              No templates found.
-                            </div>
-                          ) : (
-                            filteredTemplateOptions.slice(0, 120).map((t) => {
-                              const name = t.name;
-                              const lang = t.language;
-                              const key = `${name}::${lang || "-"}`;
-                              const checked = templateDraft.includes(name);
-
-                              return (
-                                <label
-                                  key={key}
-                                  className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50"
-                                >
-                                  <span className="min-w-0">
-                                    <span className="block font-medium text-slate-900 truncate">
-                                      {name}
-                                    </span>
-                                    <span className="block text-xs text-slate-500">
-                                      {lang || "—"}
-                                    </span>
-                                  </span>
-
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(ev) => {
-                                      const next = new Set(templateDraft);
-                                      if (ev.target.checked) next.add(name);
-                                      else next.delete(name);
-                                      setTemplateDraft([...next]);
-                                    }}
-                                  />
-                                </label>
-                              );
-                            })
-                          )}
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 border-t border-slate-100 p-3">
-                          <div className="text-xs text-slate-500">
-                            Selected: {templateDraft.length}
+                        <div className="flex max-h-[420px] flex-col">
+                          <div className="p-3">
+                            <input
+                              className={inputClass}
+                              value={templateQuery}
+                              onChange={(e) => setTemplateQuery(e.target.value)}
+                              placeholder="Search templates…"
+                              autoFocus
+                            />
                           </div>
-                          <button
-                            type="button"
-                            className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
-                            onClick={() => {
-                              const committed = Array.from(
-                                new Set(
-                                  (templateDraft || [])
-                                    .map((x) => String(x || "").trim())
-                                    .filter(Boolean)
-                                )
-                              );
-                              setForm({ ...form, templates: committed });
-                              setTemplatePopoverOpen(false);
-                            }}
+
+                          <div
+                            className="max-h-[280px] overflow-y-auto border-t border-slate-100"
+                            role="listbox"
+                            aria-label="WhatsApp templates"
                           >
-                            Done
-                          </button>
+                            {filteredTemplateOptions.length === 0 ? (
+                              <div className="px-3 py-3 text-sm text-slate-500">
+                                No templates found.
+                              </div>
+                            ) : (
+                              filteredTemplateOptions.slice(0, 120).map((t) => {
+                                const name = t.name;
+                                const lang = t.language;
+                                const key = `${name}::${lang || "-"}`;
+                                const checked = templateDraft.includes(name);
+
+                                return (
+                                  <label
+                                    key={key}
+                                    className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50"
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block font-medium text-slate-900 truncate">
+                                        {name}
+                                      </span>
+                                      <span className="block text-xs text-slate-500">
+                                        {lang || "—"}
+                                      </span>
+                                    </span>
+
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(ev) => {
+                                        const next = new Set(templateDraft);
+                                        if (ev.target.checked) next.add(name);
+                                        else next.delete(name);
+                                        setTemplateDraft([...next]);
+                                      }}
+                                    />
+                                  </label>
+                                );
+                              })
+                            )}
+                          </div>
+
+                          <div className="sticky bottom-0 flex items-center justify-between gap-2 border-t border-slate-100 bg-white p-3">
+                            <div className="text-xs text-slate-500">
+                              Selected: {templateDraft.length}
+                            </div>
+                            <button
+                              type="button"
+                              className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
+                              onClick={() => {
+                                const committed = Array.from(
+                                  new Set(
+                                    (templateDraft || [])
+                                      .map((x) => String(x || "").trim())
+                                      .filter(Boolean)
+                                  )
+                                );
+                                setForm({ ...form, templates: committed });
+                                setTemplatePopoverOpen(false);
+                              }}
+                            >
+                              Done
+                            </button>
+                          </div>
                         </div>
                       </div>,
                       document.body
