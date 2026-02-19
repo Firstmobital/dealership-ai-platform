@@ -258,11 +258,23 @@ export type Workflow = {
   updated_at: string;
 };
 
+export type WorkflowStepAction = {
+  ai_action?: string;
+  instruction_text?: string;
+  expected_user_input?: string;
+  metadata?: Record<string, unknown>;
+
+  // Deterministic skipping (stored inside JSON action)
+  expects_answer?: boolean;
+  skip_if_answered?: boolean;
+  match_any_keywords?: string[];
+};
+
 export type WorkflowStep = {
   id: UUID;
   workflow_id: UUID;
   step_order: number;
-  action: Record<string, unknown>;
+  action: WorkflowStepAction;
   created_at?: string;
 };
 

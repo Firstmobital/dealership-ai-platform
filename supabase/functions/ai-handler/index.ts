@@ -2027,16 +2027,16 @@ function enforceDealershipReplySchema(params: {
       } else {
         t += "\n\nWhich model are you considering?";
       }
-    }
 
-    // Re-run one-question enforcement after appending.
-    const qm2: number[] = [];
-    for (let i = 0; i < t.length; i++) if (t[i] === "?") qm2.push(i);
-    if (qm2.length > 1) {
-      const first = qm2[0];
-      const before = t.slice(0, first + 1);
-      const after = t.slice(first + 1).replace(/\?/g, ".");
-      t = (before + after).trim();
+      // Re-run one-question enforcement after appending.
+      const qm2: number[] = [];
+      for (let i = 0; i < t.length; i++) if (t[i] === "?") qm2.push(i);
+      if (qm2.length > 1) {
+        const first = qm2[0];
+        const before = t.slice(0, first + 1);
+        const after = t.slice(first + 1).replace(/\?/g, ".");
+        t = (before + after).trim();
+      }
     }
   }
 
@@ -2104,7 +2104,7 @@ type AiExtractedIntent = {
   vehicle_variant: string | null;
   fuel_type: string | null;
   transmission: "Manual" | "Automatic" | "DCA" | "AMT" | null;
-  manufacturing_year: string | null; // keep as string to avoid accidental hallucinated math
+  manufacturing_year: string | null;
   intent: "pricing" | "features" | "service" | "offer" | "other";
 };
 
@@ -3500,6 +3500,18 @@ type WorkflowLogRow = {
   created_at?: string | null;
 };
 
+type WorkflowStepRow = {
+  id: string;
+  workflow_id: string;
+  step_order: number;
+  action: {
+    instruction_text?: string;
+    expects_answer?: boolean;
+    skip_if_answered?: boolean;
+    match_any_keywords?: string[];
+  } | null;
+};
+
 /* ============================================================================
    WORKFLOW — TRIGGER DETECTION
 ============================================================================ */
@@ -3507,7 +3519,8 @@ async function detectWorkflowTrigger(
   user_message: string,
   organizationId: string,
   logger: ReturnType<typeof createLogger>,
-  intentBucket: string
+  intentBucket: string,
+  conversationId?: string | null
 ): Promise<WorkflowRow | null> {
   const workflows = await safeSupabase<WorkflowRow[]>(
     "load_workflows",
@@ -3525,14 +3538,18 @@ async function detectWorkflowTrigger(
     return null;
   }
 
-  const lowerMsg = user_message.toLowerCase();
+  const lowerMsg = (user_message || "").toLowerCase();
 
   // P0: Deterministic priority.
   // 1) keyword matches
-  // 2) intent matches
-  // 3) always (fallback)
+  // 2) whatsapp_template matches (latest outbound message)
+  // 3) intent matches
+  // 4) always (fallback)
   const keywordWorkflows = workflows.filter(
     (wf) => (wf.trigger?.type ?? "always") === "keyword"
+  );
+  const templateWorkflows = workflows.filter(
+    (wf) => (wf.trigger?.type ?? "always") === "whatsapp_template"
   );
   const intentWorkflows = workflows.filter(
     (wf) => (wf.trigger?.type ?? "always") === "intent"
@@ -3541,10 +3558,13 @@ async function detectWorkflowTrigger(
     (wf) => (wf.trigger?.type ?? "always") === "always"
   );
 
+  // 1) KEYWORD
   for (const wf of keywordWorkflows) {
     const keywords: string[] = wf.trigger?.keywords ?? [];
     if (
-      keywords.some((k) => lowerMsg.includes((k ?? "").toString().toLowerCase()))
+      keywords.some((k) =>
+        lowerMsg.includes((k ?? "").toString().toLowerCase())
+      )
     ) {
       logger.info("[workflow] keyword trigger matched", {
         workflow_id: wf.id,
@@ -3554,14 +3574,55 @@ async function detectWorkflowTrigger(
     }
   }
 
+  // 2) WHATSAPP TEMPLATE (latest outbound message)
+  if (templateWorkflows.length && conversationId) {
+    const lastOutbound = await safeSupabase<{ whatsapp_template_name: string | null }>(
+      "load_latest_outbound_template_for_workflow_trigger",
+      logger,
+      () =>
+        supabase
+          .from("messages")
+          .select("whatsapp_template_name")
+          .eq("organization_id", organizationId)
+          .eq("conversation_id", conversationId)
+          .in("sender", ["bot", "agent"])
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+    );
+
+    const lastTemplate = String(lastOutbound?.whatsapp_template_name ?? "")
+      .trim()
+      .toLowerCase();
+
+    if (lastTemplate) {
+      for (const wf of templateWorkflows) {
+        const templates: string[] = wf.trigger?.templates ?? [];
+        const templatesLower = templates
+          .map((t) => (t ?? "").toString().trim().toLowerCase())
+          .filter(Boolean);
+
+        if (templatesLower.includes(lastTemplate)) {
+          logger.info("[workflow] whatsapp_template trigger matched", {
+            workflow_id: wf.id,
+            whatsapp_template_name: lastTemplate,
+            trigger_templates: templatesLower,
+          });
+          return wf;
+        }
+      }
+    }
+  }
+
+  // 3) INTENT
   if (intentWorkflows.length) {
     for (const wf of intentWorkflows) {
       const intents: string[] = wf.trigger?.intents ?? [];
       if (!intents.length) continue;
 
-      const intentsLower = intents.map((i) =>
-        (i ?? "").toString().toLowerCase()
-      );
+      const intentsLower = intents
+        .map((i) => (i ?? "").toString().toLowerCase())
+        .filter(Boolean);
 
       // 1) direct bucket match (sales/service/finance/accessories)
       if (intentsLower.includes((intentBucket ?? "").toLowerCase())) {
@@ -3583,6 +3644,7 @@ async function detectWorkflowTrigger(
     }
   }
 
+  // 4) ALWAYS
   if (alwaysWorkflows.length) {
     // Keep existing DB order for fallback.
     logger.info("[workflow] always trigger matched", {
@@ -3698,15 +3760,6 @@ async function startWorkflow(
   return { ...data, current_step_number: 1, variables: {}, completed: false };
 }
 
-type WorkflowStepRow = {
-  id: string;
-  workflow_id: string;
-  step_order: number;
-  action: {
-    instruction_text?: string;
-  } | null;
-};
-
 async function getWorkflowSteps(
   workflowId: string,
   logger: ReturnType<typeof createLogger>
@@ -3723,6 +3776,61 @@ async function getWorkflowSteps(
   );
 
   return (data ?? []) as WorkflowStepRow[];
+}
+
+function shouldAutoSkipStep(params: {
+  step: WorkflowStepRow;
+  lastUserMessage: string;
+}): boolean {
+  const action: any = params.step?.action ?? {};
+
+  // Only skip when explicitly enabled
+  if (action.skip_if_answered !== true) return false;
+
+  // If no keywords configured, do NOT auto-skip
+  const keywords = Array.isArray(action.match_any_keywords)
+    ? action.match_any_keywords
+        .map((k: any) => String(k || "").trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+
+  if (!keywords.length) return false;
+
+  const u = normalizeForMatch(params.lastUserMessage || "");
+  if (!u) return false;
+
+  // Any keyword match triggers skip
+  return keywords.some((k: string) => u.includes(normalizeForMatch(k)));
+}
+
+function findFirstIncompleteStep(params: {
+  steps: WorkflowStepRow[];
+  startStepNumber: number;
+  lastUserMessage: string;
+}): { step: WorkflowStepRow | null; nextStepNumber: number; skipped: number[] } {
+  const steps = Array.isArray(params.steps) ? params.steps : [];
+  const byOrder = new Map<number, WorkflowStepRow>();
+  for (const s of steps) byOrder.set(Number(s.step_order), s);
+
+  let current = Math.max(1, Number(params.startStepNumber || 1));
+  const skipped: number[] = [];
+
+  // Walk forward deterministically through consecutive step_order values
+  while (true) {
+    const step = byOrder.get(current);
+    if (!step) {
+      // No step at this number → workflow completed
+      return { step: null, nextStepNumber: current, skipped };
+    }
+
+    if (shouldAutoSkipStep({ step, lastUserMessage: params.lastUserMessage })) {
+      skipped.push(current);
+      current += 1;
+      continue;
+    }
+
+    return { step, nextStepNumber: current, skipped };
+  }
 }
 
 async function saveWorkflowProgress(
@@ -5145,7 +5253,8 @@ let workflowSaySchema: {
         user_message,
         organizationId,
         logger,
-        intentBucket
+        intentBucket,
+        conversation_id
       );
 
       if (wf) {
@@ -5165,62 +5274,84 @@ let workflowSaySchema: {
       );
 
       if (steps?.length) {
-        const index = Math.max(
-          0,
-          Math.min(
-            (resolvedWorkflow.current_step_number ?? 1) - 1,
-            steps.length - 1
-          )
-        );
+        const { step, nextStepNumber, skipped } = findFirstIncompleteStep({
+          steps,
+          startStepNumber: resolvedWorkflow.current_step_number ?? 1,
+          lastUserMessage: user_message,
+        });
 
-        const step = steps[index];
-        workflowStepsCount = steps.length;
+        if (skipped.length) {
+          logger.info("[workflow] auto-skipped steps", {
+            skipped,
+            nextStepNumber,
+          });
 
-        // Engine-enforced workflow directive (the engine decides, LLM only renders)
-        try {
-          const directive = buildDirective(
-            step as any,
-            (nextEntitiesWithKb as any) || {}
+          // Persist skip-advancement so we don't re-evaluate the same skipped steps
+          // (does not change workflow_logs schema)
+          await saveWorkflowProgress(
+            resolvedWorkflow.id,
+            organizationId,
+            nextStepNumber,
+            resolvedWorkflow.variables ?? {},
+            false,
+            logger
           );
-        
-          workflowDirectiveAction = directive.action;
-        
-          if (directive.action === "ask" || directive.action === "escalate") {
-            // Deterministic reply; do NOT rely on the LLM.
-            forcedReplyText = enforceDirective(directive as any);
-        
-            // Hold step on ask; end workflow on escalate.
-            const nextStepNum =
-              directive.action === "ask"
-                ? resolvedWorkflow.current_step_number ?? 1
-                : workflowStepsCount + 1;
-        
-            const completed = directive.action === "escalate";
-        
-            await saveWorkflowProgress(
-              resolvedWorkflow.id,
-              organizationId,
-              nextStepNum,
-              resolvedWorkflow.variables ?? {},
-              completed,
-              logger
+
+          // Keep in-memory state consistent for downstream progression logic
+          resolvedWorkflow.current_step_number = nextStepNumber;
+        }
+
+        if (step) {
+          workflowStepsCount = steps.length;
+
+          // Engine-enforced workflow directive (the engine decides, LLM only renders)
+          try {
+            const directive = buildDirective(
+              step as any,
+              (nextEntitiesWithKb as any) || {}
             );
-        
-            // Do not inject workflow guidance into prompts when we already produced the enforced reply.
-            workflowInstructionText = "";
+
+            workflowDirectiveAction = directive.action;
+
+            if (directive.action === "ask" || directive.action === "escalate") {
+              // Deterministic reply; do NOT rely on the LLM.
+              forcedReplyText = enforceDirective(directive as any);
+
+              // Hold step on ask; end workflow on escalate.
+              const nextStepNum =
+                directive.action === "ask" ? nextStepNumber : steps.length + 1;
+
+              const completed = directive.action === "escalate";
+
+              await saveWorkflowProgress(
+                resolvedWorkflow.id,
+                organizationId,
+                nextStepNum,
+                resolvedWorkflow.variables ?? {},
+                completed,
+                logger
+              );
+
+              // Do not inject workflow guidance into prompts when we already produced the enforced reply.
+              workflowInstructionText = "";
+            }
+
+            // ✅ Phase 1: engine-enforced SAY (seed + schema)
+            if (!forcedReplyText && directive.action === "say") {
+              workflowSayMessage = safeText(
+                (directive as any).message_seed ?? ""
+              );
+              workflowSaySchema = (directive as any).schema ?? null;
+
+              // Do not rely on prompt guidance for correctness
+              workflowInstructionText = "";
+            }
+          } catch (err) {
+            logger.error("[workflow] directive build/enforce error", {
+              error: err,
+            });
           }
-        
-          // ✅ Phase 1: engine-enforced SAY (seed + schema)
-          if (!forcedReplyText && directive.action === "say") {
-            workflowSayMessage = safeText((directive as any).message_seed ?? "");
-            workflowSaySchema = (directive as any).schema ?? null;
-        
-            // Do not rely on prompt guidance for correctness
-            workflowInstructionText = "";
-          }
-        } catch (err) {
-          logger.error("[workflow] directive build/enforce error", { error: err });
-        }        
+        }
       }
     }
 
@@ -5458,7 +5589,7 @@ EACH TIME.
 
 WORKFLOW ↔ KB PRECEDENCE (PHASE 3 — CRITICAL)
 - Knowledge Context and Campaign Context ALWAYS override workflow guidance.
-- If the answer is present in Knowledge/Campaign context, DO NOT ask workflow questions.
+- If the answer is present in the Knowledge/Campaign context, DO NOT ask workflow questions.
 - If workflow guidance conflicts with Knowledge/Campaign facts, ignore the workflow guidance for this turn.
 - If workflow requires KB and KB is missing, ask ONE clarifying question or offer to connect to a human (do not guess).
 

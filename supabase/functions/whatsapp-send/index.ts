@@ -601,6 +601,12 @@ try {
           outbound_dedupe_key: outboundDedupeKey,
           whatsapp_status: "sent",
           sent_at: nowIso,
+          ...(transportType === "template"
+            ? {
+                whatsapp_template_name: body.template_name ?? null,
+                whatsapp_template_language: body.template_language ?? null,
+              }
+            : {}),
         })
         .select("id")
         .maybeSingle();
@@ -928,6 +934,12 @@ if (!waPayload) {
         message_type: businessType,
         sender: businessType === "campaign" ? "bot" : (body.sender ?? "bot"),
         text: type === "text" ? body.text ?? null : body.rendered_text ?? body.text ?? null,
+        ...(type === "template"
+          ? {
+              whatsapp_template_name: body.template_name ?? null,
+              whatsapp_template_language: body.template_language ?? null,
+            }
+          : {}),
 
         })
         .select('id')

@@ -4,6 +4,19 @@ import { useOrganizationStore } from "./useOrganizationStore";
 
 import type { Workflow, WorkflowStep, WorkflowLog } from "../types/database";
 
+const normalizeStepAction = (action: any) => {
+  const a = (action ?? {}) as any;
+  return {
+    ...a,
+    expects_answer: typeof a.expects_answer === "boolean" ? a.expects_answer : false,
+    skip_if_answered:
+      typeof a.skip_if_answered === "boolean" ? a.skip_if_answered : false,
+    match_any_keywords: Array.isArray(a.match_any_keywords)
+      ? a.match_any_keywords
+      : [],
+  };
+};
+
 type WorkflowState = {
   workflows: Workflow[];
   steps: Record<string, WorkflowStep[]>;
@@ -240,7 +253,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       organization_id: activeOrganization.id,
       workflow_id: workflowId,
       step_order: stepOrder,
-      action,
+      action: normalizeStepAction(action),
     });
 
     if (error) {
@@ -257,7 +270,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   updateStep: async (stepId, action) => {
     const { error } = await supabase
       .from("workflow_steps")
-      .update({ action })
+      .update({ action: normalizeStepAction(action) })
       .eq("id", stepId);
 
     if (error) set({ error: error.message });
@@ -411,12 +424,19 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           organization_id: activeOrganization.id,
           workflow_id: workflowId,
           step_order: i + 1,
-          action: {
+          // IMPORTANT: engine reads these from table columns
+          ai_action: s.ai_action,
+          instruction_text: s.instruction_text ?? "",
+          // Keep the JSON payload for UI / future usage
+          action: normalizeStepAction({
             ai_action: s.ai_action,
             instruction_text: s.instruction_text ?? "",
             expected_user_input: s.expected_user_input ?? "",
             metadata: s.metadata ?? {},
-          },
+            expects_answer: s.expects_answer,
+            skip_if_answered: s.skip_if_answered,
+            match_any_keywords: s.match_any_keywords,
+          }),
         }))
       );
     }

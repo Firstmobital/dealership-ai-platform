@@ -21,6 +21,7 @@ import {
 import { useWorkflowStore } from "../../state/useWorkflowStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { WorkflowSimulator } from "./WorkflowSimulator";
+import { useWhatsappTemplateStore } from "../../state/useWhatsappTemplateStore";
 
 import type { Workflow, WorkflowStep } from "../../types/database";
 
@@ -28,7 +29,7 @@ import type { Workflow, WorkflowStep } from "../../types/database";
 /* TYPES                                                              */
 /* ------------------------------------------------------------------ */
 
-type TriggerType = "keyword" | "intent" | "always";
+type TriggerType = "keyword" | "intent" | "always" | "whatsapp_template";
 type ModeType = "smart" | "strict";
 
 type WorkflowFormState = {
@@ -38,12 +39,26 @@ type WorkflowFormState = {
   trigger_type: TriggerType;
   keywords: string;
   intents: string;
+  templates: string[];
   is_active: boolean;
 };
 
 type StepDraft = {
   ai_action: "instruction";
   instruction_text: string;
+
+  // Deterministic skipping (stored in workflow_steps.action JSON)
+  expects_answer: boolean;
+  skip_if_answered: boolean;
+  match_any_keywords: string;
+};
+
+const DEFAULT_STEP_DRAFT: StepDraft = {
+  ai_action: "instruction",
+  instruction_text: "",
+  expects_answer: false,
+  skip_if_answered: false,
+  match_any_keywords: "",
 };
 
 /* ------------------------------------------------------------------ */
@@ -71,6 +86,10 @@ function renderStepSummary(step: WorkflowStep) {
 
 export function WorkflowModule() {
   const { activeOrganization } = useOrganizationStore();
+  const {
+    templates: whatsappTemplates,
+    fetchTemplates: fetchWhatsappTemplates,
+  } = useWhatsappTemplateStore();
 
   const {
     workflows,
@@ -102,10 +121,12 @@ export function WorkflowModule() {
     trigger_type: "always",
     keywords: "",
     intents: "",
+    templates: [],
     is_active: true,
   });
 
   const [aiDescription, setAiDescription] = useState("");
+  const [templateQuery, setTemplateQuery] = useState("");
 
   const [newStep, setNewStep] = useState<StepDraft | null>(null);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
@@ -127,6 +148,7 @@ export function WorkflowModule() {
   useEffect(() => {
     if (!activeOrganization?.id) return;
     fetchWorkflows().catch(console.error);
+    fetchWhatsappTemplates().catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrganization?.id]);
 
@@ -158,9 +180,11 @@ export function WorkflowModule() {
       trigger_type: "always",
       keywords: "",
       intents: "",
+      templates: [],
       is_active: true,
     });
     setAiDescription("");
+    setTemplateQuery("");
     setNewStep(null);
     setEditingStepId(null);
     setStepDraft(null);
@@ -183,6 +207,12 @@ export function WorkflowModule() {
         .filter(Boolean);
     }
 
+    if (form.trigger_type === "whatsapp_template") {
+      base.templates = Array.isArray(form.templates)
+        ? form.templates.map((t) => String(t || "").trim()).filter(Boolean)
+        : [];
+    }
+
     return base;
   };
 
@@ -198,12 +228,16 @@ export function WorkflowModule() {
       trigger_type: (trig.type as TriggerType) ?? "always",
       keywords: Array.isArray(trig.keywords) ? trig.keywords.join(", ") : "",
       intents: Array.isArray(trig.intents) ? trig.intents.join(", ") : "",
+      templates: Array.isArray(trig.templates)
+        ? trig.templates.map((t: any) => String(t || "")).filter(Boolean)
+        : [],
       is_active: typeof (wf as any)?.is_active === "boolean" ? (wf as any).is_active : true,
     });
 
     setNewStep(null);
     setEditingStepId(null);
     setStepDraft(null);
+    setTemplateQuery("");
   };
 
   /* ------------------------------------------------------------------ */
@@ -259,7 +293,11 @@ export function WorkflowModule() {
 
   return (
     <div className="h-full w-full overflow-hidden bg-slate-50">
-      <div className="grid h-full grid-cols-[300px,1fr,380px] gap-8 px-8 py-6 overflow-hidden">
+      {/* LAYOUT: grid columns = [left list, center form, right steps]
+          - Keep left at 300px
+          - Increase right (steps) width by ~20% (380px → 456px)
+      */}
+      <div className="grid h-full grid-cols-[300px,1fr,456px] gap-8 px-8 py-6 overflow-hidden">
         {/* ============================================================ */}
         {/* LEFT — WORKFLOWS                                             */}
         {/* ============================================================ */}
@@ -401,6 +439,7 @@ export function WorkflowModule() {
                   <option value="always">Always</option>
                   <option value="keyword">When message contains keywords</option>
                   <option value="intent">When AI detects intent</option>
+                  <option value="whatsapp_template">When WhatsApp template was sent</option>
                 </select>
               </div>
 
@@ -431,6 +470,79 @@ export function WorkflowModule() {
                   <div className="text-xs text-slate-500 mt-1">
                     Must match the intent labels you configured in workflow trigger.
                   </div>
+                </div>
+              )}
+
+              {form.trigger_type === "whatsapp_template" && (
+                <div className="space-y-2">
+                  <label className={labelClass}>WhatsApp templates</label>
+
+                  <input
+                    className={inputClass}
+                    value={templateQuery}
+                    onChange={(e) => setTemplateQuery(e.target.value)}
+                    placeholder="Search templates…"
+                  />
+
+                  <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200 bg-white">
+                    {(() => {
+                      const q = templateQuery.trim().toLowerCase();
+                      const filtered = (whatsappTemplates || []).filter((t: any) => {
+                        const name = String(t?.name || "").toLowerCase();
+                        const lang = String(t?.language || "").toLowerCase();
+                        if (!q) return true;
+                        return name.includes(q) || lang.includes(q);
+                      });
+
+                      if (!filtered.length) {
+                        return (
+                          <div className="px-3 py-2 text-sm text-slate-500">
+                            No templates found.
+                          </div>
+                        );
+                      }
+
+                      return filtered.slice(0, 80).map((t: any) => {
+                        const name = String(t?.name || "").trim();
+                        const lang = String(t?.language || "").trim();
+                        const key = `${name}::${lang || "-"}`;
+                        const checked = form.templates.includes(name);
+
+                        return (
+                          <label
+                            key={key}
+                            className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50"
+                          >
+                            <span className="min-w-0">
+                              <span className="block font-medium text-slate-900 truncate">
+                                {name || "(Unnamed template)"}
+                              </span>
+                              <span className="block text-xs text-slate-500">
+                                {lang || "—"}
+                              </span>
+                            </span>
+
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const next = new Set(form.templates);
+                                if (e.target.checked) next.add(name);
+                                else next.delete(name);
+                                setForm({ ...form, templates: [...next] });
+                              }}
+                            />
+                          </label>
+                        );
+                      });
+                    })()}
+                  </div>
+
+                  {form.templates.length > 0 && (
+                    <div className="text-xs text-slate-500">
+                      Selected: {form.templates.length}
+                    </div>
+                  )}
                 </div>
               )}
             </section>
@@ -490,9 +602,7 @@ export function WorkflowModule() {
 
             {selectedWorkflow && (
               <button
-                onClick={() =>
-                  setNewStep({ ai_action: "instruction", instruction_text: "" })
-                }
+                onClick={() => setNewStep({ ...DEFAULT_STEP_DRAFT })}
                 className="bg-blue-600 text-white text-xs px-3 py-1 rounded hover:bg-blue-700"
               >
                 + Add Step
@@ -519,9 +629,17 @@ export function WorkflowModule() {
                       <button
                         onClick={() => {
                           setEditingStepId(step.id);
+                          const a: any = (step as any)?.action ?? {};
                           setStepDraft({
                             ai_action: "instruction",
-                            instruction_text: safeString((step as any)?.action?.instruction_text),
+                            instruction_text: safeString(a.instruction_text),
+                            expects_answer:
+                              typeof a.expects_answer === "boolean" ? a.expects_answer : false,
+                            skip_if_answered:
+                              typeof a.skip_if_answered === "boolean" ? a.skip_if_answered : false,
+                            match_any_keywords: Array.isArray(a.match_any_keywords)
+                              ? a.match_any_keywords.join(", ")
+                              : "",
                           });
                         }}
                         className="hover:text-blue-600"
@@ -557,11 +675,67 @@ export function WorkflowModule() {
                         }
                       />
 
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={!!stepDraft?.expects_answer}
+                            onChange={(e) =>
+                              setStepDraft((p) =>
+                                p ? { ...p, expects_answer: e.target.checked } : p
+                              )
+                            }
+                          />
+                          Expects an answer
+                        </label>
+
+                        <label className="flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={!!stepDraft?.skip_if_answered}
+                            onChange={(e) =>
+                              setStepDraft((p) =>
+                                p ? { ...p, skip_if_answered: e.target.checked } : p
+                              )
+                            }
+                          />
+                          Skip if already answered
+                        </label>
+                      </div>
+
+                      <div>
+                        <label className={labelClass}>
+                          Match any keywords (comma-separated)
+                        </label>
+                        <input
+                          className={inputClass}
+                          value={stepDraft?.match_any_keywords ?? ""}
+                          onChange={(e) =>
+                            setStepDraft((p) =>
+                              p ? { ...p, match_any_keywords: e.target.value } : p
+                            )
+                          }
+                          placeholder="e.g. price, on-road, discount"
+                        />
+                      </div>
+
                       <div className="flex items-center gap-2">
                         <button
                           onClick={async () => {
                             if (!stepDraft) return;
-                            await updateStep(step.id, stepDraft);
+
+                            const payload = {
+                              ai_action: stepDraft.ai_action,
+                              instruction_text: stepDraft.instruction_text,
+                              expects_answer: stepDraft.expects_answer ?? false,
+                              skip_if_answered: stepDraft.skip_if_answered ?? false,
+                              match_any_keywords: (stepDraft.match_any_keywords ?? "")
+                                .split(",")
+                                .map((x) => x.trim())
+                                .filter(Boolean),
+                            };
+
+                            await updateStep(step.id, payload);
                             setEditingStepId(null);
                             setStepDraft(null);
                             if (workflowId) await fetchWorkflowSteps(workflowId);
@@ -603,11 +777,70 @@ export function WorkflowModule() {
                 }
               />
 
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={newStep.expects_answer}
+                    onChange={(e) =>
+                      setNewStep({
+                        ...newStep,
+                        expects_answer: e.target.checked,
+                      })
+                    }
+                  />
+                  Expects an answer
+                </label>
+
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={newStep.skip_if_answered}
+                    onChange={(e) =>
+                      setNewStep({
+                        ...newStep,
+                        skip_if_answered: e.target.checked,
+                      })
+                    }
+                  />
+                  Skip if already answered
+                </label>
+              </div>
+
+              <div>
+                <label className={labelClass}>
+                  Match any keywords (comma-separated)
+                </label>
+                <input
+                  className={inputClass}
+                  value={newStep.match_any_keywords}
+                  onChange={(e) =>
+                    setNewStep({
+                      ...newStep,
+                      match_any_keywords: e.target.value,
+                    })
+                  }
+                  placeholder="e.g. price, on-road, discount"
+                />
+              </div>
+
               <div className="flex items-center gap-2">
                 <button
                   onClick={async () => {
                     if (!workflowId) return;
-                    await addStep(workflowId, newStep);
+
+                    const payload = {
+                      ai_action: newStep.ai_action,
+                      instruction_text: newStep.instruction_text,
+                      expects_answer: newStep.expects_answer ?? false,
+                      skip_if_answered: newStep.skip_if_answered ?? false,
+                      match_any_keywords: (newStep.match_any_keywords ?? "")
+                        .split(",")
+                        .map((x) => x.trim())
+                        .filter(Boolean),
+                    };
+
+                    await addStep(workflowId, payload);
                     setNewStep(null);
                     await fetchWorkflowSteps(workflowId);
                   }}
