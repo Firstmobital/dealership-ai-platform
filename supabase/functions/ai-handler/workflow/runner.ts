@@ -41,6 +41,7 @@ export async function runWorkflow({
   const nextStep = selectNextStep({
     steps,
     state,
+    userMessage,
   });
 
   // 3️⃣ If no step remains, workflow is complete

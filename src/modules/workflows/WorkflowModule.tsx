@@ -9,6 +9,7 @@
 // 6) Keeps your existing store API usage (no direct supabase calls)
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Plus,
   Save,
@@ -127,6 +128,14 @@ export function WorkflowModule() {
 
   const [aiDescription, setAiDescription] = useState("");
   const [templateQuery, setTemplateQuery] = useState("");
+  const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
+  const [templateDraft, setTemplateDraft] = useState<string[]>([]);
+  const [templatePopoverPos, setTemplatePopoverPos] = useState<
+    { top: number; left: number; width: number } | null
+  >(null);
+  const [templateTriggerEl, setTemplateTriggerEl] = useState<HTMLButtonElement | null>(
+    null
+  );
 
   const [newStep, setNewStep] = useState<StepDraft | null>(null);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
@@ -238,7 +247,89 @@ export function WorkflowModule() {
     setEditingStepId(null);
     setStepDraft(null);
     setTemplateQuery("");
+    setTemplatePopoverOpen(false);
+    setTemplateDraft(
+      Array.isArray(trig.templates)
+        ? trig.templates.map((t: any) => String(t || "")).filter(Boolean)
+        : []
+    );
   };
+
+  const templateOptions = useMemo(() => {
+    const rows = (whatsappTemplates || []) as any[];
+    return rows
+      .map((t) => ({
+        name: String(t?.name || "").trim(),
+        language: String(t?.language || "").trim(),
+      }))
+      .filter((t) => Boolean(t.name));
+  }, [whatsappTemplates]);
+
+  const filteredTemplateOptions = useMemo(() => {
+    const q = templateQuery.trim().toLowerCase();
+    if (!q) return templateOptions;
+    return templateOptions.filter((t) => {
+      return (
+        t.name.toLowerCase().includes(q) ||
+        t.language.toLowerCase().includes(q)
+      );
+    });
+  }, [templateOptions, templateQuery]);
+
+  const templateDisplayText = useMemo(() => {
+    const names = (form.templates || []).filter(Boolean);
+    if (!names.length) return "Select templates…";
+
+    // Show comma-separated text with a bounded length and "+N more".
+    // Deterministic, no measuring.
+    const maxChars = 46;
+    let built = "";
+    let used = 0;
+
+    for (let i = 0; i < names.length; i++) {
+      const seg = (i === 0 ? "" : ", ") + names[i];
+      if (built.length + seg.length > maxChars) {
+        used = i;
+        break;
+      }
+      built += seg;
+      used = i + 1;
+    }
+
+    const remaining = names.length - used;
+    if (remaining > 0) {
+      return (built ? built : names[0]) + ` +${remaining} more`;
+    }
+
+    return built;
+  }, [form.templates]);
+
+  // Close on outside click / Esc for the template popover
+  useEffect(() => {
+    if (!templatePopoverOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTemplatePopoverOpen(false);
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      // If click is inside trigger button, ignore
+      if (templateTriggerEl && templateTriggerEl.contains(target)) return;
+      // If click is inside popover content, ignore
+      const pop = document.getElementById("wf-template-popover");
+      if (pop && pop.contains(target)) return;
+      setTemplatePopoverOpen(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [templatePopoverOpen, templateTriggerEl]);
 
   /* ------------------------------------------------------------------ */
   /* WORKFLOW ACTIONS                                                   */
@@ -401,20 +492,6 @@ export function WorkflowModule() {
               <h4 className="text-sm font-semibold">When should this workflow start?</h4>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className={labelClass}>Mode</label>
-                  <select
-                    value={form.mode}
-                    onChange={(e) =>
-                      setForm({ ...form, mode: e.target.value as ModeType })
-                    }
-                    className={inputClass}
-                  >
-                    <option value="smart">Smart (AI decides next step)</option>
-                    <option value="strict">Strict (step-by-step)</option>
-                  </select>
-                </div>
-
                 <div className="flex items-end gap-2">
                   <label className="flex items-center gap-2 text-sm text-slate-700">
                     <input
@@ -477,72 +554,128 @@ export function WorkflowModule() {
                 <div className="space-y-2">
                   <label className={labelClass}>WhatsApp templates</label>
 
-                  <input
-                    className={inputClass}
-                    value={templateQuery}
-                    onChange={(e) => setTemplateQuery(e.target.value)}
-                    placeholder="Search templates…"
-                  />
-
-                  <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200 bg-white">
-                    {(() => {
-                      const q = templateQuery.trim().toLowerCase();
-                      const filtered = (whatsappTemplates || []).filter((t: any) => {
-                        const name = String(t?.name || "").toLowerCase();
-                        const lang = String(t?.language || "").toLowerCase();
-                        if (!q) return true;
-                        return name.includes(q) || lang.includes(q);
+                  <button
+                    ref={(el) => setTemplateTriggerEl(el)}
+                    type="button"
+                    className={`${inputClass} mt-0 flex items-center justify-between gap-2`}
+                    aria-haspopup="listbox"
+                    aria-expanded={templatePopoverOpen}
+                    onClick={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      const rect = el.getBoundingClientRect();
+                      setTemplatePopoverPos({
+                        top: rect.bottom + window.scrollY,
+                        left: rect.left + window.scrollX,
+                        width: rect.width,
                       });
 
-                      if (!filtered.length) {
-                        return (
-                          <div className="px-3 py-2 text-sm text-slate-500">
-                            No templates found.
-                          </div>
-                        );
+                      const nextOpen = !templatePopoverOpen;
+                      setTemplatePopoverOpen(nextOpen);
+                      if (nextOpen) {
+                        setTemplateDraft([...(form.templates || [])]);
+                        setTemplateQuery("");
                       }
+                    }}
+                  >
+                    <span className="min-w-0 truncate text-left">
+                      {templateDisplayText}
+                    </span>
+                    <span className="text-slate-400">▾</span>
+                  </button>
 
-                      return filtered.slice(0, 80).map((t: any) => {
-                        const name = String(t?.name || "").trim();
-                        const lang = String(t?.language || "").trim();
-                        const key = `${name}::${lang || "-"}`;
-                        const checked = form.templates.includes(name);
+                  {templatePopoverOpen &&
+                    templatePopoverPos &&
+                    createPortal(
+                      <div
+                        id="wf-template-popover"
+                        className="fixed z-50 rounded-md border border-slate-200 bg-white shadow-lg"
+                        style={{
+                          top: templatePopoverPos.top,
+                          left: templatePopoverPos.left,
+                          width: Math.max(320, templatePopoverPos.width),
+                        }}
+                      >
+                        <div className="p-3">
+                          <input
+                            className={inputClass}
+                            value={templateQuery}
+                            onChange={(e) => setTemplateQuery(e.target.value)}
+                            placeholder="Search templates…"
+                            autoFocus
+                          />
+                        </div>
 
-                        return (
-                          <label
-                            key={key}
-                            className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50"
+                        <div
+                          className="max-h-64 overflow-y-auto border-t border-slate-100"
+                          role="listbox"
+                          aria-label="WhatsApp templates"
+                        >
+                          {filteredTemplateOptions.length === 0 ? (
+                            <div className="px-3 py-3 text-sm text-slate-500">
+                              No templates found.
+                            </div>
+                          ) : (
+                            filteredTemplateOptions.slice(0, 120).map((t) => {
+                              const name = t.name;
+                              const lang = t.language;
+                              const key = `${name}::${lang || "-"}`;
+                              const checked = templateDraft.includes(name);
+
+                              return (
+                                <label
+                                  key={key}
+                                  className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50"
+                                >
+                                  <span className="min-w-0">
+                                    <span className="block font-medium text-slate-900 truncate">
+                                      {name}
+                                    </span>
+                                    <span className="block text-xs text-slate-500">
+                                      {lang || "—"}
+                                    </span>
+                                  </span>
+
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(ev) => {
+                                      const next = new Set(templateDraft);
+                                      if (ev.target.checked) next.add(name);
+                                      else next.delete(name);
+                                      setTemplateDraft([...next]);
+                                    }}
+                                  />
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 border-t border-slate-100 p-3">
+                          <div className="text-xs text-slate-500">
+                            Selected: {templateDraft.length}
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
+                            onClick={() => {
+                              const committed = Array.from(
+                                new Set(
+                                  (templateDraft || [])
+                                    .map((x) => String(x || "").trim())
+                                    .filter(Boolean)
+                                )
+                              );
+                              setForm({ ...form, templates: committed });
+                              setTemplatePopoverOpen(false);
+                            }}
                           >
-                            <span className="min-w-0">
-                              <span className="block font-medium text-slate-900 truncate">
-                                {name || "(Unnamed template)"}
-                              </span>
-                              <span className="block text-xs text-slate-500">
-                                {lang || "—"}
-                              </span>
-                            </span>
-
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(e) => {
-                                const next = new Set(form.templates);
-                                if (e.target.checked) next.add(name);
-                                else next.delete(name);
-                                setForm({ ...form, templates: [...next] });
-                              }}
-                            />
-                          </label>
-                        );
-                      });
-                    })()}
-                  </div>
-
-                  {form.templates.length > 0 && (
-                    <div className="text-xs text-slate-500">
-                      Selected: {form.templates.length}
-                    </div>
-                  )}
+                            Done
+                          </button>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
                 </div>
               )}
             </section>
@@ -675,50 +808,6 @@ export function WorkflowModule() {
                         }
                       />
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <label className="flex items-center gap-2 text-sm text-slate-700">
-                          <input
-                            type="checkbox"
-                            checked={!!stepDraft?.expects_answer}
-                            onChange={(e) =>
-                              setStepDraft((p) =>
-                                p ? { ...p, expects_answer: e.target.checked } : p
-                              )
-                            }
-                          />
-                          Expects an answer
-                        </label>
-
-                        <label className="flex items-center gap-2 text-sm text-slate-700">
-                          <input
-                            type="checkbox"
-                            checked={!!stepDraft?.skip_if_answered}
-                            onChange={(e) =>
-                              setStepDraft((p) =>
-                                p ? { ...p, skip_if_answered: e.target.checked } : p
-                              )
-                            }
-                          />
-                          Skip if already answered
-                        </label>
-                      </div>
-
-                      <div>
-                        <label className={labelClass}>
-                          Match any keywords (comma-separated)
-                        </label>
-                        <input
-                          className={inputClass}
-                          value={stepDraft?.match_any_keywords ?? ""}
-                          onChange={(e) =>
-                            setStepDraft((p) =>
-                              p ? { ...p, match_any_keywords: e.target.value } : p
-                            )
-                          }
-                          placeholder="e.g. price, on-road, discount"
-                        />
-                      </div>
-
                       <div className="flex items-center gap-2">
                         <button
                           onClick={async () => {
@@ -770,64 +859,22 @@ export function WorkflowModule() {
                 placeholder="What should the assistant do at this stage?"
                 value={newStep.instruction_text}
                 onChange={(e) =>
-                  setNewStep({
-                    ...newStep,
-                    instruction_text: e.target.value,
-                  })
+                  setNewStep((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          instruction_text: e.target.value,
+                        }
+                      : prev
+                  )
                 }
               />
-
-              <div className="grid grid-cols-2 gap-3">
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={newStep.expects_answer}
-                    onChange={(e) =>
-                      setNewStep({
-                        ...newStep,
-                        expects_answer: e.target.checked,
-                      })
-                    }
-                  />
-                  Expects an answer
-                </label>
-
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={newStep.skip_if_answered}
-                    onChange={(e) =>
-                      setNewStep({
-                        ...newStep,
-                        skip_if_answered: e.target.checked,
-                      })
-                    }
-                  />
-                  Skip if already answered
-                </label>
-              </div>
-
-              <div>
-                <label className={labelClass}>
-                  Match any keywords (comma-separated)
-                </label>
-                <input
-                  className={inputClass}
-                  value={newStep.match_any_keywords}
-                  onChange={(e) =>
-                    setNewStep({
-                      ...newStep,
-                      match_any_keywords: e.target.value,
-                    })
-                  }
-                  placeholder="e.g. price, on-road, discount"
-                />
-              </div>
 
               <div className="flex items-center gap-2">
                 <button
                   onClick={async () => {
                     if (!workflowId) return;
+                    if (!newStep) return;
 
                     const payload = {
                       ai_action: newStep.ai_action,

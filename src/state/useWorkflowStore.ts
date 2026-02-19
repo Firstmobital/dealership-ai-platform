@@ -4,16 +4,23 @@ import { useOrganizationStore } from "./useOrganizationStore";
 
 import type { Workflow, WorkflowStep, WorkflowLog } from "../types/database";
 
-const normalizeStepAction = (action: any) => {
+const buildStepActionForPersist = (action: any) => {
   const a = (action ?? {}) as any;
+  // Persist only core fields. Do not normalize/write legacy optional fields.
   return {
-    ...a,
-    expects_answer: typeof a.expects_answer === "boolean" ? a.expects_answer : false,
-    skip_if_answered:
-      typeof a.skip_if_answered === "boolean" ? a.skip_if_answered : false,
-    match_any_keywords: Array.isArray(a.match_any_keywords)
-      ? a.match_any_keywords
-      : [],
+    ai_action: a.ai_action ?? "instruction",
+    instruction_text: typeof a.instruction_text === "string" ? a.instruction_text : "",
+  };
+};
+
+const mergeStepActionForPersist = (existingAction: any, incomingAction: any) => {
+  // Backward compatibility: preserve any legacy keys that may already exist in DB.
+  // Only overwrite the core fields that the UI can edit.
+  const existing = (existingAction ?? {}) as any;
+  const incomingCore = buildStepActionForPersist(incomingAction);
+  return {
+    ...existing,
+    ...incomingCore,
   };
 };
 
@@ -253,7 +260,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       organization_id: activeOrganization.id,
       workflow_id: workflowId,
       step_order: stepOrder,
-      action: normalizeStepAction(action),
+      action: buildStepActionForPersist(action),
     });
 
     if (error) {
@@ -268,9 +275,22 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
      UPDATE STEP
   ===================================================== */
   updateStep: async (stepId, action) => {
+    const { data: existing, error: fetchError } = await supabase
+      .from("workflow_steps")
+      .select("action")
+      .eq("id", stepId)
+      .single();
+
+    if (fetchError) {
+      set({ error: fetchError.message });
+      return;
+    }
+
+    const nextAction = mergeStepActionForPersist((existing as any)?.action, action);
+
     const { error } = await supabase
       .from("workflow_steps")
-      .update({ action: normalizeStepAction(action) })
+      .update({ action: nextAction })
       .eq("id", stepId);
 
     if (error) set({ error: error.message });
@@ -355,7 +375,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           organization_id: wf.organization_id,
           workflow_id: newWF.id,
           step_order: s.step_order,
-          action: s.action,
+          action: {
+            ai_action: s.ai_action,
+            instruction_text: s.instruction_text ?? "",
+            expected_user_input: s.expected_user_input ?? "",
+            metadata: s.metadata ?? {},
+            expects_answer: s.expects_answer,
+            skip_if_answered: s.skip_if_answered,
+            match_any_keywords: s.match_any_keywords,
+          },
+          // NOTE: workflow-generator may still produce legacy keys; we keep that behavior for now.
         }))
       );
     }
@@ -428,7 +457,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ai_action: s.ai_action,
           instruction_text: s.instruction_text ?? "",
           // Keep the JSON payload for UI / future usage
-          action: normalizeStepAction({
+          action: {
             ai_action: s.ai_action,
             instruction_text: s.instruction_text ?? "",
             expected_user_input: s.expected_user_input ?? "",
@@ -436,7 +465,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             expects_answer: s.expects_answer,
             skip_if_answered: s.skip_if_answered,
             match_any_keywords: s.match_any_keywords,
-          }),
+          },
+          // NOTE: workflow-generator may still produce legacy keys; we keep that behavior for now.
         }))
       );
     }

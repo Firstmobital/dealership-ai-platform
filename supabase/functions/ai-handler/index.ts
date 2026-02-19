@@ -3486,7 +3486,6 @@ type WorkflowRow = {
   id: string;
   organization_id: string | null;
   trigger: any | null;
-  mode: "smart" | "strict" | null;
   is_active: boolean | null;
 };
 
@@ -3528,7 +3527,7 @@ async function detectWorkflowTrigger(
     () =>
       supabase
         .from("workflows")
-        .select("id, organization_id, trigger, mode, is_active")
+        .select("id, organization_id, trigger, is_active")
         .eq("organization_id", organizationId)
         .eq("is_active", true)
   );
