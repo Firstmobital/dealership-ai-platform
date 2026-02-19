@@ -17,7 +17,7 @@
     "jsx": "react-jsx",
     "types": ["vite/client"]
   },
-  "include": ["src"],
+  "include": ["src", "capacitor.config.ts"],
   "exclude": ["supabase/functions", "supabase/migrations","supabase","supabase/**"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -7,9 +7,18 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "cap:sync": "npx cap sync",
+    "cap:android": "npx cap open android",
+    "cap:ios": "npx cap open ios",
+    "cap:build": "npm run build && npm run cap:sync",
+    "cap:init": "node -e \"console.log('Capacitor is configured via capacitor.config.ts. No init step required.');\""
   },
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/ios": "^8.1.0",
     "@supabase/supabase-js": "^2.43.4",
     "classnames": "^2.5.1",
     "lucide-react": "^0.360.0",

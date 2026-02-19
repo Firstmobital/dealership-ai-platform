@@ -9,6 +9,7 @@ import { KnowledgeBaseModule } from "./modules/knowledge-base/KnowledgeBaseModul
 import { BotPersonalityModule } from "./modules/bot-personality/BotPersonalityModule";
 import { WorkflowModule } from "./modules/workflows/WorkflowModule";
 import { CampaignsModule } from "./modules/campaigns/CampaignsModule";
+import { LeadsModule, LeadDetailPage } from "./modules/leads/index";
 import { SettingsModule } from "./modules/dashboard/SettingsModule";
 import { WhatsappSettingsModule } from "./modules/settings/WhatsappSettingsModule";
 import { UnansweredQuestionsModule } from "./modules/unanswered/UnansweredQuestionsModule";
@@ -168,6 +169,15 @@ function App() {
           element={
             hasOrg ? <CampaignsModule /> : <Navigate to="/settings" replace />
           }
+        />
+
+        <Route
+          path="leads"
+          element={hasOrg ? <LeadsModule /> : <Navigate to="/settings" replace />}
+        />
+        <Route
+          path="leads/:contactId"
+          element={hasOrg ? <LeadDetailPage /> : <Navigate to="/settings" replace />}
         />
 
         {/* ✅ PSF */}
