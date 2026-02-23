@@ -39,6 +39,7 @@ export type ListLeadsParams = {
 
 export type LeadRow = {
   id: string;
+  organization_id: string;
   name: string | null;
   phone: string | null;
   model: string | null;
@@ -52,7 +53,7 @@ export type LeadRow = {
 };
 
 const leadSelect =
-  "id,name,phone,model,assigned_to_user_id,lead_status,priority,next_followup_at,last_contacted_at,last_outcome,lost_reason";
+  "id,organization_id,name,phone,model,assigned_to_user_id,lead_status,priority,next_followup_at,last_contacted_at,last_outcome,lost_reason";
 
 function startOfDayISO(d: Date) {
   const x = new Date(d);

@@ -202,7 +202,11 @@ export function LeadDetailPage() {
   }, [conversationId]);
 
   useEffect(() => {
-    // Determine role and assignee set using RLS-scoped organization_users.
+    // Determine role and assignee set using RLS-scoped tables.
+    // RBAC intent:
+    // - owner/admin: assignees = all org users
+    // - team_leader: assignees = members of teams they lead
+    // - agent: no assign UI
     let cancelled = false;
 
     void (async () => {
@@ -211,14 +215,14 @@ export function LeadDetailPage() {
         const userId = userRes.user?.id;
         if (!userId) return;
 
-        // We can infer org by lead after load; fetch org role after lead exists.
-        // If lead isn't loaded yet, skip.
         if (!lead) return;
+        const orgId = (lead as any).organization_id as string | null;
+        if (!orgId) return;
 
         const { data: roleRow } = await supabase
           .from("organization_users")
           .select("role")
-          .eq("organization_id", (lead as any).organization_id)
+          .eq("organization_id", orgId)
           .eq("user_id", userId)
           .maybeSingle();
 
@@ -231,30 +235,78 @@ export function LeadDetailPage() {
         setRoleLabel(role || null);
         setCanReassign(isAdmin || isTeamLeader);
 
-        if (!(isAdmin || isTeamLeader)) return;
+        // Agents/sales: hide assign UI and don't fetch assignees.
+        if (!(isAdmin || isTeamLeader)) {
+          setAssignees([]);
+          return;
+        }
 
         setAssigneesLoading(true);
 
-        // RLS is expected to restrict visibility:
-        // - admin: should see all org users
-        // - team_leader: should see only their team
-        const { data: orgUsers, error } = await supabase
-          .from("organization_users")
-          .select("user_id")
-          .eq("organization_id", (lead as any).organization_id);
+        if (isAdmin) {
+          // Admin/owner: all org users in organization_users (RLS governs access)
+          const { data: orgUsers, error } = await supabase
+            .from("organization_users")
+            .select("user_id")
+            .eq("organization_id", orgId);
+
+          if (cancelled) return;
+
+          if (error) {
+            setAssignees([]);
+          } else {
+            const unique = new Map<string, { user_id: string; label: string }>();
+            for (const u of orgUsers ?? []) {
+              const id = (u as any).user_id as string | null;
+              if (!id) continue;
+              if (!unique.has(id)) unique.set(id, { user_id: id, label: id });
+            }
+            setAssignees(Array.from(unique.values()));
+          }
+          return;
+        }
+
+        // Team leader: only members of teams they lead in this org.
+        // Query teams led by current user, then team_members for those teams.
+        const { data: teamsLed, error: teamsErr } = await supabase
+          .from("teams")
+          .select("id")
+          .eq("organization_id", orgId)
+          .eq("leader_user_id", userId);
 
         if (cancelled) return;
 
-        if (error) {
+        if (teamsErr || !teamsLed || teamsLed.length === 0) {
           setAssignees([]);
-        } else {
-          setAssignees(
-            (orgUsers ?? []).map((u: any) => ({
-              user_id: u.user_id,
-              label: u.user_id,
-            }))
-          );
+          return;
         }
+
+        const teamIds = teamsLed.map((t: any) => t.id).filter(Boolean);
+
+        const { data: members, error: membersErr } = await supabase
+          .from("team_members")
+          .select("user_id")
+          .in("team_id", teamIds);
+
+        if (cancelled) return;
+
+        if (membersErr) {
+          setAssignees([]);
+          return;
+        }
+
+        const unique = new Map<string, { user_id: string; label: string }>();
+
+        // Include team leader themselves as an option.
+        unique.set(userId, { user_id: userId, label: userId });
+
+        for (const m of members ?? []) {
+          const id = (m as any).user_id as string | null;
+          if (!id) continue;
+          if (!unique.has(id)) unique.set(id, { user_id: id, label: id });
+        }
+
+        setAssignees(Array.from(unique.values()));
       } catch {
         if (!cancelled) {
           setCanReassign(false);
