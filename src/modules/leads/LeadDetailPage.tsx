@@ -228,15 +228,15 @@ export function LeadDetailPage() {
 
         const role = String((roleRow as any)?.role ?? "").toLowerCase();
         const isAdmin = role === "admin" || role === "owner";
-        const isTeamLeader = role === "team_leader";
+        const isLeadAdmin = role === "team_leader" || role === "lead_manager";
 
         if (cancelled) return;
 
         setRoleLabel(role || null);
-        setCanReassign(isAdmin || isTeamLeader);
+        setCanReassign(isAdmin || isLeadAdmin);
 
         // Agents/sales: hide assign UI and don't fetch assignees.
-        if (!(isAdmin || isTeamLeader)) {
+        if (!(isAdmin || isLeadAdmin)) {
           setAssignees([]);
           return;
         }
@@ -266,7 +266,7 @@ export function LeadDetailPage() {
           return;
         }
 
-        // Team leader: only members of teams they lead in this org.
+        // Team leader/lead manager: only members of teams they lead in this org.
         // Query teams led by current user, then team_members for those teams.
         const { data: teamsLed, error: teamsErr } = await supabase
           .from("teams")
@@ -494,7 +494,7 @@ export function LeadDetailPage() {
                     <div>
                       <h2 className="text-sm font-semibold text-slate-900">Assign lead</h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        {roleLabel === "team_leader"
+                        {roleLabel === "team_leader" || roleLabel === "lead_manager"
                           ? "You can assign within your team."
                           : "You can assign to any org user."}
                       </p>

@@ -39,6 +39,7 @@ export function LeadsModule() {
   const { activeOrganization } = useOrganizationStore();
 
   const [isTeamLeader, setIsTeamLeader] = useState(false);
+  const [isLeadAdmin, setIsLeadAdmin] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<LeadRow[]>([]);
@@ -93,9 +94,14 @@ export function LeadsModule() {
           .maybeSingle();
 
         if (cancelled) return;
-        setIsTeamLeader(String((data as any)?.role ?? "").toLowerCase() === "team_leader");
+        const role = String((data as any)?.role ?? "").toLowerCase();
+        setIsTeamLeader(role === "team_leader");
+        setIsLeadAdmin(role === "team_leader" || role === "lead_manager");
       } catch {
-        if (!cancelled) setIsTeamLeader(false);
+        if (!cancelled) {
+          setIsTeamLeader(false);
+          setIsLeadAdmin(false);
+        }
       }
     })();
 
@@ -105,11 +111,11 @@ export function LeadsModule() {
   }, [activeOrganization?.id]);
 
   useEffect(() => {
-    if (!isTeamLeader || !activeOrganization?.id) return;
+    if (!isLeadAdmin || !activeOrganization?.id) return;
 
     let cancelled = false;
     void (async () => {
-      // RLS should scope to the team leader's accessible users.
+      // RLS should scope to the team leader/lead manager's accessible users.
       const { data, error } = await supabase
         .from("organization_users")
         .select("user_id")
@@ -131,7 +137,7 @@ export function LeadsModule() {
     return () => {
       cancelled = true;
     };
-  }, [isTeamLeader, activeOrganization?.id]);
+  }, [isLeadAdmin, activeOrganization?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,7 +200,7 @@ export function LeadsModule() {
   }, []);
 
   useEffect(() => {
-    if (!isTeamLeader) return;
+    if (!isLeadAdmin) return;
 
     let cancelled = false;
     void (async () => {
@@ -245,16 +251,16 @@ export function LeadsModule() {
     return () => {
       cancelled = true;
     };
-  }, [isTeamLeader]);
+  }, [isLeadAdmin]);
 
   const visibleRows = useMemo(() => rows, [rows]);
 
   const teamLeadRows = useMemo(() => {
-    if (!isTeamLeader) return [] as LeadRow[];
+    if (!isLeadAdmin) return [] as LeadRow[];
     if (tab !== "team_leads") return [] as LeadRow[];
     if (assignedTo === "all") return visibleRows;
     return visibleRows.filter((r) => r.assigned_to_user_id === assignedTo);
-  }, [isTeamLeader, tab, assignedTo, visibleRows]);
+  }, [isLeadAdmin, tab, assignedTo, visibleRows]);
 
   return (
     <div className="flex w-full flex-col gap-4 p-3 sm:gap-6 sm:p-6">
@@ -290,7 +296,7 @@ export function LeadsModule() {
           Leads
         </button>
 
-        {isTeamLeader ? (
+        {isLeadAdmin ? (
           <>
             <button
               onClick={() => setTab("team_day")}
@@ -355,7 +361,7 @@ export function LeadsModule() {
             ))}
           </div>
         </section>
-      ) : tab === "team_day" && isTeamLeader ? (
+      ) : tab === "team_day" && isLeadAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5">
           <div className="flex items-center justify-between">
             <div>
@@ -407,7 +413,7 @@ export function LeadsModule() {
             </div>
           </div>
         </section>
-      ) : tab === "team_leads" && isTeamLeader ? (
+      ) : tab === "team_leads" && isLeadAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
