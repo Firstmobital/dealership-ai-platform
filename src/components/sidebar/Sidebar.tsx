@@ -23,52 +23,21 @@ import { useWalletStore } from "../../state/useWalletStore";
 import { useEffect, useState } from "react";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { supabase } from "../../lib/supabaseClient";
+import { canAccessFullApp, ORG_ROLES } from "../../auth/orgRoles";
 
 export function Sidebar() {
   // 💰 Wallet state (single source of truth)
   const { walletStatus } = useWalletStore();
-  const { activeOrganization } = useOrganizationStore();
+  const { activeOrganization, currentUserRole } = useOrganizationStore();
 
   const [open, setOpen] = useState(false);
-  const [userRole, setUserRole] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!activeOrganization?.id) {
-      setUserRole(null);
-      return;
-    }
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { data: userRes } = await supabase.auth.getUser();
-        const userId = userRes.user?.id;
-        if (!userId) {
-          if (!cancelled) setUserRole(null);
-          return;
-        }
-
-        const { data } = await supabase
-          .from("organization_users")
-          .select("role")
-          .eq("organization_id", activeOrganization.id)
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (cancelled) return;
-        setUserRole(String((data as any)?.role ?? "").toLowerCase() || null);
-      } catch {
-        if (!cancelled) setUserRole(null);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeOrganization?.id]);
-
-  const leadsOnlyRoles = new Set(["sales", "team_leader", "lead_manager"]);
-  const isLeadsOnly = userRole ? leadsOnlyRoles.has(userRole) : false;
+  const isFullApp = canAccessFullApp(currentUserRole);
+  const isLeadsOnly =
+    !!currentUserRole &&
+    (currentUserRole === ORG_ROLES.LEAD_MANAGER ||
+      currentUserRole === ORG_ROLES.TEAM_LEADER ||
+      currentUserRole === ORG_ROLES.AGENT);
 
   // Close sidebar on route change via popstate (basic) and on resize to desktop.
   useEffect(() => {
@@ -113,8 +82,10 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex flex-1 flex-col gap-1 text-sm" onClick={() => setOpen(false)}>
-        {isLeadsOnly ? (
-          <SidebarLink to="/leads" icon={Users} label="Leads" />
+        {!isFullApp && isLeadsOnly ? (
+          <>
+            <SidebarLink to="/leads" icon={Users} label="Leads" />
+          </>
         ) : (
           <>
             <SidebarLink to="/" icon={MessageCircle} label="Chats" />

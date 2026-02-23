@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabaseClient";
 import type { Organization } from "../types/database";
+import type { OrgRole } from "../auth/orgRoles";
 
 /* ============================================================================
    TYPES
@@ -16,6 +17,9 @@ export type OrgState = {
   organizations: OrgWithMeta[];
   activeOrganization: Organization | null;
 
+  /** Current auth user's role in the active organization (organization_users.role). */
+  currentUserRole: OrgRole | null;
+
   isBootstrapping: boolean;
   /** True once bootstrapOrganizations has completed at least once (success or empty). */
   initialized: boolean;
@@ -26,6 +30,8 @@ export type OrgState = {
   /* -------------------------------------------------------------------------- */
   bootstrapOrganizations: () => Promise<void>;
   setActiveOrganization: (org: Organization) => Promise<void>;
+  /** Fetch the current user's role for the active organization. */
+  loadCurrentUserRole: () => Promise<void>;
   /** Admin helper: create a new org + membership and switch into it. */
   createOrganization: (name: string) => Promise<void>;
   clearOrganizationState: () => void;
@@ -40,6 +46,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
   /* -------------------------------------------------------------------------- */
   organizations: [],
   activeOrganization: null,
+  currentUserRole: null,
 
   isBootstrapping: false,
   initialized: false,
@@ -82,6 +89,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
       set({
         organizations: [],
         activeOrganization: null,
+        currentUserRole: null,
         isBootstrapping: false,
         loading: false,
         initialized: true,
@@ -118,6 +126,9 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
   setActiveOrganization: async (org: Organization) => {
     set({ activeOrganization: org });
 
+    // Keep role in sync with active org.
+    void get().loadCurrentUserRole();
+
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) return;
 
@@ -131,6 +142,45 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
 
     if (error) {
       console.error("[Org] failed to update last_active_at:", error);
+    }
+  },
+
+  /* -------------------------------------------------------------------------- */
+  /* LOAD CURRENT USER ROLE                                                     */
+  /* -------------------------------------------------------------------------- */
+  loadCurrentUserRole: async () => {
+    try {
+      const orgId = get().activeOrganization?.id;
+      if (!orgId) {
+        set({ currentUserRole: null });
+        return;
+      }
+
+      const { data: userRes } = await supabase.auth.getUser();
+      const userId = userRes.user?.id;
+      if (!userId) {
+        set({ currentUserRole: null });
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("organization_users")
+        .select("role")
+        .eq("organization_id", orgId)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("[Org] loadCurrentUserRole error:", error);
+        set({ currentUserRole: null });
+        return;
+      }
+
+      const role = String((data as any)?.role ?? "").trim().toLowerCase();
+      set({ currentUserRole: (role || null) as OrgRole | null });
+    } catch (e) {
+      console.error("[Org] loadCurrentUserRole error:", e);
+      set({ currentUserRole: null });
     }
   },
 
@@ -166,6 +216,7 @@ export const useOrganizationStore = create<OrgState>((set, get) => ({
     set({
       organizations: [],
       activeOrganization: null,
+      currentUserRole: null,
       isBootstrapping: false,
       initialized: false,
       loading: false,

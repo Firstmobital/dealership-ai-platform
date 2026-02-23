@@ -33,6 +33,8 @@ import WalletPage from "./pages/settings/WalletPage";
 /* ================= PSF MODULE ================= */
 import { PsfModule } from "./modules/psf/PsfModule";
 
+import { canAccessFullApp, ORG_ROLES } from "./auth/orgRoles";
+
 /* -------------------------------------------------------------------------- */
 /* FULL SCREEN LOADING                                                         */
 /* -------------------------------------------------------------------------- */
@@ -84,6 +86,7 @@ function App() {
     isBootstrapping,
     initialized: orgInitialized,
     bootstrapOrganizations,
+    currentUserRole,
   } = useOrganizationStore();
 
   const initRealtime = useChatStore((s) => s.initRealtime);
@@ -121,6 +124,13 @@ function App() {
   /* ---------------------------------------------------------------------- */
   const hasOrg = !!activeOrganization?.id;
 
+  const isFullApp = canAccessFullApp(currentUserRole);
+  const isLeadsOnly =
+    !!currentUserRole &&
+    (currentUserRole === ORG_ROLES.LEAD_MANAGER ||
+      currentUserRole === ORG_ROLES.TEAM_LEADER ||
+      currentUserRole === ORG_ROLES.AGENT);
+
   return (
     <Routes>
       {/* ----------------------------- Auth routes ---------------------------- */}
@@ -141,6 +151,11 @@ function App() {
           </RequireAuth>
         }
       >
+        {/* If leads-only role, force any non-leads navigation back to /leads */}
+        {!isFullApp && isLeadsOnly ? (
+          <Route path="*" element={<Navigate to="/leads" replace />} />
+        ) : null}
+
         {/* If logged in but no org, force user to settings for now */}
         <Route index element={<Navigate to="/chats" replace />} />
 
