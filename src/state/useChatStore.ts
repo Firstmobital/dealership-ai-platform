@@ -67,18 +67,44 @@ type ChatState = {
   intentFilter: string | null;
   assignedFilter: string | null;
 
+  // ✅ Cursor pagination state for conversations
+  conversationsPageSize: number;
+  conversationsLoading: boolean;
+  conversationsHasMore: boolean;
+  conversationsCursor: { lastMessageAt: string; id: string } | null;
+  // Used to prevent duplicate fetches for same cursor/filter.
+  conversationsInFlightKey: string | null;
+
+  // Optional filter: only conversations where customer_reply_count = X
+  replyCountFilter: number | null;
+
   aiToggle: Record<string, boolean>;
   unread: Record<string, number>;
 
   // Cleanup (used on logout / org switch)
   reset: () => void;
 
+  // Cursor-based conversations fetch
+  fetchConversationsPage: (
+    organizationId: string,
+    params?: {
+      reset?: boolean;
+      limit?: number;
+      search?: string;
+      intent?: string | null;
+      assignedTo?: string | null;
+      replyCount?: number | null;
+    }
+  ) => Promise<void>;
+
+  // Back-compat: existing callers can still call fetchConversations(orgId)
   fetchConversations: (
     organizationId: string,
     params?: {
       search?: string;
       intent?: string | null;
       assignedTo?: string | null;
+      replyCount?: number | null;
     }
   ) => Promise<void>;
 
@@ -93,6 +119,7 @@ type ChatState = {
   setSearch: (q: string) => void;
   setIntentFilter: (intent: string | null) => void;
   setAssignedFilter: (userId: string | null) => void;
+  setReplyCountFilter: (n: number | null) => void;
 
   toggleAI: (conversationId: string, enabled: boolean) => Promise<void>;
 
@@ -155,6 +182,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   intentFilter: null,
   assignedFilter: null,
 
+  conversationsPageSize: 50,
+  conversationsLoading: false,
+  conversationsHasMore: true,
+  conversationsCursor: null,
+  conversationsInFlightKey: null,
+
+  replyCountFilter: null,
+
   aiToggle: {},
   unread: {},
 
@@ -169,35 +204,80 @@ export const useChatStore = create<ChatState>((set, get) => ({
       search: "",
       intentFilter: null,
       assignedFilter: null,
+      conversationsLoading: false,
+      conversationsHasMore: true,
+      conversationsCursor: null,
+      conversationsInFlightKey: null,
+      replyCountFilter: null,
       aiToggle: {},
       unread: {},
     });
   },
 
   /* -------------------------------------------------------------------------- */
-  /* FETCH CONVERSATIONS (ORG ONLY)                                             */
+  /* FETCH CONVERSATIONS (CURSOR PAGINATION, ORG SAFE)                           */
   /* -------------------------------------------------------------------------- */
-  fetchConversations: async (organizationId, params) => {
-    const search = (params?.search ?? "").trim();
-    const intent = params?.intent ?? null;
-    const assignedTo = params?.assignedTo ?? null;
+  fetchConversationsPage: async (organizationId, params) => {
+    const limit = params?.limit ?? get().conversationsPageSize;
+    const reset = Boolean(params?.reset);
 
-    set({ loading: true });
+    const search = (params?.search ?? get().search ?? "").trim();
+    const intent = (params?.intent ?? get().intentFilter) ?? null;
+    const assignedTo = (params?.assignedTo ?? get().assignedFilter) ?? null;
+    const replyCount = (params?.replyCount ?? get().replyCountFilter) ?? null;
 
+    if (!organizationId) return;
+
+    // Guard: if already loading, don't start another request.
+    if (get().conversationsLoading) return;
+
+    const cursor = reset ? null : get().conversationsCursor;
+
+    // Key used to prevent duplicated fetches when scroll events fire rapidly.
+    const inFlightKey = JSON.stringify({
+      organizationId,
+      cursor,
+      limit,
+      search,
+      intent,
+      assignedTo,
+      replyCount,
+    });
+    if (get().conversationsInFlightKey === inFlightKey) return;
+
+    // If we already know there's no more data, don't fetch.
+    if (!reset && !get().conversationsHasMore) return;
+
+    set({ conversationsLoading: true, conversationsInFlightKey: inFlightKey });
+
+    // Always filter by organization_id (multi-tenant safe)
     let query = supabase
       .from("conversations")
-      .select("*, contacts(*)")
+      .select(
+        [
+          "*",
+          // Only pull contact fields needed for list/search.
+          "contacts(id, phone, name, first_name, last_name)",
+        ].join(",")
+      )
       .eq("organization_id", organizationId)
+      // stable ordering: last_message_at desc, then id desc
       .order("last_message_at", { ascending: false })
-      .limit(200);
+      .order("id", { ascending: false })
+      .limit(limit);
 
     if (intent) query = query.eq("intent", intent);
     if (assignedTo) query = query.eq("assigned_to", assignedTo);
 
+    if (typeof replyCount === "number") {
+      query = query.eq("customer_reply_count", replyCount);
+    }
+
+    // Search (name/phone) - uses contact relationship.
     if (search) {
       const digits = search.replace(/\D/g, "");
       const nameTerm = `%${search}%`;
-
+      // Keep OR expression scoped to this query (still ANDed with organization_id)
       if (digits) {
         query = query.or(
           `contacts.name.ilike.${nameTerm},contacts.phone.ilike.%${digits}%`
@@ -207,25 +287,80 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }
 
+    // Cursor pagination: fetch records strictly "after" cursor tuple.
+    // last_message_at can be null for new/empty conversations; treat as very old.
+    if (cursor) {
+      const lastTs = cursor.lastMessageAt;
+      const lastId = cursor.id;
+
+      // (last_message_at < lastTs) OR (last_message_at = lastTs AND id < lastId)
+      // Note: last_message_at is timestamptz. We quote values.
+      query = query.or(
+        `last_message_at.lt.${lastTs},and(last_message_at.eq.${lastTs},id.lt.${lastId})`
+      );
+    }
+
     const { data, error } = await query;
 
     if (error) {
-      console.error("[useChatStore] fetchConversations error", error);
-      set({ loading: false });
+      console.error("[useChatStore] fetchConversationsPage error", error);
+      set({ conversationsLoading: false, conversationsInFlightKey: null });
       return;
     }
 
-    const normalized = (data ?? []).map(normalizeConversation);
+    const rows = (data ?? []).map(normalizeConversation);
 
-    const aiToggle = Object.fromEntries(
-      normalized.map((c: any) => [c.id, c.ai_enabled !== false])
-    );
+    // Next cursor from last row
+    const last = rows[rows.length - 1] as any;
+    const nextCursor =
+      last?.last_message_at && last?.id
+        ? { lastMessageAt: last.last_message_at, id: last.id }
+        : null;
 
-    set({
-      conversations: normalized as Conversation[],
-      aiToggle,
-      loading: false,
+    set((state) => {
+      const merged = reset ? rows : [...state.conversations, ...rows];
+
+      // Deduplicate by id (safety with realtime inserts / race)
+      const seen = new Set<string>();
+      const deduped: Conversation[] = [];
+      for (const c of merged as any[]) {
+        if (!c?.id) continue;
+        if (seen.has(c.id)) continue;
+        seen.add(c.id);
+        deduped.push(c as Conversation);
+      }
+
+      const aiToggle = {
+        ...state.aiToggle,
+        ...Object.fromEntries(
+          rows.map((c: any) => [c.id, c.ai_enabled !== false])
+        ),
+      };
+
+      return {
+        ...state,
+        conversations: deduped,
+        aiToggle,
+        conversationsCursor: nextCursor,
+        conversationsHasMore: rows.length === limit,
+        conversationsLoading: false,
+        conversationsInFlightKey: null,
+      };
     });
+  },
+
+  // Back-compat wrapper: resets and loads first page
+  fetchConversations: async (organizationId, params) => {
+    // Preserve old loading flag for any existing UI.
+    set({ loading: true });
+    await get().fetchConversationsPage(organizationId, {
+      reset: true,
+      search: params?.search,
+      intent: params?.intent,
+      assignedTo: params?.assignedTo,
+      replyCount: params?.replyCount,
+    });
+    set({ loading: false });
   },
 
   /* -------------------------------------------------------------------------- */
@@ -409,6 +544,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSearch: (q) => set({ search: q }),
   setIntentFilter: (intent) => set({ intentFilter: intent }),
   setAssignedFilter: (userId) => set({ assignedFilter: userId }),
+  setReplyCountFilter: (n) => set({ replyCountFilter: n }),
 
   /* -------------------------------------------------------------------------- */
   /* TOGGLE AI                                                                  */

@@ -1,7 +1,7 @@
 // src/modules/chats/ChatsModule.tsx
 // SEARCH + PHONE-FIRST + DIVISION SAFE + AI MODE HEADER + PSF SUPPORT
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, Copy, SendHorizonal, ThumbsUp } from "lucide-react";
 
 import { useChatStore } from "../../state/useChatStore";
@@ -22,11 +22,15 @@ export function ChatsModule() {
     activeConversationId,
     filter,
     unread,
-    fetchConversations,
+    fetchConversationsPage,
     fetchMessages,
     initRealtime,
     setActiveConversation,
     sendMessage,
+    conversationsLoading,
+    conversationsHasMore,
+    replyCountFilter,
+    setReplyCountFilter,
   } = useChatStore();
 
   const { activeOrganization } = useOrganizationStore();
@@ -36,6 +40,9 @@ export function ChatsModule() {
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [file, setFile] = useState<File | null>(null);
+
+  // Conversations infinite-scroll container
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   // Typing indicators (internal)
   const [typingAgents, setTypingAgents] = useState<string[]>([]);
@@ -62,7 +69,11 @@ export function ChatsModule() {
       .eq("id", activeConversationId);
 
     if (activeOrganization?.id) {
-      await fetchConversations(activeOrganization.id);
+      await fetchConversationsPage(activeOrganization.id, {
+        reset: true,
+        search,
+        replyCount: replyCountFilter,
+      });
     }
   };
 
@@ -80,7 +91,11 @@ export function ChatsModule() {
       .eq("id", activeConversationId);
 
     if (activeOrganization?.id) {
-      await fetchConversations(activeOrganization.id);
+      await fetchConversationsPage(activeOrganization.id, {
+        reset: true,
+        search,
+        replyCount: replyCountFilter,
+      });
     }
   };
 
@@ -105,13 +120,67 @@ export function ChatsModule() {
   }, [activeOrganization?.id, initRealtime]);
 
   /* -------------------------------------------------------
-     LOAD CONVERSATIONS
+     LOAD CONVERSATIONS (PAGINATED)
   ------------------------------------------------------- */
   useEffect(() => {
-    if (activeOrganization?.id) {
-      fetchConversations(activeOrganization.id).catch(console.error);
-    }
-  }, [activeOrganization?.id, fetchConversations]);
+    if (!activeOrganization?.id) return;
+
+    // First page only (50)
+    fetchConversationsPage(activeOrganization.id, {
+      reset: true,
+      search,
+      replyCount: replyCountFilter,
+      limit: 50,
+    }).catch(console.error);
+  }, [activeOrganization?.id]);
+
+  // Debounced search -> reset pagination
+  useEffect(() => {
+    if (!activeOrganization?.id) return;
+
+    const t = window.setTimeout(() => {
+      fetchConversationsPage(activeOrganization.id, {
+        reset: true,
+        search,
+        replyCount: replyCountFilter,
+        limit: 50,
+      }).catch(console.error);
+    }, 250);
+
+    return () => window.clearTimeout(t);
+  }, [search, replyCountFilter, activeOrganization?.id, fetchConversationsPage]);
+
+  // Infinite scroll: fetch next page when near bottom
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      if (!activeOrganization?.id) return;
+      if (conversationsLoading) return;
+      if (!conversationsHasMore) return;
+
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (remaining < 220) {
+        fetchConversationsPage(activeOrganization.id, {
+          reset: false,
+          search,
+          replyCount: replyCountFilter,
+          limit: 50,
+        }).catch(console.error);
+      }
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [
+    activeOrganization?.id,
+    conversationsLoading,
+    conversationsHasMore,
+    fetchConversationsPage,
+    search,
+    replyCountFilter,
+  ]);
 
   useEffect(() => {
     if (!activeConversationId) return;
@@ -198,9 +267,7 @@ export function ChatsModule() {
     const { data } = await supabase.auth.getUser();
     const user = data?.user;
     const name =
-      (user?.user_metadata as any)?.full_name ||
-      user?.email ||
-      "Agent";
+      (user?.user_metadata as any)?.full_name || user?.email || "Agent";
 
     typingChannelRef.current.send({
       type: "broadcast",
@@ -243,14 +310,13 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-     SCROLL MANAGEMENT
+     SCROLL MANAGEMENT (MESSAGE VIEW)
   ------------------------------------------------------- */
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    const nearBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
 
     if (nearBottom) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -328,7 +394,6 @@ export function ChatsModule() {
           // @ts-expect-error - extra field passed through for whatsapp-send
           filename: file?.name ?? null,
         });
-
       } else {
         await sendMessage(activeConversationId, {
           text,
@@ -348,10 +413,10 @@ export function ChatsModule() {
   };
 
   /* -------------------------------------------------------
-     FILTER + SEARCH
+     FILTER + SEARCH (CLIENT POST-FILTERS ONLY)
   ------------------------------------------------------- */
-  const filteredConversations: Conversation[] = conversations
-    .filter((c) => {
+  const filteredConversations: Conversation[] = useMemo(() => {
+    return conversations.filter((c) => {
       if (filter === "psf") return Boolean(c.meta?.psf_case_id);
       if (filter === "unassigned") return !c.assigned_to;
       if (filter === "assigned") return Boolean(c.assigned_to);
@@ -360,15 +425,8 @@ export function ChatsModule() {
       if (filter === "web") return c.channel === "web";
       if (filter === "internal") return c.channel === "internal";
       return true;
-    })
-    .filter((c) => {
-      if (!search.trim()) return true;
-      const q = search.toLowerCase();
-      return (
-        c.contact?.phone?.toLowerCase().includes(q) ||
-        c.contact?.name?.toLowerCase().includes(q)
-      );
     });
+  }, [conversations, filter]);
 
   const currentMessages =
     activeConversationId && messages[activeConversationId]
@@ -397,7 +455,27 @@ export function ChatsModule() {
                      focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
 
-        <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+        <div className="mb-3 flex items-center gap-2">
+          <label className="text-xs text-slate-600">Customer replies</label>
+          <select
+            value={replyCountFilter ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setReplyCountFilter(v === "" ? null : Number(v));
+            }}
+            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+          >
+            <option value="">All</option>
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
+        </div>
+
+        <div ref={listRef} className="flex-1 overflow-y-auto min-h-0 pr-1">
           {filteredConversations.map((c) => (
             <ChatSidebarItem
               key={c.id}
@@ -407,6 +485,18 @@ export function ChatsModule() {
               onClick={() => setActiveConversation(c.id)}
             />
           ))}
+
+          {conversationsLoading && (
+            <div className="py-3 text-center text-xs text-slate-500">
+              Loading…
+            </div>
+          )}
+
+          {!conversationsLoading && !conversationsHasMore && (
+            <div className="py-3 text-center text-xs text-slate-400">
+              End of list
+            </div>
+          )}
         </div>
       </div>
 
