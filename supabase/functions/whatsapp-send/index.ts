@@ -612,12 +612,6 @@ try {
           outbound_dedupe_key: outboundDedupeKey,
           whatsapp_status: "sent",
           sent_at: nowIso,
-          ...(transportType === "template"
-            ? {
-                whatsapp_template_name: body.template_name ?? null,
-                whatsapp_template_language: body.template_language ?? null,
-              }
-            : {}),
         })
         .select("id")
         .maybeSingle();
@@ -922,48 +916,82 @@ if (!waPayload) {
     if (conversationId) {
       const nowIso = new Date().toISOString();
       const businessType = resolveBusinessMessageType(body);
+    
+      // REQUIRED: sender is NOT NULL in your DB
+      const sender: "bot" | "agent" =
+        businessType === "agent" ? "agent" : "bot";
+    
+      // UI needs some text to render
+      const uiText =
+        body.type === "text"
+          ? body.text ?? null
+          : body.rendered_text ?? body.text ?? null;
+    
       const { data: insertedMsg, error: insErr } = await supabase
-        .from('messages')
+        .from("messages")
         .insert({
-        conversation_id: conversationId,
-        channel: "whatsapp",
-        media_url: body.media_url ?? null,
-        mime_type: body.mime_type ?? null,
-        whatsapp_message_id: waMessageId,
-        campaign_id: body.campaign_id ?? null,
-        campaign_message_id: body.campaign_message_id ?? null,
-        outbound_dedupe_key: outboundDedupeKey,
-        whatsapp_status: "sent",
-        sent_at: nowIso,
-        metadata: (() => {
-          const base = body.metadata ?? null;
-          const out: any = { ...(base ?? {}) };
-          if (body.rendered_text) out.rendered_text = body.rendered_text;
-
-          // Persist template info for later workflow trigger detection (metadata-only; no schema changes)
-          if (type === "template") {
-            out.whatsapp = {
-              ...((out as any).whatsapp ?? {}),
-              template_name: String(body.template_name ?? ""),
-              template_language: String(body.template_language ?? ""),
-              kind: "template",
-            };
-          }
-
-          return Object.keys(out).length ? out : null;
-        })(),
-
+          conversation_id: conversationId,
+    
+          // ✅ REQUIRED FIELDS
+          sender,
+          message_type: businessType,
+          text: uiText,
+    
+          // existing fields
+          channel: "whatsapp",
+          media_url: body.media_url ?? null,
+          mime_type: body.mime_type ?? null,
+          whatsapp_message_id: waMessageId,
+          campaign_id: body.campaign_id ?? null,
+          campaign_message_id: body.campaign_message_id ?? null,
+          outbound_dedupe_key: outboundDedupeKey,
+          whatsapp_status: "sent",
+          sent_at: nowIso,
+    
+          metadata: (() => {
+            const base = body.metadata ?? null;
+            const out: any = { ...(base ?? {}) };
+    
+            if (body.rendered_text) out.rendered_text = body.rendered_text;
+    
+            if (type === "template") {
+              out.whatsapp = {
+                ...((out as any).whatsapp ?? {}),
+                template_name: String(body.template_name ?? ""),
+                template_language: String(body.template_language ?? ""),
+                kind: "template",
+              };
+            }
+    
+            return Object.keys(out).length ? out : null;
+          })(),
         })
-        .select('id')
+        .select("id")
         .maybeSingle();
-
-      if (!insErr && insertedMsg?.id) {
-        await logDeliveryEvent({ organization_id: orgId, message_id: insertedMsg.id, campaign_message_id: body.campaign_message_id ?? null, event_type: 'sent', source: 'whatsapp-send', payload: { whatsapp_message_id: waMessageId } });
+    
+      // 🚨 DO NOT ignore DB failures
+      if (insErr) {
+        console.error("Message insert failed:", insErr);
+        return new Response(
+          JSON.stringify({ error: "DB insert failed", details: insErr }),
+          { status: 500 }
+        );
       }
-
+    
+      if (insertedMsg?.id) {
+        await logDeliveryEvent({
+          organization_id: orgId,
+          message_id: insertedMsg.id,
+          campaign_message_id: body.campaign_message_id ?? null,
+          event_type: "sent",
+          source: "whatsapp-send",
+          payload: { whatsapp_message_id: waMessageId },
+        });
+      }
+    
       await supabase
         .from("conversations")
-        .update({ last_message_at: new Date().toISOString() })
+        .update({ last_message_at: nowIso })
         .eq("id", conversationId);
     }
 
