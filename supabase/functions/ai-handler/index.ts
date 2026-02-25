@@ -17,6 +17,7 @@ import {
   validateAndRepairResponse,
   extractNumberTokens,
 } from "./workflow/validator.ts";
+import { extractSlotsFromUserText } from "./workflow/slots.ts";
 
 /* ============================================================================
    ENV
@@ -667,7 +668,7 @@ function buildOfferListReply(params: {
   return lines.join("\n");
 }
 
-function extractOnRoadLine(params: {
+function _extractOnRoadLine(params: {
   text: string;
   model?: string | null;
   variant?: string | null;
@@ -701,7 +702,7 @@ function extractOnRoadLine(params: {
   return best?.line ?? null;
 }
 
-function buildOnRoadReply(params: {
+function _buildOnRoadReply(params: {
   model?: string | null;
   variant?: string | null;
   onRoadLine: string;
@@ -717,21 +718,21 @@ function preventingRobotLikeHead(variant: string): boolean {
   return Boolean((variant || "").trim());
 }
 
-async function detectServiceTicketType(
+function detectServiceTicketType(
   message: string
 ): Promise<"booking" | "status" | "complaint" | "general"> {
   const s = (message || "").toLowerCase();
   if (/(book|booking|appointment|slot|schedule|pickup|drop)/i.test(s))
-    return "booking";
+    return Promise.resolve("booking");
   if (/(status|job card|jobcard|ready|done|completed)/i.test(s))
-    return "status";
+    return Promise.resolve("status");
   if (
     /(complaint|issue|problem|noise|vibration|not working|failed|refund|consumer|court)/i.test(
       s
     )
   )
-    return "complaint";
-  return "general";
+    return Promise.resolve("complaint");
+  return Promise.resolve("general");
 }
 
 async function createServiceTicketIfNeeded(params: {
@@ -1012,7 +1013,7 @@ function classifyPrimaryIntent(params: {
   return { primary_intent: "general_inquiry", legacy_bucket: "general" };
 }
 
-function classifyDeterministicConversationIntent(params: {
+function _classifyDeterministicConversationIntent(params: {
   userMessage: string;
   lockedIntent?: string | null;
 }): DeterministicIntentResult {
@@ -1521,7 +1522,7 @@ type WorkflowQuestionType =
   | "confirm"
   | null;
 
-function detectWorkflowQuestionType(instruction: string): WorkflowQuestionType {
+function _detectWorkflowQuestionType(instruction: string): WorkflowQuestionType {
   const t = (instruction || "").toLowerCase();
   if (t.includes("fuel") && t.includes("ask")) return "fuel";
   if (t.includes("transmission") && t.includes("ask")) return "transmission";
@@ -1537,22 +1538,22 @@ function detectWorkflowQuestionType(instruction: string): WorkflowQuestionType {
   return null;
 }
 
-function hasUserAnsweredFuel(userMsg: string): boolean {
+function _hasUserAnsweredFuel(userMsg: string): boolean {
   const u = (userMsg || "").toLowerCase();
   return /\b(petrol|diesel|ev|electric|cng)\b/.test(u);
 }
 
-function hasUserAnsweredTransmission(userMsg: string): boolean {
+function _hasUserAnsweredTransmission(userMsg: string): boolean {
   const u = (userMsg || "").toLowerCase();
   return /\b(manual|automatic|amt|dca|at)\b/.test(u);
 }
 
-function hasUserAnsweredModel(userMsg: string): boolean {
+function _hasUserAnsweredModel(userMsg: string): boolean {
   const u = (userMsg || "").toLowerCase();
   return /\b(nexon|punch|harrier|safari|curvv|altroz|tiago|tigor)\b/.test(u);
 }
 
-function buildQualificationQuestion(
+function _buildQualificationQuestion(
   qtype: Exclude<WorkflowQuestionType, null>,
   locked: Record<string, any>
 ): string {
@@ -1612,7 +1613,7 @@ function mergeEntities(
   return out;
 }
 
-function buildRollingSummary(params: {
+function _buildRollingSummary(params: {
   prevSummary: string | null;
   userMessage: string;
   aiReply: string;
@@ -2662,7 +2663,7 @@ function packKbContext(params: {
   return { context: parts.join("\n\n").trim(), used };
 }
 
-function articleMatchesIntent(
+function _articleMatchesIntent(
   title: string,
   intent: "pricing" | "offer" | "features" | "service" | "other"
 ): boolean {
@@ -2930,7 +2931,7 @@ async function resolveKnowledgeContextSemantic(params: {
     let vectorData: any[] = [];
     let vectorErr: any = null;
 
-    let { data: v1, error: e1 } = await runVector(INITIAL_THRESHOLD);
+    const { data: v1, error: e1 } = await runVector(INITIAL_THRESHOLD);
     vectorErr = e1;
     vectorData = (v1 ?? []) as any[];
 
@@ -3551,7 +3552,16 @@ async function detectWorkflowTrigger(
   logger: ReturnType<typeof createLogger>,
   intentBucket: string,
   conversationId?: string | null
-): Promise<WorkflowRow | null> {
+): Promise<
+  | {
+      workflow: WorkflowRow;
+      match: {
+        source: "keyword" | "whatsapp_template" | "intent" | "always";
+        template_name?: string;
+      };
+    }
+  | null
+> {
   const workflows = await safeSupabase<WorkflowRow[]>(
     "load_workflows",
     logger,
@@ -3600,7 +3610,7 @@ async function detectWorkflowTrigger(
         workflow_id: wf.id,
         trigger_keywords: keywords,
       });
-      return wf;
+      return { workflow: wf, match: { source: "keyword" } };
     }
   }
 
@@ -3626,7 +3636,10 @@ async function detectWorkflowTrigger(
             whatsapp_template_name: lastTemplate,
             trigger_templates: templatesLower,
           });
-          return wf;
+          return {
+            workflow: wf,
+            match: { source: "whatsapp_template", template_name: lastTemplate },
+          };
         }
       }
     }
@@ -3648,7 +3661,7 @@ async function detectWorkflowTrigger(
           workflow_id: wf.id,
           intent: intentBucket,
         });
-        return wf;
+        return { workflow: wf, match: { source: "intent" } };
       }
 
       // 2) keyword-ish fallback: if intent list contains words that appear in message
@@ -3657,7 +3670,7 @@ async function detectWorkflowTrigger(
           workflow_id: wf.id,
           intent: intentBucket,
         });
-        return wf;
+        return { workflow: wf, match: { source: "intent" } };
       }
     }
   }
@@ -3668,7 +3681,7 @@ async function detectWorkflowTrigger(
     logger.info("[workflow] always trigger matched", {
       workflow_id: alwaysWorkflows[0].id,
     });
-    return alwaysWorkflows[0];
+    return { workflow: alwaysWorkflows[0], match: { source: "always" } };
   }
 
   logger.debug("[workflow] no workflows matched");
@@ -3746,8 +3759,35 @@ async function startWorkflow(
   workflowId: string,
   conversationId: string,
   organizationId: string,
-  logger: ReturnType<typeof createLogger>
+  logger: ReturnType<typeof createLogger>,
+  trigger?: {
+    source?: "keyword" | "whatsapp_template" | "intent" | "always" | null;
+    template_name?: string | null;
+    workflow_name?: string | null;
+  }
 ): Promise<WorkflowLogRow | null> {
+  const source = trigger?.source ?? null;
+  const templateName = String(trigger?.template_name ?? "").trim();
+  const workflowName = String(trigger?.workflow_name ?? "").trim();
+
+  const initialVars: Record<string, any> = {};
+
+  // Prefill slots ONLY when started due to whatsapp_template trigger.
+  if (source === "whatsapp_template") {
+    const slots: Record<string, any> = {};
+
+    // Fleet workflow rule
+    const isFleetWorkflow =
+      workflowName.toLowerCase() === "fleet leads" ||
+      templateName.toLowerCase().includes("fleet");
+    if (isFleetWorkflow) {
+      slots.vehicle_model = "Tata Xpress-T";
+    }
+
+    // Only write slots if we have at least one prefilled key
+    if (Object.keys(slots).length) initialVars.slots = slots;
+  }
+
   const data = await safeSupabase<WorkflowLogRow>(
     "start_workflow",
     logger,
@@ -3759,7 +3799,7 @@ async function startWorkflow(
           workflow_id: workflowId,
           conversation_id: conversationId,
           current_step_number: 1,
-          variables: {},
+          variables: initialVars,
           completed: false,
         })
         .select(
@@ -3773,9 +3813,17 @@ async function startWorkflow(
   logger.info("[workflow] started", {
     workflow_id: workflowId,
     log_id: data.id,
+    trigger_source: source,
+    trigger_template_name: templateName || null,
+    workflow_name: workflowName || null,
   });
 
-  return { ...data, current_step_number: 1, variables: {}, completed: false };
+  return {
+    ...data,
+    current_step_number: 1,
+    variables: (data as any).variables ?? initialVars,
+    completed: false,
+  };
 }
 
 async function getWorkflowSteps(
@@ -4147,14 +4195,14 @@ serve(async (req: Request): Promise<Response> => {
 
     // PHASE 1 AUTHZ: enforce tenant boundary (service_role bypasses RLS)
     const isInternal = isInternalRequest(req);
-    let actor_user_id: string | null = null;
-    let actor_email: string | null = null;
+    let _actor_user_id: string | null = null;
+    let _actor_email: string | null = null;
 
     if (!isInternal) {
       try {
         const u = await requireUser(req);
-        actor_user_id = u.id;
-        actor_email = u.email;
+        _actor_user_id = u.id;
+        _actor_email = u.email;
         await requireOrgMembership({
           supabaseAdmin: supabase,
           userId: u.id,
@@ -4200,12 +4248,12 @@ serve(async (req: Request): Promise<Response> => {
     });
 
     /* ============================================================================
-   4.1 AGENT TAKEOVER — HARD AI LOCK (SERVER ENFORCED)
-============================================================================ */
+    4.1 AGENT TAKEOVER — HARD AI LOCK (SERVER ENFORCED)
+    ============================================================================ */
 
     /* ============================================================================
-   AGENT TAKEOVER — EXPIRING AI LOCK (P1-C)
-============================================================================ */
+    AGENT TAKEOVER — EXPIRING AI LOCK (P1-C)
+    ============================================================================ */
 
     if (conv.ai_locked === true) {
       const until = conv.ai_locked_until
@@ -4464,7 +4512,7 @@ serve(async (req: Request): Promise<Response> => {
       personality?.fallback_message ??
       "I’m sorry, I don’t have enough information to answer that.";
 
-    const greetingMessage =
+    const _greetingMessage =
       personality?.greeting_message ?? "Hello how can I help you today?";
 
     const personaBlock = `
@@ -4541,8 +4589,8 @@ ${personality.donts || "- None specified."}
     }
 
     /* ============================================================================
-   PSF FLOW — SHORT CIRCUIT
-============================================================================ */
+    PSF FLOW — SHORT CIRCUIT
+    ============================================================================ */
 
     const psfCase = await loadOpenPsfCaseByConversation(conversation_id);
 
@@ -4647,8 +4695,8 @@ ${personality.donts || "- None specified."}
     }
 
     /* ============================================================================
-   AI UNDERSTANDING (EARLY — REQUIRED FOR ENTITY LOCKING)
-============================================================================ */
+    AI UNDERSTANDING (EARLY — REQUIRED FOR ENTITY LOCKING)
+    ============================================================================ */
 
     let aiExtract: AiExtractedIntent = {
       vehicle_model: null,
@@ -4735,8 +4783,8 @@ ${personality.donts || "- None specified."}
     }
 
     /* ---------------------------------------------------------------------------
-   PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
---------------------------------------------------------------------------- */
+    PHASE 1 — ENTITY DETECTION & LOCKING (STEP 5)
+    --------------------------------------------------------------------------- */
 
     // 🧠 Merge AI-extracted entities into locked entities (Issue 4)
     const nextEntities = mergeEntities(conv.ai_last_entities, {
@@ -4800,7 +4848,7 @@ ${personality.donts || "- None specified."}
     // Purpose: persist "sales vs service" continuity across turns and
     // let workflows / UI route conversations more reliably.
     // ------------------------------------------------------------------
-    const msgLower = (user_message || "").toLowerCase();
+    const _msgLower = (user_message || "").toLowerCase();
     const isServiceIntent =
       aiExtract.intent === "service" ||
       /\b(service|servicing|workshop|maintenance|periodic|appointment|pickup|drop|jobs*card|complaint|warranty|rsa|breakdown|repair)\b/i.test(
@@ -5002,10 +5050,10 @@ ${personality.donts || "- None specified."}
     // ------------------------------------------------------------
     // MVP service ticket creation (transactional service workflow)
     // ------------------------------------------------------------
-    let serviceTicketId: string | null = null;
+    let _serviceTicketId: string | null = null;
 
     if (intentBucket === "service") {
-      serviceTicketId = await createServiceTicketIfNeeded({
+      _serviceTicketId = await createServiceTicketIfNeeded({
         supabaseAdmin: supabase,
         organization_id: organizationId,
         conversation_id: conversation_id,
@@ -5232,12 +5280,12 @@ ${personality.donts || "- None specified."}
     // WORKFLOW CONTEXT (GUIDANCE ONLY — NO EXECUTION)
     // ------------------------------------------------------------------
     let workflowInstructionText = "";
-let workflowSayMessage = "";
-let workflowSaySchema: {
-  allow_numbers: boolean;
-  max_questions: number;
-  forbidden_phrases?: string[];
-} | null = null;
+    let workflowSayMessage = "";
+    let workflowSaySchema: {
+      allow_numbers: boolean;
+      max_questions: number;
+      forbidden_phrases?: string[];
+    } | null = null;
 
     let resolvedWorkflow: WorkflowLogRow | null = null;
     let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
@@ -5257,7 +5305,12 @@ let workflowSaySchema: {
         conv.workflow_id,
         conversation_id,
         organizationId,
-        logger
+        logger,
+        {
+          source: "always",
+          template_name: null,
+          workflow_name: null,
+        }
       );
       logger.info("[workflow] attached from campaign", {
         workflow_id: conv.workflow_id,
@@ -5267,7 +5320,7 @@ let workflowSaySchema: {
 
     // fallback to detection only if nothing exists
     if (!resolvedWorkflow) {
-      const wf = await detectWorkflowTrigger(
+      const trigger = await detectWorkflowTrigger(
         user_message,
         organizationId,
         logger,
@@ -5275,12 +5328,17 @@ let workflowSaySchema: {
         conversation_id
       );
 
-      if (wf) {
+      if (trigger) {
         resolvedWorkflow = await startWorkflow(
-          wf.id,
+          trigger.workflow.id,
           conversation_id,
           organizationId,
-          logger
+          logger,
+          {
+            source: trigger.match.source,
+            template_name: trigger.match.template_name ?? null,
+            workflow_name: null,
+          }
         );
       }
     }
@@ -5317,6 +5375,69 @@ let workflowSaySchema: {
 
           // Keep in-memory state consistent for downstream progression logic
           resolvedWorkflow.current_step_number = nextStepNumber;
+        }
+
+        // ------------------------------------------------------------------
+        // WORKFLOW SLOTS (ENGINE-OWNED, DETERMINISTIC)
+        // Only extract slots when an active workflow session exists.
+        // Persist immediately without changing current_step_number.
+        // ------------------------------------------------------------------
+        try {
+          // Local narrow helpers (keep scoped to this integration block)
+          const isRecord = (v: unknown): v is Record<string, unknown> =>
+            typeof v === "object" && v !== null && !Array.isArray(v);
+
+          const varsUnknown: unknown = resolvedWorkflow.variables;
+          const vars: Record<string, unknown> = isRecord(varsUnknown)
+            ? varsUnknown
+            : {};
+
+          const slotsUnknown: unknown = vars["slots"];
+          const existingSlots: Record<string, unknown> = isRecord(slotsUnknown)
+            ? slotsUnknown
+            : {};
+
+          const slotRes = extractSlotsFromUserText(user_message, existingSlots);
+
+          if (slotRes.changed) {
+            const nextVars: Record<string, unknown> = {
+              ...vars,
+              slots: slotRes.next,
+            };
+
+            // Update in-memory snapshot too (avoid later overwrites)
+            resolvedWorkflow.variables = nextVars;
+
+            // Ensure step number is always a concrete number
+            const stepNum = Number(resolvedWorkflow.current_step_number);
+            const nextStepNum = Number(nextStepNumber);
+            const stableStep =
+              Number.isFinite(stepNum) && stepNum > 0
+                ? stepNum
+                : Number.isFinite(nextStepNum) && nextStepNum > 0
+                ? nextStepNum
+                : 1;
+
+            await saveWorkflowProgress(
+              resolvedWorkflow.id,
+              organizationId,
+              stableStep,
+              nextVars,
+              false,
+              logger
+            );
+
+            logger.info("[workflow] slots updated", {
+              workflow_id: resolvedWorkflow.workflow_id,
+              log_id: resolvedWorkflow.id,
+              changed: true,
+              slot_keys: Object.keys(slotRes.next || {}).slice(0, 12),
+            });
+          }
+        } catch (err) {
+          logger.error("[workflow] slot extraction/persist error", {
+            error: err,
+          });
         }
 
         if (step) {
@@ -5824,7 +5945,6 @@ Respond now to the customer's latest message only.
       workflowSayMessage,
       saySchema: workflowSaySchema,
     });
-    
 
     if (!val.ok) {
       logger.warn("[ai-validator] violations", {

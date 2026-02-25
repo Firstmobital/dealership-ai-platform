@@ -26,14 +26,19 @@ export type WorkflowDirective =
       step_order: number;
     };
 
-function parseRequiredEntities(step: any): string[] {
-  const meta = step?.metadata ?? {};
+function asRecord(v: unknown): Record<string, unknown> {
+  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+}
+
+function parseRequiredEntities(step: unknown): string[] {
+  const s = asRecord(step);
+  const meta = asRecord(s.metadata);
   const fromMeta = Array.isArray(meta.required_entities)
     ? meta.required_entities
     : null;
-  if (fromMeta && fromMeta.length) return fromMeta.map((x: any) => String(x));
+  if (fromMeta && fromMeta.length) return fromMeta.map((x: unknown) => String(x));
 
-  const exp = (step?.expected_user_input ?? "").toString().trim();
+  const exp = (s.expected_user_input ?? "").toString().trim();
   if (!exp) return [];
   return exp
     .split(",")
@@ -41,38 +46,40 @@ function parseRequiredEntities(step: any): string[] {
     .filter(Boolean);
 }
 
-function parseSaySchema(step: any): SaySchema {
-  const meta = step?.metadata ?? {};
+function parseSaySchema(step: unknown): SaySchema {
+  const s = asRecord(step);
+  const meta = asRecord(s.metadata);
   const allow_numbers =
     typeof meta.allow_numbers === "boolean" ? meta.allow_numbers : false;
   const max_questions =
-    typeof meta.max_questions === "number" && meta.max_questions > 0
+    typeof meta.max_questions === "number" && meta.max_questions >= 0
       ? meta.max_questions
-      : 1;
+      : 0;
   const forbidden_phrases: string[] = Array.isArray(meta.forbidden_phrases)
-    ? meta.forbidden_phrases.map((x: any) => String(x)).filter(Boolean)
+    ? meta.forbidden_phrases.map((x: unknown) => String(x)).filter(Boolean)
     : ["contact dealer", "contact dealership"];
 
   return { allow_numbers, max_questions, forbidden_phrases };
 }
 
 export function buildDirective(
-  step: any,
-  entities: Record<string, any>
+  step: unknown,
+  entities: Record<string, unknown>
 ): WorkflowDirective {
-  const stepOrder = Number(step?.step_order ?? step?.stepOrder ?? 0) || 0;
+  const s = asRecord(step);
+  const stepOrder = Number(s.step_order ?? s.stepOrder ?? 0) || 0;
 
   const instruction =
     (
-      step?.instruction_text ??
-      step?.action?.instruction_text ??
-      step?.action?.text ??
+      s.instruction_text ??
+      asRecord(s.action).instruction_text ??
+      asRecord(s.action).text ??
       ""
     )
       .toString()
       .trim();
 
-  const aiAction = (step?.ai_action ?? step?.aiAction ?? "give_information")
+  const aiAction = (s.ai_action ?? s.aiAction ?? "give_information")
     .toString()
     .trim();
 
