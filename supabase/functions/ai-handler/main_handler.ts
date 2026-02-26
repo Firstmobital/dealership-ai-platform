@@ -76,6 +76,35 @@ import { enforceDealershipReplySchema } from "./schema_enforcement.ts";
 import { detectUrgency, enforceHighUrgencyReply, type Urgency } from "./urgency.ts";
 import { normalizeForMatch } from "./text_normalize.ts";
 
+type JsonObject = Record<string, unknown>;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return isRecord(v) ? v : {};
+}
+
+function asStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.map((x) => String(x)) : [];
+}
+
+type TransmissionValue = AiExtractedIntent["transmission"];
+
+function asNullableString(v: unknown): string | null {
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t ? t : null;
+  }
+  return null;
+}
+
+function asNullableTransmission(v: unknown): TransmissionValue {
+  if (v === null || v === undefined) return null;
+  if (v === "Manual" || v === "Automatic" || v === "DCA" || v === "AMT") return v;
+  return null;
+}
 
 /* ============================================================================
    WORKFLOW ENFORCEMENT HELPERS (QUALIFICATION FLOWS)
@@ -135,7 +164,7 @@ function _hasUserAnsweredModel(userMsg: string): boolean {
 
 function _buildQualificationQuestion(
   qtype: Exclude<WorkflowQuestionType, null>,
-  locked: Record<string, any>
+  locked: Record<string, unknown>
 ): string {
   if (qtype === "fuel") {
     return "Sure — which fuel do you prefer: Petrol, Diesel, EV, or Not sure?";
@@ -267,7 +296,7 @@ function isExplicitTopicChange(msg: string): boolean {
 function buildSemanticQueryText(params: {
   userMessage: string;
   isFollowUp: boolean;
-  lockedEntities: Record<string, any> | null;
+  lockedEntities: Record<string, unknown> | null;
   extracted: {
     vehicle_model: string | null;
     intent: string;
@@ -385,12 +414,16 @@ async function runGeminiCompletion(params: {
     const resp = await chat.sendMessage(lastUser);
     const text = resp.response.text()?.trim() ?? null;
 
-    const usage: any = resp.response.usageMetadata ?? {};
+    const usageMeta: unknown = (resp as unknown as { response?: { usageMetadata?: unknown } })
+      .response?.usageMetadata;
+    const usage = asRecord(usageMeta);
 
     return {
       text,
-      inputTokens: usage.promptTokenCount ?? 0,
-      outputTokens: usage.candidatesTokenCount ?? 0,
+      inputTokens: typeof usage.promptTokenCount === "number" ? usage.promptTokenCount : 0,
+      outputTokens: typeof usage.candidatesTokenCount === "number"
+        ? usage.candidatesTokenCount
+        : 0,
       provider: "gemini",
       model,
     };
@@ -410,18 +443,20 @@ async function runAICompletion(params: {
   if (params.provider === "gemini") {
     const gem = await runGeminiCompletion(params);
     if (gem) return gem;
-    return runOpenAICompletion(params as any);
+    return runOpenAICompletion(params);
   }
-  return runOpenAICompletion(params as any);
+  return runOpenAICompletion(params);
 }
 
 /* ============================================================================
    WORKFLOW ENGINE — Types
 ============================================================================ */
+type WorkflowTrigger = { type?: string; [k: string]: unknown };
+
 type WorkflowRow = {
   id: string;
   organization_id: string | null;
-  trigger: any | null;
+  trigger: WorkflowTrigger | null;
   is_active: boolean | null;
 };
 
@@ -430,7 +465,7 @@ type WorkflowLogRow = {
   workflow_id: string | null;
   conversation_id: string | null;
   current_step_number: number | null;
-  variables: Record<string, any>;
+  variables: Record<string, unknown>;
   completed: boolean;
   created_at?: string | null;
 };
@@ -454,7 +489,7 @@ async function getLastOutboundTemplateName(params: {
 }): Promise<string | null> {
   const { conversationId, organizationId, logger } = params;
 
-  const rows = await safeSupabase<any[]>(
+  const rows = await safeSupabase<Array<{ metadata?: unknown; created_at?: string | null }>>(
     "load_last_outbound_messages_for_template_trigger",
     logger,
     () =>
@@ -469,9 +504,10 @@ async function getLastOutboundTemplateName(params: {
   );
 
   for (const r of rows ?? []) {
-    const whatsapp = (r as any)?.metadata?.whatsapp;
-    const kind = String(whatsapp?.kind ?? "").trim().toLowerCase();
-    const name = String(whatsapp?.template_name ?? "").trim();
+    const meta = asRecord(r?.metadata);
+    const whatsapp = asRecord(meta.whatsapp);
+    const kind = String(whatsapp.kind ?? "").trim().toLowerCase();
+    const name = String(whatsapp.template_name ?? "").trim();
     if (kind === "template" && name) return name;
   }
 
@@ -535,7 +571,7 @@ async function detectWorkflowTrigger(
 
   // 1) KEYWORD
   for (const wf of keywordWorkflows) {
-    const keywords: string[] = wf.trigger?.keywords ?? [];
+    const keywords: string[] = asStringArray(wf.trigger?.keywords);
     if (
       keywords.some((k) =>
         lowerMsg.includes((k ?? "").toString().toLowerCase())
@@ -560,7 +596,7 @@ async function detectWorkflowTrigger(
 
     if (lastTemplate) {
       for (const wf of templateWorkflows) {
-        const templates: string[] = wf.trigger?.templates ?? [];
+        const templates: string[] = asStringArray(wf.trigger?.templates);
         const templatesLower = templates
           .map((t) => (t ?? "").toString().trim().toLowerCase())
           .filter(Boolean);
@@ -583,7 +619,7 @@ async function detectWorkflowTrigger(
   // 3) INTENT
   if (intentWorkflows.length) {
     for (const wf of intentWorkflows) {
-      const intents: string[] = wf.trigger?.intents ?? [];
+      const intents: string[] = asStringArray(wf.trigger?.intents);
       if (!intents.length) continue;
 
       const intentsLower = intents
@@ -659,8 +695,8 @@ async function loadActiveWorkflow(
       return {
         ...preferred,
         current_step_number: preferred.current_step_number ?? 1,
-        variables: (preferred as any).variables ?? {},
-        completed: (preferred as any).completed ?? false,
+        variables: isRecord(preferred.variables) ? preferred.variables : {},
+        completed: preferred.completed ?? false,
       };
     }
   }
@@ -685,8 +721,8 @@ async function loadActiveWorkflow(
   return {
     ...latest,
     current_step_number: latest.current_step_number ?? 1,
-    variables: (latest as any).variables ?? {},
-    completed: (latest as any).completed ?? false,
+    variables: isRecord(latest.variables) ? latest.variables : {},
+    completed: latest.completed ?? false,
   };
 }
 
@@ -705,11 +741,11 @@ async function startWorkflow(
   const templateName = String(trigger?.template_name ?? "").trim();
   const workflowName = String(trigger?.workflow_name ?? "").trim();
 
-  const initialVars: Record<string, any> = {};
+  const initialVars: Record<string, unknown> = {};
 
   // Prefill slots ONLY when started due to whatsapp_template trigger.
   if (source === "whatsapp_template") {
-    const slots: Record<string, any> = {};
+    const slots: Record<string, unknown> = {};
 
     // Fleet workflow rule
     const isFleetWorkflow =
@@ -756,7 +792,9 @@ async function startWorkflow(
   return {
     ...data,
     current_step_number: 1,
-    variables: (data as any).variables ?? initialVars,
+    variables: isRecord((data as unknown as { variables?: unknown }).variables)
+      ? ((data as unknown as { variables?: Record<string, unknown> }).variables ?? initialVars)
+      : initialVars,
     completed: false,
   };
 }
@@ -783,7 +821,9 @@ function shouldAutoSkipStep(params: {
   step: WorkflowStepRow;
   lastUserMessage: string;
 }): boolean {
-  const action: any = params.step?.action ?? {};
+  const action = (params.step?.action ?? {}) as WorkflowStepRow["action"] extends null
+    ? Record<string, unknown>
+    : NonNullable<WorkflowStepRow["action"]>;
 
   // Only skip when explicitly enabled
   if (action.skip_if_answered !== true) return false;
@@ -791,7 +831,7 @@ function shouldAutoSkipStep(params: {
   // If no keywords configured, do NOT auto-skip
   const keywords = Array.isArray(action.match_any_keywords)
     ? action.match_any_keywords
-        .map((k: any) => String(k || "").trim().toLowerCase())
+        .map((k) => String(k || "").trim().toLowerCase())
         .filter(Boolean)
     : [];
 
@@ -838,13 +878,15 @@ async function saveWorkflowProgress(
   logId: string,
   organizationId: string,
   nextStep: number,
-  vars: Record<string, any>,
+  vars: Record<string, unknown>,
   completed: boolean,
   logger: ReturnType<typeof createLogger>
 ) {
+  const stableNextStep = Number.isFinite(nextStep) && nextStep > 0 ? nextStep : 1;
+
   const { error } = await supabase
     .from("workflow_logs")
-    .update({ current_step_number: nextStep, variables: vars, completed })
+    .update({ current_step_number: stableNextStep, variables: vars, completed })
     .eq("id", logId)
     .eq("organization_id", organizationId);
 
@@ -853,7 +895,7 @@ async function saveWorkflowProgress(
   else
     logger.debug("[workflow] progress saved", {
       log_id: logId,
-      nextStep,
+      nextStep: stableNextStep,
       completed,
     });
 }
@@ -918,9 +960,9 @@ export async function mainHandler(params: {
       // Phase 1
       ai_mode: AiMode | null;
       ai_summary: string | null;
-      ai_last_entities: Record<string, any> | null;
+      ai_last_entities: Record<string, unknown> | null;
       // Behavior-level persisted AI state
-      ai_state?: Record<string, any> | null;
+      ai_state?: Record<string, unknown> | null;
       funnel_stage?: string | null;
       intent_confidence?: number | null;
       intent_updated_at?: string | null;
@@ -931,7 +973,7 @@ export async function mainHandler(params: {
       last_kb_match_confidence?: string | null;
       campaign_id?: string | null;
       workflow_id?: string | null;
-      campaign_context?: Record<string, any> | null;
+      campaign_context?: Record<string, unknown> | null;
       campaign_reply_sheet_tab?: string | null;
     }>("load_conversation", baseLogger, () =>
       supabase
@@ -1243,8 +1285,8 @@ export async function mainHandler(params: {
           p_organization_id: organizationId,
           p_estimated_tokens: prechargedTokens,
         });
-      } catch (err: any) {
-        const msg = String(err?.message || err || "");
+      } catch (err: unknown) {
+        const msg = String((err as { message?: unknown })?.message ?? err ?? "");
         if (msg.toLowerCase().includes("ai_rate_limit_exceeded")) {
           logger.warn("[rate-limit] exceeded (precharge)", {
             estimated_tokens: prechargedTokens,
@@ -1509,14 +1551,16 @@ ${personality.donts || "- None specified."}
 
     if (shouldContinue) {
       aiExtract = {
-        vehicle_model: lockedModel,
-        vehicle_variant: lockedVariant,
-        fuel_type: lockedFuel,
-        transmission: (lockedTransmission as any) ?? null,
-        manufacturing_year: lockedYear,
+        vehicle_model: asNullableString(lockedModel),
+        vehicle_variant: asNullableString(lockedVariant),
+        fuel_type: asNullableString(lockedFuel),
+        transmission: asNullableTransmission(lockedTransmission),
+        manufacturing_year: asNullableString(lockedYear),
         intent:
-          (lockedIntent as any) ??
-          (lockedTopic === "offer_pricing" ? "pricing" : "other"),
+          String(
+            lockedIntent ??
+              (lockedTopic === "offer_pricing" ? "pricing" : "other")
+          ) as AiExtractedIntent["intent"],
       };
 
       // 🔥 Offer intent must ALWAYS override a previously locked pricing intent.
@@ -1642,15 +1686,14 @@ ${personality.donts || "- None specified."}
         user_message
       );
 
-    const conversationIntent = (
+    const conversationIntent: "sales" | "service" | "finance" | "accessories" =
       isServiceIntent
         ? "service"
         : isFinanceIntent
         ? "finance"
         : isAccessoriesIntent
         ? "accessories"
-        : "sales"
-    ) as any;
+        : "sales";
 
     // Back-compat variable used across the handler (schema enforcement + ai_state persistence)
     const intentBucket = conversationIntent as
@@ -1716,7 +1759,7 @@ ${personality.donts || "- None specified."}
 
     // 10) Phase 6 — Knowledge Base Resolution (Semantic → Deterministic)
     let contextText = "";
-    let kbMatchMeta: any = null;
+    let kbMatchMeta: JsonObject | null = null;
 
     kbAttempted = true;
 
@@ -1743,10 +1786,10 @@ ${personality.donts || "- None specified."}
       userMessage: semanticQueryText,
       organizationId,
       logger,
-      vehicleModel:
-        aiExtract.vehicle_model ?? conv.ai_last_entities?.model ?? null,
+      vehicleModel: asNullableString(aiExtract.vehicle_model) ??
+        asNullableString(conv.ai_last_entities?.model) ?? null,
       intent: aiExtract.intent,
-      fuelType: aiExtract.fuel_type ?? null,
+      fuelType: asNullableString(aiExtract.fuel_type) ?? null,
     });
 
     if (semanticKB?.context) {
@@ -1785,7 +1828,7 @@ ${personality.donts || "- None specified."}
     }
 
     // PHASE 4: persist KB retrieval trace (best-effort)
-    const kbTracePatch: Record<string, any> = {
+    const kbTracePatch: Record<string, unknown> = {
       kb_used: kbFound,
       kb_reason: kbFound ? "matched" : "no_match",
       kb_threshold: semanticKB?.debug?.thresholds?.initial ?? null,
@@ -1805,7 +1848,9 @@ ${personality.donts || "- None specified."}
     await traceUpdate(trace_id, kbTracePatch);
 
     // Persist KB anchors into conversation memory for follow-ups (best-effort)
-    const nextEntitiesWithKb: any = { ...(nextEntities as any) };
+    const nextEntitiesWithKb: Record<string, unknown> = {
+      ...(isRecord(nextEntities) ? nextEntities : {}),
+    };
     try {
       if (kbFound) {
         nextEntitiesWithKb.last_kb = {
@@ -1839,7 +1884,7 @@ ${personality.donts || "- None specified."}
         contact_id: contactId ?? null,
         channel,
         user_message,
-        vehicle_number: (nextEntitiesWithKb as any)?.vehicle_number ?? null,
+        vehicle_number: asNullableString(asRecord(nextEntitiesWithKb).vehicle_number),
         logger,
       });
     }
@@ -1883,11 +1928,12 @@ ${personality.donts || "- None specified."}
         let entries = extractOfferEntriesFromText(contextText);
 
         const lockedModel =
-          (nextEntitiesWithKb as any)?.model ?? aiExtract.vehicle_model ?? null;
-        const lockedVariant =
-          (nextEntitiesWithKb as any)?.variant ??
-          aiExtract.vehicle_variant ??
+          asNullableString(asRecord(nextEntitiesWithKb).model) ??
+          asNullableString(aiExtract.vehicle_model) ??
           null;
+        const lockedVariant =
+          asNullableString(asRecord(nextEntitiesWithKb).variant) ??
+          asNullableString(aiExtract.vehicle_variant);
 
         // If we didn't retrieve the offers catalog chunk(s) (common when chunking split by word-count
         // or retrieval missed the model block), fetch the offers catalog deterministically.
@@ -1918,18 +1964,18 @@ ${personality.donts || "- None specified."}
           const picked = pickBestOfferEntry({
             entries,
             lockedModel,
-            lockedVariant,
+            lockedVariant: lockedVariant ?? null,
             lockedFuel:
-              (nextEntitiesWithKb as any)?.fuel_type ??
-              aiExtract.fuel_type ??
+              asNullableString(asRecord(nextEntitiesWithKb).fuel_type) ??
+              asNullableString(aiExtract.fuel_type) ??
               null,
             lockedTransmission:
-              (nextEntitiesWithKb as any)?.transmission ??
-              aiExtract.transmission ??
+              asNullableString(asRecord(nextEntitiesWithKb).transmission) ??
+              asNullableTransmission(aiExtract.transmission) ??
               null,
             lockedYear:
-              (nextEntitiesWithKb as any)?.manufacturing_year ??
-              aiExtract.manufacturing_year ??
+              asNullableString(asRecord(nextEntitiesWithKb).manufacturing_year) ??
+              asNullableString(aiExtract.manufacturing_year) ??
               null,
           });
 
@@ -1937,24 +1983,23 @@ ${personality.donts || "- None specified."}
             forcedReplyText = buildOfferReply(picked);
 
             // Auto-lock exact match for follow-ups
-            (nextEntitiesWithKb as any).model =
-              picked.model || (nextEntitiesWithKb as any).model;
-            (nextEntitiesWithKb as any).variant =
-              picked.variant || (nextEntitiesWithKb as any).variant;
-            if (picked.fuel)
-              (nextEntitiesWithKb as any).fuel_type = picked.fuel;
+            (nextEntitiesWithKb as Record<string, unknown>).model =
+              picked.model || (asRecord(nextEntitiesWithKb).model as unknown);
+            (nextEntitiesWithKb as Record<string, unknown>).variant =
+              picked.variant || (asRecord(nextEntitiesWithKb).variant as unknown);
+            if (picked.fuel) (nextEntitiesWithKb as Record<string, unknown>).fuel_type = picked.fuel;
             if (picked.transmission)
-              (nextEntitiesWithKb as any).transmission = picked.transmission;
+              (nextEntitiesWithKb as Record<string, unknown>).transmission = picked.transmission;
             if (picked.manufacturing_year)
-              (nextEntitiesWithKb as any).manufacturing_year =
+              (nextEntitiesWithKb as Record<string, unknown>).manufacturing_year =
                 picked.manufacturing_year;
 
             logger.info("[offer] structured_reply_used", {
-              model: (nextEntitiesWithKb as any).model,
-              variant: (nextEntitiesWithKb as any).variant,
-              fuel: (nextEntitiesWithKb as any).fuel_type,
-              transmission: (nextEntitiesWithKb as any).transmission,
-              manufacturing_year: (nextEntitiesWithKb as any)
+              model: (nextEntitiesWithKb as Record<string, unknown>).model,
+              variant: (nextEntitiesWithKb as Record<string, unknown>).variant,
+              fuel: (nextEntitiesWithKb as Record<string, unknown>).fuel_type,
+              transmission: (nextEntitiesWithKb as Record<string, unknown>).transmission,
+              manufacturing_year: (nextEntitiesWithKb as Record<string, unknown>)
                 .manufacturing_year,
             });
           }
@@ -1973,14 +2018,14 @@ ${personality.donts || "- None specified."}
             );
             if (scoped.length === 1) {
               const only = scoped[0];
-              (nextEntitiesWithKb as any).model =
-                only.model || (nextEntitiesWithKb as any).model;
-              (nextEntitiesWithKb as any).variant = only.variant;
-              if (only.fuel) (nextEntitiesWithKb as any).fuel_type = only.fuel;
+              (nextEntitiesWithKb as Record<string, unknown>).model =
+                only.model || (asRecord(nextEntitiesWithKb).model as unknown);
+              (nextEntitiesWithKb as Record<string, unknown>).variant = only.variant;
+              if (only.fuel) (nextEntitiesWithKb as Record<string, unknown>).fuel_type = only.fuel;
               if (only.transmission)
-                (nextEntitiesWithKb as any).transmission = only.transmission;
+                (nextEntitiesWithKb as Record<string, unknown>).transmission = only.transmission;
               if (only.manufacturing_year)
-                (nextEntitiesWithKb as any).manufacturing_year =
+                (nextEntitiesWithKb as Record<string, unknown>).manufacturing_year =
                   only.manufacturing_year;
             }
           }
@@ -2129,7 +2174,7 @@ ${personality.donts || "- None specified."}
       );
 
       if (steps?.length) {
-        const { step, nextStepNumber, skipped } = findFirstIncompleteStep({
+        let { step, nextStepNumber, skipped } = findFirstIncompleteStep({
           steps,
           startStepNumber: resolvedWorkflow.current_step_number ?? 1,
           lastUserMessage: user_message,
@@ -2219,21 +2264,102 @@ ${personality.donts || "- None specified."}
           });
         }
 
+        // ------------------------------------------------------------------
+        // P0 — AUTO-SKIP ASK STEPS IF ALREADY ANSWERED (SLOT-BASED)
+        // - Deterministic: driven entirely by workflow directive required_entities + slots.
+        // - Guarded: max 3 auto-advances per inbound message to prevent loops.
+        // ------------------------------------------------------------------
+        if (step) {
+          const isNonEmptySlotValue = (v: unknown): boolean => {
+            if (v === null || v === undefined) return false;
+            if (typeof v === "string") return v.trim().length > 0;
+            return true;
+          };
+
+          const mapEntityToSlotKey = (entity: string): string => {
+            const k = String(entity || "").trim().toLowerCase();
+            if (k === "fuel" || k === "fuel_type") return "fuel_type";
+            if (k === "model" || k === "vehicle_model") return "vehicle_model";
+            if (k === "variant" || k === "vehicle_variant") return "vehicle_variant";
+            if (k === "city") return "city";
+            if (k === "transmission") return "transmission";
+            return k;
+          };
+
+          for (let auto = 0; auto < 3; auto += 1) {
+            if (!step) break;
+
+            const directive = buildDirective(step, nextEntitiesWithKb || {});
+            if (directive.action !== "ask") break;
+
+            const required = Array.isArray(directive.required_entities)
+              ? directive.required_entities
+              : [];
+
+            // If the step doesn't declare required entities, do NOT auto-skip.
+            if (!required.length) break;
+
+            const vars = isRecord(resolvedWorkflow.variables)
+              ? resolvedWorkflow.variables
+              : {};
+            const slotsUnknown = vars["slots"];
+            const slots = isRecord(slotsUnknown) ? slotsUnknown : {};
+
+            const allPresent = required
+              .map(mapEntityToSlotKey)
+              .filter(Boolean)
+              .every((slotKey) => isNonEmptySlotValue(slots[slotKey]));
+
+            if (!allPresent) break;
+
+            // Advance one step (consistent with existing step_order numbering)
+            const currentOrder = Number(step.step_order);
+            const nextStep = Number.isFinite(currentOrder) && currentOrder > 0
+              ? currentOrder + 1
+              : Number(nextStepNumber) + 1;
+
+            await saveWorkflowProgress(
+              resolvedWorkflow.id,
+              organizationId,
+              nextStep,
+              resolvedWorkflow.variables ?? {},
+              false,
+              logger
+            );
+
+            resolvedWorkflow.current_step_number = nextStep;
+
+            const res = findFirstIncompleteStep({
+              steps,
+              startStepNumber: nextStep,
+              lastUserMessage: user_message,
+            });
+            step = res.step;
+            nextStepNumber = res.nextStepNumber;
+            skipped = res.skipped;
+
+            logger.info("[workflow] auto-skipped ask step (slots already filled)", {
+              workflow_id: resolvedWorkflow.workflow_id,
+              log_id: resolvedWorkflow.id,
+              from_step: currentOrder,
+              to_step: nextStep,
+              required_entities: required.map((r) => String(r)).slice(0, 12),
+            });
+          }
+        }
+
         if (step) {
           workflowStepsCount = steps.length;
 
           // Engine-enforced workflow directive (the engine decides, LLM only renders)
           try {
-            const directive = buildDirective(
-              step as any,
-              (nextEntitiesWithKb as any) || {}
-            );
+            const directive = buildDirective(step, nextEntitiesWithKb || {});
 
             workflowDirectiveAction = directive.action;
 
             if (directive.action === "ask" || directive.action === "escalate") {
               // Deterministic reply; do NOT rely on the LLM.
-              forcedReplyText = enforceDirective(directive as any);
+              forcedReplyText = enforceDirective(directive);
 
               // Hold step on ask; end workflow on escalate.
               const nextStepNum =
@@ -2256,10 +2382,8 @@ ${personality.donts || "- None specified."}
 
             // ✅ Phase 1: engine-enforced SAY (seed + schema)
             if (!forcedReplyText && directive.action === "say") {
-              workflowSayMessage = safeText(
-                (directive as any).message_seed ?? ""
-              );
-              workflowSaySchema = (directive as any).schema ?? null;
+              workflowSayMessage = safeText(directive.message_seed ?? "");
+              workflowSaySchema = directive.schema ?? null;
 
               // Do not rely on prompt guidance for correctness
               workflowInstructionText = "";
@@ -2344,7 +2468,7 @@ ${personality.donts || "- None specified."}
 
     // Option titles (safe default)
     const kbOptionTitles: string[] = Array.isArray(kbMatchMeta?.option_titles)
-      ? kbMatchMeta!.option_titles.filter(Boolean).slice(0, 6)
+      ? asStringArray(kbMatchMeta.option_titles).filter(Boolean).slice(0, 6)
       : [];
 
     // Context packing (safe + deterministic)
@@ -2656,8 +2780,8 @@ Respond now to the customer's latest message only.
             p_organization_id: organizationId,
             p_estimated_tokens: topUp,
           });
-        } catch (err: any) {
-          const msg = String(err?.message || err || "");
+        } catch (err: unknown) {
+          const msg = String((err as { message?: unknown })?.message ?? err ?? "");
           if (msg.toLowerCase().includes("ai_rate_limit_exceeded")) {
             logger.warn("[rate-limit] exceeded (top-up)", {
               total_estimated_tokens: totalEstimate,
@@ -2718,7 +2842,7 @@ Respond now to the customer's latest message only.
     );
 
     const val = validateAndRepairResponse(aiResponseText, {
-      intent: aiExtract.intent as any,
+      intent: aiExtract.intent,
       verifiedNumbersAvailable,
       allowedNumbers: allowedNumbersForOutput,
       workflowSayMessage,
@@ -3001,9 +3125,11 @@ Respond now to the customer's latest message only.
     // 14.9) Persist behavior-level conversation state (intent/stage/workflow/KB)
     const nowIso = new Date().toISOString();
 
-    const kbArticleIds: string[] = (kbMatchMeta?.article_ids ?? []) as any;
-    const mergedAiState: Record<string, any> = {
-      ...((conv as any).ai_state || {}),
+    const kbArticleIds: string[] = Array.isArray(kbMatchMeta?.article_ids)
+      ? asStringArray(kbMatchMeta.article_ids)
+      : [];
+    const mergedAiState: Record<string, unknown> = {
+      ...(isRecord(conv.ai_state) ? conv.ai_state : {}),
       primary_intent,
       last_intent: aiExtract.intent || "other",
       last_intent_bucket: intentBucket,
@@ -3016,7 +3142,7 @@ Respond now to the customer's latest message only.
       urgency,
     };
 
-    const conversationUpdate: Record<string, any> = {
+    const conversationUpdate: Record<string, unknown> = {
       ai_last_entities: nextEntitiesWithKb,
       ai_state: mergedAiState,
       funnel_stage: funnelStage,
@@ -3218,7 +3344,7 @@ Respond now to the customer's latest message only.
       }),
       { headers: { "Content-Type": "application/json" } }
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("[ai-handler] Fatal error", err);
 
     // PHASE 4: mark trace failed (best-effort)
@@ -3226,12 +3352,12 @@ Respond now to the customer's latest message only.
       status: "failed",
       finished_at: new Date().toISOString(),
       error_stage: "fatal",
-      error: { message: String(err?.message ?? err) },
+      error: { message: String((err as { message?: unknown })?.message ?? err) },
     });
 
     return new Response(
       JSON.stringify({
-        error: err?.message ?? "Internal Server Error",
+        error: (err as { message?: unknown })?.message ?? "Internal Server Error",
         error_code: "INTERNAL_ERROR",
         request_id,
       }),
