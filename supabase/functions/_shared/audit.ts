@@ -1,7 +1,15 @@
 // supabase/functions/_shared/audit.ts
 // PHASE 9.2 — AUDIT LOGGER (NON-BLOCKING)
 
-import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+// NOTE: We intentionally avoid importing SupabaseClient from the esm.sh build.
+// In some Deno/esm.sh configurations the type export is not available, which
+// breaks `deno check`. This module only needs a tiny slice of the client API.
+
+type SupabaseLike = {
+  from(table: string): {
+    insert(values: unknown): Promise<unknown>;
+  };
+};
 
 export type AuditLogParams = {
   organization_id: string;
@@ -13,10 +21,10 @@ export type AuditLogParams = {
   actor_user_id?: string | null;
   actor_email?: string | null;
 
-  before_state?: Record<string, any> | null;
-  after_state?: Record<string, any> | null;
+  before_state?: Record<string, unknown> | null;
+  after_state?: Record<string, unknown> | null;
 
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 };
 
 /**
@@ -25,7 +33,7 @@ export type AuditLogParams = {
  * NEVER blocks main logic.
  */
 export async function logAuditEvent(
-  supabase: SupabaseClient,
+  supabase: SupabaseLike,
   params: AuditLogParams
 ): Promise<void> {
   try {

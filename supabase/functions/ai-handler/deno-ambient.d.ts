@@ -1,22 +1,8 @@
-declare const Deno: {
-  env: {
-    get(key: string): string | undefined;
-  };
-};
+// This file exists only to provide ambient typings for URL imports during
+// type-checking / editor tooling.
 
-declare module "https://esm.sh/openai@4.47.0" {
-  const OpenAI: any;
-  export default OpenAI;
-}
+export {};
 
-declare module "https://esm.sh/@google/generative-ai" {
-  export const GoogleGenerativeAI: any;
-}
-
-declare module "https://esm.sh/@supabase/supabase-js@2.43.4" {
-  export const createClient: any;
-}
-
-declare module "https://deno.land/std@0.177.0/http/server.ts" {
-  export const serve: any;
-}
+// Intentionally no ambient module declarations here.
+// Deno provides typings for these URL imports (via cache / types) and
+// redeclaring them here causes duplicate identifier / redeclare errors.
