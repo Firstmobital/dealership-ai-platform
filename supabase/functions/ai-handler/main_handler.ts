@@ -930,6 +930,54 @@ async function logUnansweredQuestion(params: {
   }
 }
 
+// Ensure SAY step replies are strictly non-interrogative.
+function stripInterrogativesForSay(text: string): string {
+  let t = String(text || "").trim();
+  if (!t) return t;
+
+  // If any question mark exists, keep only content before the first '?'.
+  const qm = t.indexOf("?");
+  if (qm >= 0) t = t.slice(0, qm);
+
+  // Remove common interrogative lead-ins that might survive without '?'.
+  t = t
+    .replace(/\b(can you|could you|would you|will you|do you|did you|are you|is it|is there|have you)\b[^.!,;:]*$/i, "")
+    .replace(/\b(what|which|when|where|why|how)\b[^.!,;:]*$/i, "")
+    .trim();
+
+  // Ensure no trailing punctuation that implies a question.
+  t = t.replace(/[؟?]+/g, "").trim();
+
+  // If we ended up with nothing, return empty string and let upstream fallback apply.
+  return t;
+}
+
+function renderSayFromSlots(template: string, slots: Record<string, unknown>): string {
+  // Deterministic: only substitute known slot values. No extraction.
+  const safe = (v: unknown): string => {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    return "";
+  };
+
+  return String(template || "").replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_m, keyRaw) => {
+    const key = String(keyRaw || "").trim();
+    if (!key) return "";
+
+    // Support a common "slots.xxx" prefix but do not allow arbitrary nesting.
+    const slotKey = key.startsWith("slots.") ? key.slice("slots.".length) : key;
+    if (!slotKey) return "";
+
+    return safe(slots[slotKey]);
+  });
+}
+
+type AuditSupabaseLike = {
+  from(table: string): {
+    insert(values: unknown): unknown;
+  };
+};
 
 export async function mainHandler(params: {
   req: Request;
@@ -1096,7 +1144,7 @@ export async function mainHandler(params: {
           }
         );
 
-        await logAuditEvent(supabase, {
+        await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
           organization_id: conv.organization_id,
           action: "ai_reply_blocked_agent_takeover",
           entity_type: "conversation",
@@ -1164,7 +1212,7 @@ export async function mainHandler(params: {
       });
 
       if (humanActive) {
-        await logAuditEvent(supabase, {
+        await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
           organization_id: conv.organization_id,
           action: "ai_reply_skipped_human_active",
           entity_type: "conversation",
@@ -1199,7 +1247,7 @@ export async function mainHandler(params: {
       });
 
       if (humanActive) {
-        await logAuditEvent(supabase, {
+        await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
           organization_id: conv.organization_id,
           action: "ai_reply_skipped_psf_human_active",
           entity_type: "conversation",
@@ -1240,7 +1288,7 @@ export async function mainHandler(params: {
 
       if (!isGreetingMessage(user_message)) {
         // AUDIT: wallet blocked
-        await logAuditEvent(supabase, {
+        await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
           organization_id: organizationId,
           action: "wallet_blocked",
           entity_type: "conversation",
@@ -1449,7 +1497,7 @@ ${personality.donts || "- None specified."}
       }
 
       // 🔍 AUDIT: PSF feedback received
-      await logAuditEvent(supabase, {
+      await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
         organization_id: organizationId,
         action: "psf_feedback_received",
         entity_type: "psf_case",
@@ -2114,6 +2162,7 @@ ${personality.donts || "- None specified."}
     let resolvedWorkflow: WorkflowLogRow | null = null;
     let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
     let workflowStepsCount = 0;
+    let workflowAlreadyAdvanced = false;
 
     const activeWorkflow = await loadActiveWorkflow(
       conversation_id,
@@ -2305,6 +2354,40 @@ ${personality.donts || "- None specified."}
             const slotsUnknown = vars["slots"];
             const slots = isRecord(slotsUnknown) ? slotsUnknown : {};
 
+            // P2 — deterministic model resolution from fuel slot
+            if (
+              required.includes("vehicle_model") &&
+              !slots["vehicle_model"] &&
+              typeof slots["fuel_type"] === "string"
+            ) {
+              const fuel = String(slots["fuel_type"]).toLowerCase().trim();
+
+              if (fuel === "cng") {
+                slots["vehicle_model"] = "Tata Xpress-T";
+
+                const nextVars = {
+                  ...vars,
+                  slots,
+                };
+
+                resolvedWorkflow.variables = nextVars;
+
+                await saveWorkflowProgress(
+                  resolvedWorkflow.id,
+                  organizationId,
+                  resolvedWorkflow.current_step_number ?? 1,
+                  nextVars,
+                  false,
+                  logger
+                );
+
+                logger.info("[workflow] auto-resolved model from fuel slot", {
+                  fuel,
+                  model: "Tata Xpress-T",
+                });
+              }
+            }
+
             const allPresent = required
               .map(mapEntityToSlotKey)
               .filter(Boolean)
@@ -2382,11 +2465,49 @@ ${personality.donts || "- None specified."}
 
             // ✅ Phase 1: engine-enforced SAY (seed + schema)
             if (!forcedReplyText && directive.action === "say") {
-              workflowSayMessage = safeText(directive.message_seed ?? "");
-              workflowSaySchema = directive.schema ?? null;
+              // SAY must not re-open qualification loops.
+              // Use ONLY already-resolved workflow slots; do not run extraction/qualification helpers.
+              const vars = isRecord(resolvedWorkflow.variables)
+                ? resolvedWorkflow.variables
+                : {};
+              const slotsUnknown = vars["slots"];
+              const slots = isRecord(slotsUnknown) ? slotsUnknown : {};
+
+              // Render from slots deterministically; any missing slots become empty strings.
+              const seed = safeText(directive.message_seed ?? "");
+              const rendered = renderSayFromSlots(seed, slots);
+
+              workflowSayMessage = stripInterrogativesForSay(rendered);
+              workflowSaySchema = directive.schema
+                ? { ...directive.schema, max_questions: 0 }
+                : { allow_numbers: true, max_questions: 0 };
 
               // Do not rely on prompt guidance for correctness
               workflowInstructionText = "";
+
+              // Force the reply text so we do not call the model and we cannot ask follow-ups.
+              forcedReplyText = workflowSayMessage;
+
+              // If SAY is the last step, persist completed=true.
+              const currentOrder = Number(step.step_order);
+              const isLast =
+                Number.isFinite(currentOrder) &&
+                currentOrder > 0 &&
+                currentOrder >= (steps?.length ?? workflowStepsCount ?? 0);
+
+              await saveWorkflowProgress(
+                resolvedWorkflow.id,
+                organizationId,
+                // advance step number deterministically
+                (Number.isFinite(currentOrder) && currentOrder > 0
+                  ? currentOrder + 1
+                  : (resolvedWorkflow.current_step_number ?? 1) + 1),
+                resolvedWorkflow.variables ?? {},
+                isLast,
+                logger,
+              );
+
+              workflowAlreadyAdvanced = true;
             }
           } catch (err) {
             logger.error("[workflow] directive build/enforce error", {
@@ -2473,9 +2594,7 @@ ${personality.donts || "- None specified."}
 
     // Context packing (safe + deterministic)
     const highRiskIntentForContext =
-      aiExtract.intent === "pricing" ||
-      aiExtract.intent === "offer" ||
-      aiExtract.intent === "features";
+      aiExtract.intent === "pricing" || aiExtract.intent === "offer";
 
     // IMPORTANT: These helpers must exist in your file already.
     // If not, replace them with a simple truncation fallback (I included fallback below).
@@ -2836,6 +2955,11 @@ Respond now to the customer's latest message only.
     let aiResponseText = forcedReplyText ?? aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
+    // Enforce SAY hard rule: final reply must not contain a question mark.
+    if (workflowDirectiveAction === "say" || (workflowSaySchema?.max_questions === 0 && workflowSayMessage)) {
+      aiResponseText = stripInterrogativesForSay(aiResponseText);
+    }
+
     // Strict validators (NO prompt-trust)
     const verifiedNumbersAvailable = Boolean(
       kbHasPricingSignals || campaignHasPricingSignals
@@ -3020,7 +3144,7 @@ Respond now to the customer's latest message only.
         });
 
         // AUDIT: wallet blocked (low balance)
-        await logAuditEvent(supabase, {
+        await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
           organization_id: organizationId,
           action: "wallet_blocked",
           entity_type: "wallet",
@@ -3097,7 +3221,7 @@ Respond now to the customer's latest message only.
       }
 
       // AUDIT: wallet debit success for AI chat
-      await logAuditEvent(supabase, {
+      await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
         organization_id: organizationId,
         action: "wallet_debit_ai_chat",
         entity_type: "wallet_transaction",
@@ -3176,7 +3300,7 @@ Respond now to the customer's latest message only.
         logger.info("[ai-handler] AI chose not to reply", { user_message });
 
         // AUDIT: AI no-reply
-        await logAuditEvent(supabase, {
+        await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
           organization_id: organizationId,
           action: "ai_no_reply",
           entity_type: "conversation",
@@ -3212,37 +3336,44 @@ Respond now to the customer's latest message only.
     // - escalate: already completed earlier
     // --------------------------------------------------
     if (resolvedWorkflow) {
-      const steps = await getWorkflowSteps(
-        resolvedWorkflow.workflow_id!,
-        logger
-      );
-
-      const currentStep = resolvedWorkflow.current_step_number ?? 1;
-
-      if (workflowDirectiveAction === "ask") {
-        // Hold; already persisted in the directive branch.
-        logger.debug("[workflow] hold step (awaiting required info)", {
+      if (workflowAlreadyAdvanced === true) {
+        logger.debug("[workflow] progression skipped (already advanced)", {
           workflow_id: resolvedWorkflow.workflow_id,
-          currentStep,
-        });
-      } else if (workflowDirectiveAction === "escalate") {
-        // Already marked completed in the directive branch.
-        logger.debug("[workflow] completed via escalation", {
-          workflow_id: resolvedWorkflow.workflow_id,
-          currentStep,
+          currentStep: resolvedWorkflow.current_step_number ?? 1,
         });
       } else {
-        const nextStep = currentStep + 1;
-        const completed = nextStep > (steps?.length ?? workflowStepsCount ?? 0);
-
-        await saveWorkflowProgress(
-          resolvedWorkflow.id,
-          organizationId,
-          nextStep,
-          resolvedWorkflow.variables ?? {},
-          completed,
+        const steps = await getWorkflowSteps(
+          resolvedWorkflow.workflow_id!,
           logger
         );
+
+        const currentStep = resolvedWorkflow.current_step_number ?? 1;
+
+        if (workflowDirectiveAction === "ask") {
+          // Hold; already persisted in the directive branch.
+          logger.debug("[workflow] hold step (awaiting required info)", {
+            workflow_id: resolvedWorkflow.workflow_id,
+            currentStep,
+          });
+        } else if (workflowDirectiveAction === "escalate") {
+          // Already marked completed in the directive branch.
+          logger.debug("[workflow] completed via escalation", {
+            workflow_id: resolvedWorkflow.workflow_id,
+            currentStep,
+          });
+        } else {
+          const nextStep = currentStep + 1;
+          const completed = nextStep > (steps?.length ?? workflowStepsCount ?? 0);
+
+          await saveWorkflowProgress(
+            resolvedWorkflow.id,
+            organizationId,
+            nextStep,
+            resolvedWorkflow.variables ?? {},
+            completed,
+            logger
+          );
+        }
       }
     }
 
@@ -3256,6 +3387,14 @@ Respond now to the customer's latest message only.
     // 15.6) Enforce high urgency reply rules
     if (urgency === "high") {
       aiResponseText = enforceHighUrgencyReply(aiResponseText);
+    }
+
+    // Re-apply SAY hard rule after any post-processing that might introduce questions.
+    if (
+      workflowDirectiveAction === "say" ||
+      (workflowSaySchema?.max_questions === 0 && workflowSayMessage)
+    ) {
+      aiResponseText = stripInterrogativesForSay(aiResponseText);
     }
 
     // 16) Phase 6.3 — Log unanswered question
@@ -3276,7 +3415,7 @@ Respond now to the customer's latest message only.
       });
 
       // AUDIT: unanswered saved (fallback used)
-      await logAuditEvent(supabase, {
+      await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
         organization_id: organizationId,
         action: "unanswered_logged",
         entity_type: "conversation",

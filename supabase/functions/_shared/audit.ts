@@ -7,7 +7,9 @@
 
 type SupabaseLike = {
   from(table: string): {
-    insert(values: unknown): Promise<unknown>;
+    // Postgrest insert returns a builder object; we only `await` it and ignore the value.
+    // Keep as `unknown` to stay structurally compatible with real SupabaseClient typings.
+    insert(values: unknown): unknown;
   };
 };
 
