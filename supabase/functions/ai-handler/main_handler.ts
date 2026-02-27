@@ -801,6 +801,7 @@ async function startWorkflow(
 
 async function getWorkflowSteps(
   workflowId: string,
+  organizationId: string,
   logger: ReturnType<typeof createLogger>
 ): Promise<WorkflowStepRow[]> {
   const data = await safeSupabase<WorkflowStepRow[]>(
@@ -810,6 +811,7 @@ async function getWorkflowSteps(
       supabase
         .from("workflow_steps")
         .select("*")
+        .eq("organization_id", organizationId)
         .eq("workflow_id", workflowId)
         .order("step_order", { ascending: true })
   );
@@ -880,24 +882,78 @@ async function saveWorkflowProgress(
   nextStep: number,
   vars: Record<string, unknown>,
   completed: boolean,
-  logger: ReturnType<typeof createLogger>
-) {
+  logger: ReturnType<typeof createLogger>,
+  expectedCurrentStep: number
+): Promise<WorkflowLogRow | null> {
   const stableNextStep = Number.isFinite(nextStep) && nextStep > 0 ? nextStep : 1;
+  const expected =
+    Number.isFinite(expectedCurrentStep) && expectedCurrentStep > 0
+      ? expectedCurrentStep
+      : null;
 
-  const { error } = await supabase
+  // Optimistic concurrency: only update if the current_step_number is what the caller read.
+  // If it changed due to a concurrent writer, we reload the latest row and return it.
+  const q = supabase
     .from("workflow_logs")
     .update({ current_step_number: stableNextStep, variables: vars, completed })
     .eq("id", logId)
     .eq("organization_id", organizationId);
 
+  const guarded = expected !== null ? q.eq("current_step_number", expected) : q;
+
+  const { data, error } = await guarded
+    .select(
+      "id, workflow_id, conversation_id, current_step_number, variables, completed, created_at"
+    )
+    .maybeSingle();
+
   if (error)
     logger.error("[workflow] save progress error", { error, log_id: logId });
-  else
+  else if (data)
     logger.debug("[workflow] progress saved", {
       log_id: logId,
       nextStep: stableNextStep,
       completed,
     });
+
+  // Conflict / no-op: reload latest and return it (do not throw)
+  if (!data) {
+    logger.warn("[workflow] save progress conflict/no-op; reloading latest", {
+      log_id: logId,
+      expectedCurrentStep: expected,
+      nextStep: stableNextStep,
+    });
+
+    const latest = await safeSupabase<WorkflowLogRow>(
+      "reload_workflow_log_latest",
+      logger,
+      () =>
+        supabase
+          .from("workflow_logs")
+          .select(
+            "id, workflow_id, conversation_id, current_step_number, variables, completed, created_at"
+          )
+          .eq("id", logId)
+          .eq("organization_id", organizationId)
+          .maybeSingle()
+    );
+
+    if (!latest) return null;
+
+    return {
+      ...latest,
+      current_step_number: latest.current_step_number ?? 1,
+      variables: isRecord(latest.variables) ? latest.variables : {},
+      completed: latest.completed ?? false,
+    };
+  }
+
+  return {
+    ...data,
+    current_step_number: data.current_step_number ?? stableNextStep,
+    variables: isRecord(data.variables) ? data.variables : vars,
+    completed: data.completed ?? completed,
+  };
 }
 
 async function logUnansweredQuestion(params: {
@@ -1180,7 +1236,8 @@ export async function mainHandler(params: {
           ai_locked_until: null,
           ai_lock_reason: null,
         })
-        .eq("id", conversation_id);
+        .eq("id", conversation_id)
+        .eq("organization_id", conv.organization_id);
 
       baseLogger.info("[ai-handler] agent lock expired → auto-unlocked", {
         conversation_id,
@@ -1207,6 +1264,7 @@ export async function mainHandler(params: {
     if (aiMode === "auto") {
       const humanActive = await wasHumanActiveRecently({
         conversationId: conversation_id,
+        organizationId: conv.organization_id,
         logger: baseLogger,
         seconds: 60,
       });
@@ -1242,6 +1300,7 @@ export async function mainHandler(params: {
     if (psfCaseForGuard) {
       const humanActive = await wasHumanActiveRecently({
         conversationId: conversation_id,
+        organizationId: conv.organization_id,
         logger: baseLogger,
         seconds: 600, // ⏱ 10 minutes for PSF
       });
@@ -1272,7 +1331,7 @@ export async function mainHandler(params: {
     const organizationId = conv.organization_id;
     const channel = conv.channel || "web";
     const contactId = conv.contact_id;
-
+    let contactPhone: string | null = null;
     const logger = createLogger({
       request_id,
       conversation_id,
@@ -1357,7 +1416,6 @@ export async function mainHandler(params: {
     }
 
     // 3) Fetch contact phone (needed for WhatsApp sends, including greetings)
-    let contactPhone: string | null = null;
     if (channel === "whatsapp" && contactId) {
       const contact = await safeSupabase<{ phone: string | null }>(
         "load_contact_phone",
@@ -1366,6 +1424,7 @@ export async function mainHandler(params: {
           supabase
             .from("contacts")
             .select("phone")
+            .eq("organization_id", organizationId)
             .eq("id", contactId)
             .maybeSingle()
       );
@@ -1691,6 +1750,7 @@ ${personality.donts || "- None specified."}
       supabase
         .from("messages")
         .select("sender, text, order_at")
+        .eq("organization_id", organizationId)
         .eq("conversation_id", conversation_id)
         .order("order_at", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: true })
@@ -2163,6 +2223,7 @@ ${personality.donts || "- None specified."}
     let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
     let workflowStepsCount = 0;
     let workflowAlreadyAdvanced = false;
+    let workflowStepAdvancedThisTurn = false;
 
     const activeWorkflow = await loadActiveWorkflow(
       conversation_id,
@@ -2219,10 +2280,17 @@ ${personality.donts || "- None specified."}
     if (resolvedWorkflow) {
       const steps = await getWorkflowSteps(
         resolvedWorkflow.workflow_id!,
+        organizationId,
         logger
       );
 
       if (steps?.length) {
+        // Determine max step order deterministically (cannot assume contiguous ordering)
+        const maxStepOrder = steps.reduce((m, s) => {
+          const o = Number(s.step_order);
+          return Number.isFinite(o) && o > m ? o : m;
+        }, 0);
+
         let { step, nextStepNumber, skipped } = findFirstIncompleteStep({
           steps,
           startStepNumber: resolvedWorkflow.current_step_number ?? 1,
@@ -2237,17 +2305,27 @@ ${personality.donts || "- None specified."}
 
           // Persist skip-advancement so we don't re-evaluate the same skipped steps
           // (does not change workflow_logs schema)
-          await saveWorkflowProgress(
-            resolvedWorkflow.id,
-            organizationId,
-            nextStepNumber,
-            resolvedWorkflow.variables ?? {},
-            false,
-            logger
-          );
+          const prevExpectedStep = resolvedWorkflow.current_step_number ?? 1;
 
-          // Keep in-memory state consistent for downstream progression logic
-          resolvedWorkflow.current_step_number = nextStepNumber;
+const updated = await saveWorkflowProgress(
+  resolvedWorkflow.id,
+  organizationId,
+  nextStepNumber,
+  resolvedWorkflow.variables ?? {},
+  false,
+  logger,
+  prevExpectedStep
+);
+
+if (updated) resolvedWorkflow = updated;
+
+// Keep in-memory state consistent for downstream progression logic
+resolvedWorkflow.current_step_number = nextStepNumber;
+
+// Mark step-advance only if it actually advanced
+if (nextStepNumber > prevExpectedStep) {
+  workflowStepAdvancedThisTurn = true;
+}
         }
 
         // ------------------------------------------------------------------
@@ -2291,14 +2369,17 @@ ${personality.donts || "- None specified."}
                 ? nextStepNum
                 : 1;
 
-            await saveWorkflowProgress(
+            const updated = await saveWorkflowProgress(
               resolvedWorkflow.id,
               organizationId,
               stableStep,
               nextVars,
               false,
-              logger
+              logger,
+              resolvedWorkflow.current_step_number ?? stableStep
             );
+
+            if (updated) resolvedWorkflow = updated;
 
             logger.info("[workflow] slots updated", {
               workflow_id: resolvedWorkflow.workflow_id,
@@ -2372,14 +2453,17 @@ ${personality.donts || "- None specified."}
 
                 resolvedWorkflow.variables = nextVars;
 
-                await saveWorkflowProgress(
+                const updated = await saveWorkflowProgress(
                   resolvedWorkflow.id,
                   organizationId,
                   resolvedWorkflow.current_step_number ?? 1,
                   nextVars,
                   false,
-                  logger
+                  logger,
+                  resolvedWorkflow.current_step_number ?? 1
                 );
+
+                if (updated) resolvedWorkflow = updated;
 
                 logger.info("[workflow] auto-resolved model from fuel slot", {
                   fuel,
@@ -2401,16 +2485,19 @@ ${personality.donts || "- None specified."}
               ? currentOrder + 1
               : Number(nextStepNumber) + 1;
 
-            await saveWorkflowProgress(
+            const updatedAdvance = await saveWorkflowProgress(
               resolvedWorkflow.id,
               organizationId,
               nextStep,
               resolvedWorkflow.variables ?? {},
               false,
-              logger
+              logger,
+              resolvedWorkflow.current_step_number ?? 1
             );
 
+            if (updatedAdvance) resolvedWorkflow = updatedAdvance;
             resolvedWorkflow.current_step_number = nextStep;
+            workflowStepAdvancedThisTurn = true;
 
             const res = findFirstIncompleteStep({
               steps,
@@ -2446,18 +2533,29 @@ ${personality.donts || "- None specified."}
 
               // Hold step on ask; end workflow on escalate.
               const nextStepNum =
-                directive.action === "ask" ? nextStepNumber : steps.length + 1;
+                directive.action === "ask" ? nextStepNumber : maxStepOrder + 1;
 
               const completed = directive.action === "escalate";
 
-              await saveWorkflowProgress(
+              const prevExpectedStep = resolvedWorkflow.current_step_number ?? 1;
+              const updated = await saveWorkflowProgress(
                 resolvedWorkflow.id,
                 organizationId,
                 nextStepNum,
                 resolvedWorkflow.variables ?? {},
                 completed,
-                logger
+                logger,
+                prevExpectedStep
               );
+
+              if (updated) resolvedWorkflow = updated;
+
+              if (
+                directive.action === "escalate" ||
+                nextStepNum > prevExpectedStep
+              ) {
+                workflowStepAdvancedThisTurn = true;
+              }
 
               // Do not inject workflow guidance into prompts when we already produced the enforced reply.
               workflowInstructionText = "";
@@ -2493,21 +2591,28 @@ ${personality.donts || "- None specified."}
               const isLast =
                 Number.isFinite(currentOrder) &&
                 currentOrder > 0 &&
-                currentOrder >= (steps?.length ?? workflowStepsCount ?? 0);
+                currentOrder >= maxStepOrder;
 
-              await saveWorkflowProgress(
+              const expectedStep = resolvedWorkflow.current_step_number ?? 1;
+              const nextStepToSet =
+                Number.isFinite(currentOrder) && currentOrder > 0
+                  ? currentOrder + 1
+                  : (resolvedWorkflow.current_step_number ?? 1) + 1;
+
+              const updated = await saveWorkflowProgress(
                 resolvedWorkflow.id,
                 organizationId,
-                // advance step number deterministically
-                (Number.isFinite(currentOrder) && currentOrder > 0
-                  ? currentOrder + 1
-                  : (resolvedWorkflow.current_step_number ?? 1) + 1),
+                nextStepToSet,
                 resolvedWorkflow.variables ?? {},
                 isLast,
                 logger,
+                expectedStep
               );
 
+              if (updated) resolvedWorkflow = updated;
+
               workflowAlreadyAdvanced = true;
+              workflowStepAdvancedThisTurn = true;
             }
           } catch (err) {
             logger.error("[workflow] directive build/enforce error", {
@@ -2517,7 +2622,6 @@ ${personality.donts || "- None specified."}
         }
       }
     }
-
     // ------------------------------------------------------------------
     // PHASE 3 — WORKFLOW ↔ KB RECONCILIATION (DETERMINISTIC PRECEDENCE)
     // ------------------------------------------------------------------
@@ -3342,37 +3446,55 @@ Respond now to the customer's latest message only.
           currentStep: resolvedWorkflow.current_step_number ?? 1,
         });
       } else {
-        const steps = await getWorkflowSteps(
-          resolvedWorkflow.workflow_id!,
-          logger
-        );
-
-        const currentStep = resolvedWorkflow.current_step_number ?? 1;
-
-        if (workflowDirectiveAction === "ask") {
-          // Hold; already persisted in the directive branch.
-          logger.debug("[workflow] hold step (awaiting required info)", {
-            workflow_id: resolvedWorkflow.workflow_id,
-            currentStep,
-          });
-        } else if (workflowDirectiveAction === "escalate") {
-          // Already marked completed in the directive branch.
-          logger.debug("[workflow] completed via escalation", {
-            workflow_id: resolvedWorkflow.workflow_id,
-            currentStep,
-          });
+        if (workflowStepAdvancedThisTurn) {
+          logger.debug(
+            "[workflow] progression skipped (step already advanced this turn)",
+            {
+              workflow_id: resolvedWorkflow.workflow_id,
+              currentStep: resolvedWorkflow.current_step_number ?? 1,
+            }
+          );
         } else {
-          const nextStep = currentStep + 1;
-          const completed = nextStep > (steps?.length ?? workflowStepsCount ?? 0);
-
-          await saveWorkflowProgress(
-            resolvedWorkflow.id,
+          const steps = await getWorkflowSteps(
+            resolvedWorkflow.workflow_id!,
             organizationId,
-            nextStep,
-            resolvedWorkflow.variables ?? {},
-            completed,
             logger
           );
+
+          const maxStepOrder = (steps ?? []).reduce((m, s) => {
+            const o = Number(s?.step_order);
+            return Number.isFinite(o) && o > m ? o : m;
+          }, 0);
+
+          const currentStep = resolvedWorkflow.current_step_number ?? 1;
+
+          if (workflowDirectiveAction === "ask") {
+            // Hold; already persisted in the directive branch.
+            logger.debug("[workflow] hold step (awaiting required info)", {
+              workflow_id: resolvedWorkflow.workflow_id,
+              currentStep,
+            });
+          } else if (workflowDirectiveAction === "escalate") {
+            // Already marked completed in the directive branch.
+            logger.debug("[workflow] completed via escalation", {
+              workflow_id: resolvedWorkflow.workflow_id,
+              currentStep,
+            });
+          } else {
+            const nextStepNumber = currentStep + 1;
+            const completed = maxStepOrder > 0 ? nextStepNumber > maxStepOrder : true;
+
+            await saveWorkflowProgress(
+              resolvedWorkflow.id,
+              organizationId,
+              nextStepNumber,
+              resolvedWorkflow.variables ?? {},
+              completed,
+              logger,
+              currentStep
+            );
+            workflowStepAdvancedThisTurn = true;
+          }
         }
       }
     }

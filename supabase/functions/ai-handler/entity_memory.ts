@@ -47,6 +47,7 @@ function _buildRollingSummary(params: {
 
 export async function wasHumanActiveRecently(params: {
   conversationId: string;
+  organizationId: string;
   logger: ReturnType<typeof createLogger>;
   seconds?: number;
 }): Promise<boolean> {
@@ -60,6 +61,7 @@ export async function wasHumanActiveRecently(params: {
       supabase
         .from("messages")
         .select("created_at")
+        .eq("organization_id", params.organizationId)
         .eq("conversation_id", params.conversationId)
         .eq("sender", "agent")
         .order("created_at", { ascending: false })
