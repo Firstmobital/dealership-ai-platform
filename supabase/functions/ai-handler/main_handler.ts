@@ -1336,7 +1336,7 @@ export async function mainHandler(params: {
     const logger = createLogger({
       request_id,
       conversation_id,
-      organization_id: organizationId,
+      organization_id,
       channel,
     });
 
@@ -1650,9 +1650,46 @@ ${personality.donts || "- None specified."}
     const lockedTransmission = locked?.transmission ?? null;
     const lockedYear = locked?.manufacturing_year ?? null;
 
+    // Deterministic locking precedence (P1):
+    // - explicit topic change => do not continue intent/topic
+    // - strong model mention (unambiguous) => bypass model lock
+    const explicitTopicChange = isExplicitTopicChange(user_message);
+
+    // Strong model detection (deterministic): if the current message contains an unambiguous model
+    // that differs from the locked model, we bypass ONLY the model lock.
+    const userMsgForModelDetect = String(user_message || "");
+    const modelDetect = extractSlotsFromUserText(userMsgForModelDetect, {}, {});
+    const detectedModelRaw =
+      typeof modelDetect?.next?.vehicle_model === "string"
+        ? String(modelDetect.next.vehicle_model)
+        : null;
+    const detectedModel = detectedModelRaw ? detectedModelRaw.trim() : null;
+
+    const lockedModelNorm =
+      typeof lockedModel === "string" ? lockedModel.toLowerCase().trim() : "";
+    const detectedModelNorm =
+      detectedModel ? detectedModel.toLowerCase().trim() : "";
+
+    const hasStrongDifferentModel =
+      Boolean(lockedModelNorm) &&
+      Boolean(detectedModelNorm) &&
+      lockedModelNorm !== detectedModelNorm;
+
+    const isAmbiguousContainsBothModels =
+      hasStrongDifferentModel &&
+      // @ts-ignore - __test__ is exported for deterministic internals and safe to use here.
+      (extractSlotsFromUserText as unknown as { __test__?: { messageContainsModelToken?: (t: string, m: string) => boolean } })
+        .__test__?.messageContainsModelToken?.(userMsgForModelDetect.toLowerCase(), lockedModelNorm) === true &&
+      // @ts-ignore
+      (extractSlotsFromUserText as unknown as { __test__?: { messageContainsModelToken?: (t: string, m: string) => boolean } })
+        .__test__?.messageContainsModelToken?.(userMsgForModelDetect.toLowerCase(), detectedModelNorm) === true;
+
+    const bypassModelContinuityLock =
+      hasStrongDifferentModel && !isAmbiguousContainsBothModels;
+
     const shouldContinue =
       (lockedTopic || lockedModel || lockedVariant) &&
-      !isExplicitTopicChange(user_message) &&
+      !explicitTopicChange &&
       // Classic short follow-ups ("ok", "and?", "what about?")
       (isShortFollowupMessage(user_message) ||
         // Pricing/offer follow-ups often aren't "short" but still refer to the same vehicle
@@ -1662,37 +1699,78 @@ ${personality.donts || "- None specified."}
         ));
 
     if (shouldContinue) {
-      aiExtract = {
-        vehicle_model: asNullableString(lockedModel),
-        vehicle_variant: asNullableString(lockedVariant),
-        fuel_type: asNullableString(lockedFuel),
-        transmission: asNullableTransmission(lockedTransmission),
-        manufacturing_year: asNullableString(lockedYear),
-        intent:
-          String(
-            lockedIntent ??
-              (lockedTopic === "offer_pricing" ? "pricing" : "other")
-          ) as AiExtractedIntent["intent"],
-      };
-
-      // 🔥 Offer intent must ALWAYS override a previously locked pricing intent.
-      // This fixes cases like: user asks price → then asks "any discount?" and
-      // the bot keeps searching pricing instead of the offers article.
-      const heuristic = inferIntentHeuristic(user_message);
-      if (heuristic.intent === "offer" && aiExtract.intent !== "offer") {
-        logger.info("[ai-extract] continuity_offer_override", {
-          from: aiExtract.intent,
-          to: "offer",
-          signals: heuristic.signals,
+      // If user explicitly mentioned a different model strongly, bypass only the MODEL aspect of continuity.
+      // Keep other locked entities (variant/fuel/transmission/year/intent) as before.
+      if (bypassModelContinuityLock) {
+        logger.info("[ai-handler] follow-up continuity model lock bypassed", {
+          prev_model: lockedModelNorm || null,
+          next_model: detectedModelNorm || null,
+          reason: "strong_model_signal_in_current_message",
         });
-        aiExtract.intent = "offer";
-      }
 
-      logger.info("[ai-handler] follow-up continuity lock applied", {
-        locked_topic: lockedTopic,
-        locked_intent: aiExtract.intent,
-        locked_model: lockedModel,
-      });
+        // Prefer a fresh extract when bypassing model continuity to avoid stale intent/fuel/etc.
+        // Then explicitly override vehicle_model to the detected strong model.
+        aiExtract = await extractUserIntentWithAI({
+          userMessage: user_message,
+          logger,
+        });
+        aiExtract.vehicle_model = detectedModel;
+
+        logger.info("[ai-extract] model_override_after_continuity_bypass", {
+          prev_model: lockedModelNorm || null,
+          overridden_model: detectedModelNorm || null,
+        });
+      } else {
+        aiExtract = {
+          vehicle_model: asNullableString(lockedModel),
+          vehicle_variant: asNullableString(lockedVariant),
+          fuel_type: asNullableString(lockedFuel),
+          transmission: asNullableTransmission(lockedTransmission),
+          manufacturing_year: asNullableString(lockedYear),
+          intent:
+            String(
+              lockedIntent ??
+                (lockedTopic === "offer_pricing" ? "pricing" : "other")
+            ) as AiExtractedIntent["intent"],
+        };
+
+        // Deterministic intent precedence inside continuity (P1):
+        // Ensure heuristic overrides run even when shouldContinue applied.
+        const heuristic = inferIntentHeuristic(user_message);
+
+        // Optional: allow offer -> pricing switch if the current message is explicitly asking for on-road breakup/quote.
+        const wantsPricingSwitchFromOffer =
+          aiExtract.intent === "offer" &&
+          (heuristic.intent === "pricing" ||
+            /\b(on\s*road|on-?road|breakup|price|pricing|quote|ex\s*showroom|ex-?showroom)\b/i.test(
+              user_message
+            ));
+        if (wantsPricingSwitchFromOffer) {
+          logger.info("[ai-extract] continuity_pricing_override", {
+            from: aiExtract.intent,
+            to: "pricing",
+            signals: heuristic.signals,
+          });
+          aiExtract.intent = "pricing";
+        }
+
+        // 🔥 Offer intent must ALWAYS override a previously locked pricing intent.
+        if (heuristic.intent === "offer" && aiExtract.intent !== "offer") {
+          logger.info("[ai-extract] continuity_offer_override", {
+            from: aiExtract.intent,
+            to: "offer",
+            signals: heuristic.signals,
+          });
+          aiExtract.intent = "offer";
+        }
+
+        logger.info("[ai-handler] follow-up continuity lock applied", {
+          locked_topic: lockedTopic,
+          locked_intent: aiExtract.intent,
+          locked_model: lockedModel,
+          explicit_topic_change: explicitTopicChange,
+        });
+      }
     } else if (!isGreetingMessage(user_message)) {
       // Only extract intent if KB may be used
       aiExtract = await extractUserIntentWithAI({

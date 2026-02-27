@@ -5,25 +5,44 @@ import type { createLogger } from "./logging.ts";
 /* ============================================================================
    PHASE 7A — CAMPAIGN CONTEXT HELPERS (FIXED: NO last_delivered_at)
 ============================================================================ */
+
+export type TenancyFilter = { col: string; op: "eq"; value: unknown };
+
+export function buildContactCampaignContextFilters(params: {
+  organizationId: string;
+  contactId: string;
+}): TenancyFilter[] {
+  return [
+    { col: "id", op: "eq", value: params.contactId },
+    { col: "organization_id", op: "eq", value: params.organizationId },
+  ];
+}
+
 export async function fetchCampaignContextForContact(
   organizationId: string,
   contactId: string,
   logger: ReturnType<typeof createLogger>
 ) {
+  const contactFilters = buildContactCampaignContextFilters({
+    organizationId,
+    contactId,
+  });
+
   const contact = await safeSupabase<{
     id: string;
     first_name: string | null;
     last_name: string | null;
     model: string | null;
     phone: string | null;
-  }>("load_contact_for_campaign_context", logger, () =>
-    supabase
+  }>("load_contact_for_campaign_context", logger, () => {
+    let q = supabase
       .from("contacts")
-      .select("id, first_name, last_name, model, phone")
-      .eq("id", contactId)
-      .eq("organization_id", organizationId)
-      .maybeSingle()
-  );
+      .select("id, first_name, last_name, model, phone");
+
+    for (const f of contactFilters) q = q.eq(f.col, f.value);
+
+    return q.maybeSingle();
+  });
 
   if (!contact || !contact.phone) return null;
 

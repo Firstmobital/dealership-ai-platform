@@ -1,21 +1,36 @@
-import { openai, supabase } from "./clients.ts";
+import { supabase } from "./clients.ts";
 import type { createLogger } from "./logging.ts";
 
 /* ============================================================================
    PSF HELPERS
 ============================================================================ */
 
+export type TenancyFilter = { col: string; op: "eq"; value: unknown };
+
+export function buildOpenPsfCaseFilters(params: {
+  conversationId: string;
+  organizationId: string;
+}): TenancyFilter[] {
+  return [
+    { col: "conversation_id", op: "eq", value: params.conversationId },
+    { col: "organization_id", op: "eq", value: params.organizationId },
+    { col: "resolution_status", op: "eq", value: "open" },
+  ];
+}
+
 export async function loadOpenPsfCaseByConversation(
   conversationId: string,
   organizationId: string
 ) {
-  const { data } = await supabase
+  const filters = buildOpenPsfCaseFilters({ conversationId, organizationId });
+
+  let q = supabase
     .from("psf_cases")
-    .select("id, campaign_id, sentiment, first_customer_reply_at")
-    .eq("conversation_id", conversationId)
-    .eq("organization_id", organizationId)
-    .eq("resolution_status", "open")
-    .maybeSingle();
+    .select("id, campaign_id, sentiment, first_customer_reply_at");
+
+  for (const f of filters) q = q.eq(f.col, f.value);
+
+  const { data } = await q.maybeSingle();
 
   return data;
 }
@@ -41,6 +56,10 @@ Return STRICT JSON:
   "summary": "1 short line summary"
 }
 `.trim();
+
+  // Lazy-load OpenAI client so importing psf.ts doesn't require OPENAI_API_KEY
+  // (tests and non-AI codepaths can still import tenancy helpers safely).
+  const { openai } = await import("./clients.ts");
 
   const resp = await openai.chat.completions.create({
     model: "gpt-4o-mini",
