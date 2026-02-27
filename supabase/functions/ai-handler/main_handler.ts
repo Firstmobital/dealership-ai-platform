@@ -1294,7 +1294,8 @@ export async function mainHandler(params: {
 
     // 🔒 PSF HARD GUARD — longer cooldown if PSF
     const psfCaseForGuard = await loadOpenPsfCaseByConversation(
-      conversation_id
+      conversation_id,
+      conv.organization_id
     );
 
     if (psfCaseForGuard) {
@@ -1520,7 +1521,10 @@ ${personality.donts || "- None specified."}
     PSF FLOW — SHORT CIRCUIT
     ============================================================================ */
 
-    const psfCase = await loadOpenPsfCaseByConversation(conversation_id);
+    const psfCase = await loadOpenPsfCaseByConversation(
+      conversation_id,
+      conv.organization_id
+    );
 
     if (psfCase) {
       logger.info("[psf] handling feedback reply", {
@@ -1539,7 +1543,8 @@ ${personality.donts || "- None specified."}
             psfCase.first_customer_reply_at ?? new Date().toISOString(),
           last_customer_reply_at: new Date().toISOString(),
         })
-        .eq("id", psfCase.id);
+        .eq("id", psfCase.id)
+        .eq("organization_id", organizationId);
 
       // 🚫 PSF NEGATIVE — DO NOT AUTO REPLY
       if (result.sentiment === "negative") {
@@ -2221,7 +2226,6 @@ ${personality.donts || "- None specified."}
 
     let resolvedWorkflow: WorkflowLogRow | null = null;
     let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
-    let workflowStepsCount = 0;
     let workflowAlreadyAdvanced = false;
     let workflowStepAdvancedThisTurn = false;
 
@@ -2348,7 +2352,13 @@ if (nextStepNumber > prevExpectedStep) {
             ? slotsUnknown
             : {};
 
-          const slotRes = extractSlotsFromUserText(user_message, existingSlots);
+          const slotRes = extractSlotsFromUserText(user_message, existingSlots, {
+            onLog: (level, message, extra) => {
+              if (level === "warn") logger.warn(message, extra || {});
+              else if (level === "debug") logger.debug(message, extra || {});
+              else logger.info(message, extra || {});
+            },
+          });
 
           if (slotRes.changed) {
             const nextVars: Record<string, unknown> = {
@@ -2519,8 +2529,6 @@ if (nextStepNumber > prevExpectedStep) {
         }
 
         if (step) {
-          workflowStepsCount = steps.length;
-
           // Engine-enforced workflow directive (the engine decides, LLM only renders)
           try {
             const directive = buildDirective(step, nextEntitiesWithKb || {});

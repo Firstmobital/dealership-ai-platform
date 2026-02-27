@@ -6,12 +6,30 @@
 
 export type WorkflowSlots = Record<string, unknown>;
 
+// Exported for deterministic tests / slot overwrite heuristics.
+export type DetectedModelCandidate = {
+  model: string;
+  strength: "strong" | "weak";
+  reason: string;
+  matchedSpan: string;
+};
+
 type FuelType = "petrol" | "diesel" | "cng" | "ev";
 
 function norm(s: unknown): string {
   return String(s ?? "")
     .toLowerCase()
     .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normModelValue(s: unknown): string {
+  // Normalize model values for comparisons.
+  // Keep hyphens and collapse whitespace.
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*-\s*/g, "-")
     .trim();
 }
 
@@ -84,31 +102,69 @@ function detectFuelMentions(userTextNorm: string): FuelType[] {
   return uniqueStable(hits);
 }
 
-function detectModel(userTextNorm: string): string | null {
-  // Basic keyword mapping. Keep values stable and normalized.
-  // Add synonyms/variants only via deterministic patterns.
-  const patterns: Array<{ model: string; re: RegExp }> = [
-    // Tata (examples in prompt)
-    { model: "xpress", re: /(^|\b)xpress(\b|$)/i },
-    // treat xpress-t as a distinct model key
-    { model: "xpress-t", re: /(^|\b)xpress\s*[-]?\s*t(\b|$)/i },
+function detectModelCandidate(userTextNorm: string): DetectedModelCandidate | null {
+  // Returns a model + strength for overwrite heuristics.
+  // "Strong" means: a specific model pattern match (exact list or high-confidence regex).
+  // This function remains deterministic and should be conservative.
 
+  // Order matters: prefer more specific models and more conservative spans.
+  const patterns: Array<{
+    model: string;
+    re: RegExp;
+    strength: "strong" | "weak";
+    reason: string;
+  }> = [
+    // High confidence: explicit Xpres-T tokenization including common misspellings.
+    // Accept: "xpress t", "xpress-t", "xpres t", "xpres-t".
+    {
+      model: "xpress-t",
+      re: /(^|\b)(xpress|xpres)\s*[-]?\s*t(\b|$)/i,
+      strength: "strong",
+      reason: "regex:xpress-t",
+    },
+
+    // Strong: exact model names.
+    { model: "harrier", re: /(^|\b)harrier(\b|$)/i, strength: "strong", reason: "list:harrier" },
+    { model: "nexon", re: /(^|\b)nexon(\b|$)/i, strength: "strong", reason: "list:nexon" },
+    { model: "altroz", re: /(^|\b)altroz(\b|$)/i, strength: "strong", reason: "list:altroz" },
+    { model: "punch", re: /(^|\b)punch(\b|$)/i, strength: "strong", reason: "list:punch" },
+    { model: "tiago", re: /(^|\b)tiago(\b|$)/i, strength: "strong", reason: "list:tiago" },
+    { model: "tigor", re: /(^|\b)tigor(\b|$)/i, strength: "strong", reason: "list:tigor" },
+    { model: "safari", re: /(^|\b)safari(\b|$)/i, strength: "strong", reason: "list:safari" },
+
+    // Weak: generic "xpress" without trim.
+    { model: "xpress", re: /(^|\b)xpress(\b|$)/i, strength: "weak", reason: "list:xpress" },
+  ];
+
+  for (const p of patterns) {
+    const m = userTextNorm.match(p.re);
+    if (!m) continue;
+    // Prefer the full match as a span for ambiguity checks.
+    const matchedSpan = normModelValue(m[0] ?? "");
+    return { model: p.model, strength: p.strength, reason: p.reason, matchedSpan };
+  }
+
+  return null;
+}
+
+function messageContainsModelToken(textNorm: string, modelNorm: string): boolean {
+  // Conservative ambiguity guard: check if message includes an explicit mention of the model.
+  // Model tokens are hard-coded here to stay deterministic.
+  const checks: Array<{ model: string; re: RegExp }> = [
+    { model: "xpress-t", re: /(^|\b)(xpress|xpres)\s*[-]?\s*t(\b|$)/i },
+    { model: "xpress", re: /(^|\b)xpress(\b|$)/i },
     { model: "harrier", re: /(^|\b)harrier(\b|$)/i },
     { model: "nexon", re: /(^|\b)nexon(\b|$)/i },
     { model: "altroz", re: /(^|\b)altroz(\b|$)/i },
-
-    // A few common add-ons (safe; can be extended later)
     { model: "punch", re: /(^|\b)punch(\b|$)/i },
     { model: "tiago", re: /(^|\b)tiago(\b|$)/i },
     { model: "tigor", re: /(^|\b)tigor(\b|$)/i },
     { model: "safari", re: /(^|\b)safari(\b|$)/i },
   ];
 
-  // Prefer the most specific match (xpress-t before xpress)
-  for (const p of patterns) {
-    if (p.re.test(userTextNorm)) return p.model;
-  }
-  return null;
+  const c = checks.find((x) => x.model === modelNorm);
+  if (!c) return false;
+  return c.re.test(textNorm);
 }
 
 function explicitCorrectionPresent(textNorm: string, _slotName: string): boolean {
@@ -157,9 +213,53 @@ function shouldOverwriteSlot(params: {
   return explicitCorrectionPresent(textNorm, params.slotKey);
 }
 
+function shouldOverwriteVehicleModel(params: {
+  textNorm: string;
+  existingValue: unknown;
+  proposed: DetectedModelCandidate;
+}): { ok: boolean; reason?: string } {
+  const { textNorm, existingValue, proposed } = params;
+
+  // If slot not set, always allow filling.
+  if (existingValue === undefined || existingValue === null || existingValue === "") {
+    return { ok: true, reason: "empty" };
+  }
+
+  const oldNorm = normModelValue(existingValue);
+  const newNorm = normModelValue(proposed.model);
+
+  // Same value => no overwrite.
+  if (oldNorm && oldNorm === newNorm) return { ok: false };
+
+  // Ambiguity protection: do not overwrite if message contains both old and new models.
+  // (e.g. "harrier xpress t")
+  if (oldNorm && messageContainsModelToken(textNorm, oldNorm) && messageContainsModelToken(textNorm, newNorm)) {
+    return { ok: false, reason: "ambiguous:contains-both" };
+  }
+
+  // Preserve prior behavior for weak signals: only overwrite if explicit correction.
+  if (proposed.strength === "weak") {
+    return {
+      ok: shouldOverwriteSlot({
+        textNorm,
+        slotKey: "vehicle_model",
+        existingValue,
+        proposedValue: proposed.model,
+      }),
+      reason: "weak-signal:needs-explicit-correction",
+    };
+  }
+
+  // Strong signal: allow overwrite when confidently detected and unambiguous.
+  return { ok: true, reason: `strong-signal:${proposed.reason}` };
+}
+
 export function extractSlotsFromUserText(
   userText: string,
   existing: WorkflowSlots,
+  opts?: {
+    onLog?: (level: "info" | "debug" | "warn", message: string, extra?: Record<string, unknown>) => void;
+  },
 ): { next: WorkflowSlots; changed: boolean } {
   const textNorm = norm(userText);
   const next: WorkflowSlots = { ...(existing ?? {}) };
@@ -207,20 +307,38 @@ export function extractSlotsFromUserText(
   // ----------------------
   // vehicle_model
   // ----------------------
-  const model = detectModel(textNorm);
-  if (model) {
+  const modelCandidate = detectModelCandidate(textNorm);
+  if (modelCandidate) {
     const existingModel = next["vehicle_model"];
-    if (
-      shouldOverwriteSlot({
-        textNorm,
-        slotKey: "vehicle_model",
-        existingValue: existingModel,
-        proposedValue: model,
-      })
-    ) {
-      changed = setIfChanged(next, "vehicle_model", model) || changed;
+
+    const decision = shouldOverwriteVehicleModel({
+      textNorm,
+      existingValue: existingModel,
+      proposed: modelCandidate,
+    });
+
+    if (decision.ok) {
+      const prev = existingModel;
+      const did = setIfChanged(next, "vehicle_model", modelCandidate.model);
+      changed = did || changed;
+
+      if (did && prev !== undefined && prev !== null && String(prev).trim() !== "") {
+        opts?.onLog?.("info", "[workflow][slots] vehicle_model overwritten", {
+          prev_model: prev,
+          next_model: modelCandidate.model,
+          reason: decision.reason ?? null,
+        });
+      }
     }
   }
 
   return { next, changed };
 }
+
+// Export for tests.
+export const __test__ = {
+  detectModelCandidate,
+  shouldOverwriteVehicleModel,
+  messageContainsModelToken,
+  normModelValue,
+};

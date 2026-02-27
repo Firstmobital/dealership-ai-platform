@@ -5,11 +5,15 @@ import type { createLogger } from "./logging.ts";
    PSF HELPERS
 ============================================================================ */
 
-export async function loadOpenPsfCaseByConversation(conversationId: string) {
+export async function loadOpenPsfCaseByConversation(
+  conversationId: string,
+  organizationId: string
+) {
   const { data } = await supabase
     .from("psf_cases")
     .select("id, campaign_id, sentiment, first_customer_reply_at")
     .eq("conversation_id", conversationId)
+    .eq("organization_id", organizationId)
     .eq("resolution_status", "open")
     .maybeSingle();
 

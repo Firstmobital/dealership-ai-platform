@@ -21,6 +21,7 @@ export async function fetchCampaignContextForContact(
       .from("contacts")
       .select("id, first_name, last_name, model, phone")
       .eq("id", contactId)
+      .eq("organization_id", organizationId)
       .maybeSingle()
   );
 
@@ -45,7 +46,17 @@ export async function fetchCampaignContextForContact(
   };
 }
 
-export function buildCampaignContextText(ctx: any): string {
+export function buildCampaignContextText(
+  ctx: {
+    contact: {
+      first_name: string | null;
+      model: string | null;
+      [k: string]: unknown;
+    };
+    delivered: string[];
+    failed: string[];
+  } | null
+): string {
   if (!ctx) return "";
 
   const { contact, delivered, failed } = ctx;
@@ -68,14 +79,14 @@ Rules you MUST follow:
 }
 
 export function buildCampaignFactsBlock(
-  campaignContext: Record<string, any> | null
+  campaignContext: Record<string, unknown> | null
 ): string {
   if (!campaignContext) return "";
 
   return `
 KNOWN FROM CAMPAIGN (DO NOT ASK AGAIN):
 ${Object.entries(campaignContext)
-  .map(([k, v]) => `- ${k.replace(/_/g, " ")}: ${v}`)
+  .map(([k, v]) => `- ${k.replace(/_/g, " ")}: ${String(v)}`)
   .join("\n")}
 `.trim();
 }
