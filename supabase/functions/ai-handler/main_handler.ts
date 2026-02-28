@@ -272,16 +272,40 @@ function isShortFollowupMessage(msg: string): boolean {
   return false;
 }
 
-function isExplicitTopicChange(msg: string): boolean {
-  const t = (msg || "").toLowerCase();
+function _looksLikeVariantOrTrimOnlyMessage(msg: string): boolean {
+  const t = (msg || "").trim().toLowerCase();
+  if (!t) return false;
+
+  // Keep small + conservative: only blocks topic-change when user likely mentions a trim/gearbox/fuel only.
+  // Important: this does NOT select a model; it only prevents false topic-change.
+  return (
+    /\b(variant|trim)\b/.test(t) ||
+    /\b(adventure\+?|creative\+?|fearless|pure|smart|accomplished)\b/.test(t) ||
+    /\b(manual|automatic|amt|dca)\b/.test(t) ||
+    /\b(petrol|diesel|cng|ev)\b/.test(t)
+  );
+}
+
+function isExplicitTopicChange(params: {
+  msg: string;
+  currentModel: string | null;
+  nextModelCandidate: string | null;
+}): boolean {
+  const t = (params.msg || "").toLowerCase();
+
+  const currentModelNorm = (params.currentModel || "").trim().toLowerCase();
+  const nextModelNorm = (params.nextModelCandidate || "").trim().toLowerCase();
+
+  // P1-A: Mentioning a NEW model is an explicit topic change, but only when a model is already active.
+  if (currentModelNorm && nextModelNorm && currentModelNorm !== nextModelNorm) return true;
+
+  // P1-A: Variant/trim-only messages must NOT trigger explicit topic change.
+  // (This only affects topic-change detection; it does not force model selection.)
+  if (!nextModelNorm && _looksLikeVariantOrTrimOnlyMessage(params.msg)) return false;
+
   // Explicit switches only. If present, do NOT force continuity.
+  // IMPORTANT: do NOT treat the literal words "model" or "variant" as a topic change by themselves.
   const patterns = [
-    /\bdifferent\b/,
-    /\banother\b/,
-    /\bchange\b/,
-    /\bother\b/,
-    /\bvariant\b/,
-    /\bmodel\b/,
     /\bharrier\b/,
     /\bnexon\b/,
     /\bsafari\b/,
@@ -289,12 +313,20 @@ function isExplicitTopicChange(msg: string): boolean {
     /\btigor\b/,
     /\baltroz\b/,
     /\bpunch\b/,
+    /\bcurvv\b/,
     /\bservice\b/,
     /\bbooking\b/,
     /\btest drive\b/,
   ];
   return patterns.some((p) => p.test(t));
 }
+
+// Inline self-checks (doc-only; keep deterministic expectations):
+//  a) current=Nexon; msg="Curvv price?" => TRUE
+//  b) current=Nexon; msg="Adventure+" => FALSE
+//  c) current=Nexon; msg="automatic" => FALSE
+//  d) current=empty; msg="Curvv" => FALSE (fills model)
+//  e) current=Curvv; msg="Nexon Creative+" => TRUE
 
 /* ============================================================================
    SEMANTIC QUERY REWRITE (FOLLOW-UP AWARE)
@@ -948,9 +980,9 @@ async function saveWorkflowProgress(
 
     return {
       ...latest,
-      current_step_number: latest.current_step_number ?? 1,
+      current_step_number: latest.current_step_number ?? stableNextStep,
       variables: isRecord(latest.variables) ? latest.variables : {},
-      completed: latest.completed ?? false,
+      completed: latest.completed ?? completed,
     };
   }
 
@@ -1316,8 +1348,8 @@ export async function mainHandler(params: {
         await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
           organization_id: conv.organization_id,
           action: "ai_reply_skipped_psf_human_active",
-          entity_type: "conversation",
-          entity_id: conversation_id,
+          entity_type: "psf_case",
+          entity_id: psfCaseForGuard.id,
           actor_user_id: null,
           actor_email: null,
           metadata: { seconds: 600 },
@@ -1665,13 +1697,12 @@ ${personality.donts || "- None specified."}
     const lockedTransmission = locked?.transmission ?? null;
     const lockedYear = locked?.manufacturing_year ?? null;
 
-    // Deterministic locking precedence (P1):
-    // - explicit topic change => do not continue intent/topic
-    // - strong model mention (unambiguous) => bypass model lock
-    const explicitTopicChange = isExplicitTopicChange(user_message);
+    // P1-A: Determine currentModel from already-available request-local sources.
+    // Precedence here is limited to values already loaded at this point (locked memory).
+    // (Workflow slots are applied later in the request and continue to influence entity locking separately.)
+    const currentModel = asNullableString(lockedModel) ?? null;
 
-    // Strong model detection (deterministic): if the current message contains an unambiguous model
-    // that differs from the locked model, we bypass ONLY the model lock.
+    // Strong model detection (deterministic) from the current user message.
     const userMsgForModelDetect = String(user_message || "");
     const modelDetect = extractSlotsFromUserText(userMsgForModelDetect, {}, {});
     const detectedModelRaw =
@@ -1680,11 +1711,21 @@ ${personality.donts || "- None specified."}
         : null;
     const detectedModel = detectedModelRaw ? detectedModelRaw.trim() : null;
 
+    // Deterministic locking precedence (P1):
+    // - explicit topic change => do not continue intent/topic
+    // - strong model mention (unambiguous) => bypass model lock
+    const explicitTopicChange = isExplicitTopicChange({
+      msg: user_message,
+      currentModel,
+      nextModelCandidate: detectedModel,
+    });
+
     const lockedModelNorm =
       typeof lockedModel === "string" ? lockedModel.toLowerCase().trim() : "";
-    const detectedModelNorm =
-      detectedModel ? detectedModel.toLowerCase().trim() : "";
+    const detectedModelNorm = detectedModel ? detectedModel.toLowerCase().trim() : "";
 
+    // Strong model detection (deterministic): if the current message contains an unambiguous model
+    // that differs from the locked model, we bypass ONLY the model lock.
     const hasStrongDifferentModel =
       Boolean(lockedModelNorm) &&
       Boolean(detectedModelNorm) &&
@@ -1843,11 +1884,18 @@ ${personality.donts || "- None specified."}
 
     // 8) Load conversation history
     const recentMessages = await safeSupabase<
-      { sender: string; text: string | null; order_at: string | null }[]
+      {
+        sender: string;
+        text: string | null;
+        message_type: string | null;
+        media_url: string | null;
+        mime_type: string | null;
+        order_at: string | null;
+      }[]
     >("load_recent_messages", logger, () =>
       supabase
         .from("messages")
-        .select("sender, text, order_at")
+        .select("sender, text, message_type, media_url, mime_type, order_at")
         .eq("organization_id", organizationId)
         .eq("conversation_id", conversation_id)
         .order("order_at", { ascending: true, nullsFirst: false })
@@ -1856,7 +1904,13 @@ ${personality.donts || "- None specified."}
     );
 
     const historyMessages = buildChatMessagesFromHistory(
-      (recentMessages ?? []).map((m) => ({ sender: m.sender, text: m.text })),
+      (recentMessages ?? []).map((m) => ({
+        sender: m.sender,
+        text: m.text,
+        message_type: m.message_type,
+        media_url: m.media_url,
+        mime_type: m.mime_type,
+      })),
       user_message
     );
 
@@ -1972,7 +2026,11 @@ ${personality.donts || "- None specified."}
     // 10A) Semantic KB (preferred)
     const isFollowUpForKb =
       isShortFollowupMessage(user_message) &&
-      !isExplicitTopicChange(user_message);
+      !isExplicitTopicChange({
+        msg: user_message,
+        currentModel,
+        nextModelCandidate: detectedModel,
+      });
     const semanticQueryText = buildSemanticQueryText({
       userMessage: user_message,
       isFollowUp: isFollowUpForKb,
@@ -2899,6 +2957,15 @@ ${personality.donts || "- None specified."}
       asNullableString(aiExtract.vehicle_variant) ??
       asNullableString(lockedVariant);
 
+    // Known entities (current-request view) used to avoid redundant follow-up questions
+    const knownModel = mediaModel;
+    const knownVariant = mediaVariant;
+    const knownTransmission =
+      asNullableString(slots.transmission) ??
+      asNullableString(asRecord(nextEntitiesWithKb).transmission) ??
+      asNullableTransmission(aiExtract.transmission) ??
+      asNullableString(lockedTransmission);
+
     if (
       (wantsMedia.wantImages || wantsMedia.wantBrochure) &&
       channel === "whatsapp" &&
@@ -3331,6 +3398,8 @@ Respond now to the customer's latest message only.
       allowedNumbers: allowedNumbersForOutput,
       workflowSayMessage,
       saySchema: workflowSaySchema,
+      known_variant: knownVariant,
+      known_transmission: knownTransmission,
     });
 
     if (!val.ok) {
@@ -3371,6 +3440,10 @@ Respond now to the customer's latest message only.
       !/\d/.test(aiResponseText) &&
       !/₹/.test(aiResponseText);
 
+    // ------------------------------------------------------------------
+    // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
+    // ------------------------------------------------------------------
+    const shouldValidate =
     // ------------------------------------------------------------------
     // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
     // ------------------------------------------------------------------
@@ -3760,6 +3833,9 @@ Respond now to the customer's latest message only.
       text: aiResponseText,
       intentBucket,
       extractedIntent: aiExtract.intent || "other",
+      known_model: knownModel,
+      known_variant: knownVariant,
+      known_transmission: knownTransmission,
     });
 
     // 15.6) Enforce high urgency reply rules

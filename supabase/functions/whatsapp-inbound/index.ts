@@ -732,14 +732,27 @@ if (text && replySheetTab) {
 
 
   /* ============================================================
-     AI TRIGGER (TEXT ONLY)
+     AI TRIGGER (TEXT OR MEDIA)
   ============================================================ */
 
-  if (text) {
-    const safeText = text.slice(0, MAX_TEXT_LENGTH);
+  if (text || mediaUrl) {
+    const messageType = String(msg.type ?? "text").trim() || "text";
+    const caption = text ? text.slice(0, MAX_TEXT_LENGTH) : "";
+
+    // Preserve existing behavior for normal text messages.
+    // For media-only messages, send a synthetic message containing ONLY safe metadata.
+    const userMessage = text
+      ? caption
+      : (
+          `Customer sent an attachment. ` +
+          `type=${messageType}, mime=${mimeType ?? "unknown"}. ` +
+          `Caption=${caption || ""}. ` +
+          `Respond acknowledging receipt and ask what they want to do with it.`
+        ).slice(0, MAX_TEXT_LENGTH);
+
     const aiRes = await triggerAIHandler({
       conversationId,
-      userMessage: safeText,
+      userMessage,
       logger: convLogger,
     });
 
@@ -749,7 +762,7 @@ if (text && replySheetTab) {
       await enqueueAiReplyRetry({
         organizationId: orgId,
         conversationId,
-        userMessage: safeText,
+        userMessage,
         inboundWhatsappMessageId: msg.id,
         logger: convLogger,
       });

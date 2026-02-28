@@ -13,6 +13,8 @@ export type ValidationContext = {
     max_questions: number;
     forbidden_phrases?: string[];
   } | null;
+  known_variant?: string | null;
+  known_transmission?: string | null;
 };
 
 export type ValidationResult = {
@@ -104,8 +106,21 @@ export function validateAndRepairResponse(
   if ((ctx.intent === "pricing" || ctx.intent === "offer") && !ctx.verifiedNumbersAvailable) {
     if (/[₹\d]/.test(text)) {
       violations.push("numbers_without_verification");
+
+      const hasKnownVariant = Boolean((ctx.known_variant || "").trim());
+      const hasKnownTransmission = Boolean((ctx.known_transmission || "").trim());
+
+      // If variant/transmission already known, don't re-ask them. Ask the next missing field
+      // that unblocks safe pricing (usually city/location or on-road vs ex-showroom).
       const fallback =
-        "Sure — kaunsi exact variant chahiye (fuel + transmission)? Techwheels team aapko exact on-road confirm kar degi.";
+        hasKnownVariant && hasKnownTransmission
+          ? "Sure — aapka city/location kaunsa hai (on-road price city-wise change hota hai)? Techwheels team exact quote confirm kar degi."
+          : hasKnownVariant && !hasKnownTransmission
+          ? "Sure — transmission kaunsa hai: Manual ya Automatic? Techwheels team exact on-road confirm kar degi."
+          : !hasKnownVariant && hasKnownTransmission
+          ? "Sure — kaunsi exact variant chahiye? Techwheels team aapko exact on-road confirm kar degi."
+          : "Sure — kaunsi exact variant chahiye (fuel + transmission)? Techwheels team aapko exact on-road confirm kar degi.";
+
       return { ok: false, text: fallback, violations, used_fallback: true };
     }
   }

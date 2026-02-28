@@ -195,13 +195,30 @@ function toChatRole(sender: string): "user" | "assistant" {
 }
 
 export function buildChatMessagesFromHistory(
-  rows: { sender: string; text: string | null }[],
+  rows: {
+    sender: string;
+    text: string | null;
+    message_type?: string | null;
+    media_url?: string | null;
+    mime_type?: string | null;
+  }[],
   latestUserMessage: string
 ): ChatMsg[] {
   const msgs: ChatMsg[] = [];
 
   for (const r of rows) {
-    const content = (r.text ?? "").trim();
+    const text = (r.text ?? "").trim();
+    const hasMedia =
+      typeof r.media_url === "string" && r.media_url.trim().length > 0;
+
+    const placeholder = hasMedia
+      ? `[Attachment received: type=${(r.message_type ?? "media") || "media"} mime=${(r.mime_type ?? "unknown") || "unknown"}]`
+      : "";
+
+    const content = text
+      ? (placeholder ? `${text}\n${placeholder}` : text)
+      : (placeholder ? placeholder : "");
+
     if (!content) continue;
     msgs.push({ role: toChatRole(r.sender), content });
   }

@@ -7,6 +7,9 @@ export function enforceDealershipReplySchema(params: {
   text: string;
   intentBucket: string; // sales | service | finance | accessories
   extractedIntent: string;
+  known_model?: string | null;
+  known_variant?: string | null;
+  known_transmission?: string | null;
 }): string {
   let t = (params.text || "").trim();
   if (!t) return t;
@@ -42,8 +45,17 @@ export function enforceDealershipReplySchema(params: {
         params.extractedIntent === "pricing" ||
         params.extractedIntent === "offer"
       ) {
-        t +=
-          "\n\nWhich exact model + variant (fuel + transmission) should I check for you?";
+        const hasKnownModel = Boolean((params.known_model || "").trim());
+        const hasKnownVariant = Boolean((params.known_variant || "").trim());
+        const hasKnownTransmission = Boolean(
+          (params.known_transmission || "").trim()
+        );
+
+        // Only ask for model/variant/transmission when they are not already known.
+        if (!hasKnownModel || !hasKnownVariant || !hasKnownTransmission) {
+          t +=
+            "\n\nWhich exact model + variant (fuel + transmission) should I check for you?";
+        }
       } else {
         t += "\n\nWhich model are you considering?";
       }
