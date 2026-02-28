@@ -274,18 +274,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     // Search (name/phone) - uses contact relationship.
-    if (search) {
-      const digits = search.replace(/\D/g, "");
-      const nameTerm = `%${search}%`;
-      // Keep OR expression scoped to this query (still ANDed with organization_id)
-      if (digits) {
-        query = query.or(
-          `contacts.name.ilike.${nameTerm},contacts.phone.ilike.%${digits}%`
-        );
-      } else {
-        query = query.or(`contacts.name.ilike.${nameTerm}`);
-      }
-    }
+    // Search (name/phone) - must scope OR filters to foreign table "contacts"
+if (search) {
+  const digits = search.replace(/\D/g, "");
+  const nameTerm = `%${search}%`;
+
+  if (digits) {
+    query = query.or(
+      `name.ilike.${nameTerm},phone.ilike.%${digits}%`,
+      { foreignTable: "contacts" }
+    );
+  } else {
+    query = query.or(
+      `name.ilike.${nameTerm}`,
+      { foreignTable: "contacts" }
+    );
+  }
+}
 
     // Cursor pagination: fetch records strictly "after" cursor tuple.
     // last_message_at can be null for new/empty conversations; treat as very old.
