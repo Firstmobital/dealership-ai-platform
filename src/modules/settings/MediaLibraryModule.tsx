@@ -85,27 +85,39 @@ export function MediaLibraryModule() {
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [assetsError, setAssetsError] = useState<string | null>(null);
 
+  // Signed URL cache (RLS-safe previews)
+  const [signedUrlByAssetId, setSignedUrlByAssetId] = useState<Record<string, string>>({});
+  const [loadingSignedUrlById, setLoadingSignedUrlById] = useState<Record<string, boolean>>({});
+
+  // Pagination
+  const pageSize = 25;
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+
   // Filters
   const [filterType, setFilterType] = useState<"all" | "image" | "brochure">("all");
   const [search, setSearch] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);
 
+  // Debounced search (server-side)
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
   const accept = useMemo(() => {
     return assetType === "image" ? "image/*" : "application/pdf";
   }, [assetType]);
 
-  const filteredAssets = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(totalCount / pageSize));
+  }, [totalCount, pageSize]);
 
-    return assets.filter((a) => {
-      if (activeOnly && !a.is_active) return false;
-      if (filterType !== "all" && a.asset_type !== filterType) return false;
-      if (!q) return true;
-
-      const hay = `${a.model ?? ""} ${a.variant ?? ""} ${a.title ?? ""} ${a.filename ?? ""}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [assets, activeOnly, filterType, search]);
+  const canGoPrev = page > 0;
+  const canGoNext = (page + 1) * pageSize < totalCount;
 
   if (!orgId) {
     return (
@@ -115,33 +127,111 @@ export function MediaLibraryModule() {
     );
   }
 
+  async function getSignedUrl(asset: MediaAsset): Promise<string | null> {
+    const cached = signedUrlByAssetId[asset.id];
+    if (cached) return cached;
+
+    if (loadingSignedUrlById[asset.id]) return null;
+
+    setLoadingSignedUrlById((prev) => ({ ...prev, [asset.id]: true }));
+    try {
+      const res = await supabase.storage
+        .from(asset.storage_bucket)
+        .createSignedUrl(asset.storage_path, 60 * 10);
+
+      if (res.error) {
+        toast.error(res.error.message);
+        return null;
+      }
+
+      const url = res.data?.signedUrl ?? null;
+      if (!url) return null;
+
+      setSignedUrlByAssetId((prev) => ({ ...prev, [asset.id]: url }));
+      return url;
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to create signed URL.");
+      return null;
+    } finally {
+      setLoadingSignedUrlById((prev) => {
+        const next = { ...prev };
+        delete next[asset.id];
+        return next;
+      });
+    }
+  }
+
+  // Prefetch signed URLs for visible image rows (current page)
+  useEffect(() => {
+    void (async () => {
+      const images = assets.filter((a) => a.asset_type === "image");
+      for (const a of images) {
+        if (signedUrlByAssetId[a.id] || loadingSignedUrlById[a.id]) continue;
+        await getSignedUrl(a);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets]);
+
   async function loadAssets() {
     setAssetsLoading(true);
     setAssetsError(null);
 
-    const res = await supabase
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
       .from("media_assets")
       .select(
-        "id, asset_type, model, variant, title, storage_bucket, storage_path, mime_type, filename, is_active, created_at"
+        "id, asset_type, model, variant, title, storage_bucket, storage_path, mime_type, filename, is_active, created_at",
+        { count: "exact" }
       )
-      .eq("organization_id", orgId)
-      .order("created_at", { ascending: false });
+      .eq("organization_id", orgId);
+
+    if (activeOnly) {
+      query = query.eq("is_active", true);
+    }
+
+    if (filterType !== "all") {
+      query = query.eq("asset_type", filterType);
+    }
+
+    const trimmed = debouncedSearch.trim();
+    if (trimmed) {
+      const q = `%${trimmed}%`;
+      query = query.or(`model.ilike.${q},title.ilike.${q},filename.ilike.${q}`);
+    }
+
+    const res = await query.order("created_at", { ascending: false }).range(from, to);
 
     if (res.error) {
       setAssetsError(res.error.message);
       setAssets([]);
+      setTotalCount(0);
       setAssetsLoading(false);
       return;
     }
 
     setAssets((res.data ?? []) as MediaAsset[]);
+    setTotalCount(res.count ?? 0);
     setAssetsLoading(false);
   }
 
+  // Reset page on org change
+  useEffect(() => {
+    setPage(0);
+  }, [orgId]);
+
+  // Reset page when filters change (so pagination stays valid)
+  useEffect(() => {
+    setPage(0);
+  }, [filterType, activeOnly, debouncedSearch]);
+
+  // Load whenever orgId, page, or filters change
   useEffect(() => {
     void loadAssets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId]);
+  }, [orgId, page, filterType, activeOnly, debouncedSearch]);
 
   async function doUpload(targetPath: string, uploadFile: File) {
     return await supabase.storage.from("media").upload(targetPath, uploadFile, {
@@ -245,6 +335,7 @@ export function MediaLibraryModule() {
       setFile(null);
       setFileInputKey((k) => k + 1);
 
+      setPage(0);
       await loadAssets();
     } catch (err: any) {
       const message = err?.message || "Upload failed.";
@@ -263,11 +354,11 @@ export function MediaLibraryModule() {
     }
   }
 
-  async function onDeactivate(asset: MediaAsset) {
+  async function onSetActive(asset: MediaAsset, nextIsActive: boolean) {
     const toastId = toast.loading("Updating…");
     const res = await supabase
       .from("media_assets")
-      .update({ is_active: false })
+      .update({ is_active: nextIsActive })
       .eq("id", asset.id)
       .eq("organization_id", orgId);
 
@@ -276,8 +367,14 @@ export function MediaLibraryModule() {
       return;
     }
 
-    toast.success("Deactivated.", { id: toastId });
+    toast.success(nextIsActive ? "Activated." : "Deactivated.", { id: toastId });
     await loadAssets();
+  }
+
+  async function onOpen(asset: MediaAsset) {
+    const url = await getSignedUrl(asset);
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   async function onDelete(asset: MediaAsset) {
@@ -316,6 +413,15 @@ export function MediaLibraryModule() {
       }
 
       toast.success("Deleted.", { id: toastId });
+
+      // If we just removed the last item on a non-zero page, move back a page.
+      const remainingIfCurrentRemoved = Math.max(0, totalCount - 1);
+      const lastValidPage = Math.max(0, Math.ceil(remainingIfCurrentRemoved / pageSize) - 1);
+      if (page > lastValidPage) {
+        setPage(lastValidPage);
+        return;
+      }
+
       await loadAssets();
     } catch (err: any) {
       const message = err?.message || "Delete failed.";
@@ -511,7 +617,7 @@ export function MediaLibraryModule() {
               <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 {assetsError}
               </div>
-            ) : filteredAssets.length === 0 ? (
+            ) : assets.length === 0 ? (
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                 No assets found.
               </div>
@@ -521,6 +627,7 @@ export function MediaLibraryModule() {
                   <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
                     <thead className="sticky top-0 bg-slate-50">
                       <tr className="text-slate-600">
+                        <th className="px-3 py-2 font-semibold">Preview</th>
                         <th className="px-3 py-2 font-semibold">Type</th>
                         <th className="px-3 py-2 font-semibold">Model / Variant</th>
                         <th className="px-3 py-2 font-semibold">Title</th>
@@ -530,73 +637,143 @@ export function MediaLibraryModule() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
-                      {filteredAssets.map((a) => (
-                        <tr key={a.id} className="text-slate-700">
-                          <td className="px-3 py-2">
-                            <span className="rounded-md bg-slate-100 px-2 py-1 font-semibold">
-                              {a.asset_type}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="font-semibold text-slate-900">{a.model ?? "—"}</div>
-                            {a.variant ? (
-                              <div className="text-[11px] text-slate-500">{a.variant}</div>
-                            ) : null}
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="max-w-[220px] truncate" title={a.title}>
-                              {a.title}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="max-w-[220px] truncate" title={a.filename ?? ""}>
-                              {a.filename ?? "—"}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2">
-                            {a.is_active ? (
-                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">
-                                Active
+                      {assets.map((a) => {
+                        const signedUrl = signedUrlByAssetId[a.id];
+                        const isPreviewLoading = !!loadingSignedUrlById[a.id];
+
+                        return (
+                          <tr key={a.id} className="text-slate-700">
+                            <td className="px-3 py-2">
+                              {a.asset_type === "image" ? (
+                                signedUrl ? (
+                                  <img
+                                    src={signedUrl}
+                                    alt={a.title}
+                                    className="h-10 w-10 rounded border border-slate-200 object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-10 w-10 items-center justify-center rounded border border-slate-200 bg-slate-50 text-[10px] font-semibold text-slate-500">
+                                    {isPreviewLoading ? "Loading…" : "—"}
+                                  </div>
+                                )
+                              ) : (
+                                <div className="flex h-10 w-10 items-center justify-center rounded border border-slate-200 bg-slate-50 text-[10px] font-semibold text-slate-600">
+                                  PDF
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="rounded-md bg-slate-100 px-2 py-1 font-semibold">
+                                {a.asset_type}
                               </span>
-                            ) : (
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
-                                Inactive
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => void onCopyPath(a.storage_path)}
-                                className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50"
-                              >
-                                Copy Path
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void onDeactivate(a)}
-                                disabled={!a.is_active}
-                                className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                Deactivate
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void onDelete(a)}
-                                className="rounded-md border border-red-200 bg-white px-2 py-1 font-semibold text-red-700 hover:bg-red-50"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="font-semibold text-slate-900">{a.model ?? "—"}</div>
+                              {a.variant ? (
+                                <div className="text-[11px] text-slate-500">{a.variant}</div>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="max-w-[220px] truncate" title={a.title}>
+                                {a.title}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="max-w-[220px] truncate" title={a.filename ?? ""}>
+                                {a.filename ?? "—"}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {a.is_active ? (
+                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">
+                                  Active
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">
+                                  Inactive
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void onCopyPath(a.storage_path)}
+                                  className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  Copy Path
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void onOpen(a)}
+                                  className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  Open
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void onSetActive(a, false)}
+                                  disabled={!a.is_active}
+                                  className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Deactivate
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void onSetActive(a, true)}
+                                  disabled={a.is_active}
+                                  className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Activate
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void onDelete(a)}
+                                  className="rounded-md border border-red-200 bg-white px-2 py-1 font-semibold text-red-700 hover:bg-red-50"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
             )}
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={!canGoPrev || assetsLoading}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => p + 1)}
+                  disabled={!canGoNext || assetsLoading}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span>
+                  Page <span className="font-semibold text-slate-700">{page + 1}</span> of{" "}
+                  <span className="font-semibold text-slate-700">{totalPages}</span>
+                </span>
+                <span>
+                  Total <span className="font-semibold text-slate-700">{totalCount}</span>
+                </span>
+              </div>
+            </div>
           </div>
         </section>
       </div>
