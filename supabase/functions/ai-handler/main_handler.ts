@@ -75,6 +75,12 @@ import { createServiceTicketIfNeeded } from "./service_ticket.ts";
 import { enforceDealershipReplySchema } from "./schema_enforcement.ts";
 import { detectUrgency, enforceHighUrgencyReply, type Urgency } from "./urgency.ts";
 import { normalizeForMatch } from "./text_normalize.ts";
+import {
+  userWantsMedia,
+  fetchMediaAssets,
+  pickAssetsForSend,
+  signMediaUrl,
+} from "./media_assets.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -1336,7 +1342,7 @@ export async function mainHandler(params: {
     const logger = createLogger({
       request_id,
       conversation_id,
-      organization_id,
+      organization_id: organizationId,
       channel,
     });
 
@@ -1418,18 +1424,31 @@ export async function mainHandler(params: {
 
     // 3) Fetch contact phone (needed for WhatsApp sends, including greetings)
     if (channel === "whatsapp" && contactId) {
-      const contact = await safeSupabase<{ phone: string | null }>(
+      const contact = await safeSupabase<{
+        phone: string | null;
+        phone_e164?: string | null;
+        whatsapp_number?: string | null;
+      }>(
         "load_contact_phone",
         logger,
         () =>
           supabase
+            // Prefer E.164 / WhatsApp-specific if present in schema; fallback to phone
             .from("contacts")
-            .select("phone")
+            .select("id, phone, phone_e164, whatsapp_number")
             .eq("organization_id", organizationId)
             .eq("id", contactId)
             .maybeSingle()
       );
-      contactPhone = contact?.phone ?? null;
+
+      // Priority:
+      // 1) E.164
+      // 2) WhatsApp-specific
+      // 3) plain phone
+      const p1 = asNullableString((contact as unknown as { phone_e164?: unknown })?.phone_e164);
+      const p2 = asNullableString((contact as unknown as { whatsapp_number?: unknown })?.whatsapp_number);
+      const p3 = asNullableString((contact as unknown as { phone?: unknown })?.phone);
+      contactPhone = p1 ?? p2 ?? p3;
     }
 
     // 4) Personality (needed for greeting + fallback)
@@ -1677,10 +1696,10 @@ ${personality.donts || "- None specified."}
 
     const isAmbiguousContainsBothModels =
       hasStrongDifferentModel &&
-      // @ts-ignore - __test__ is exported for deterministic internals and safe to use here.
+      // @ts-ignore: __test__ is an internal helper exposed for deterministic model-token checks.
       (extractSlotsFromUserText as unknown as { __test__?: { messageContainsModelToken?: (t: string, m: string) => boolean } })
         .__test__?.messageContainsModelToken?.(userMsgForModelDetect.toLowerCase(), lockedModelNorm) === true &&
-      // @ts-ignore
+      // @ts-ignore: __test__ is an internal helper exposed for deterministic model-token checks.
       (extractSlotsFromUserText as unknown as { __test__?: { messageContainsModelToken?: (t: string, m: string) => boolean } })
         .__test__?.messageContainsModelToken?.(userMsgForModelDetect.toLowerCase(), detectedModelNorm) === true;
 
@@ -2360,8 +2379,11 @@ ${personality.donts || "- None specified."}
     }
 
     if (resolvedWorkflow) {
+      // Narrow for TypeScript: within this block we expect a live workflow session.
+      // If it ever becomes null due to an unexpected DB state, we bail safely.
+      const rw = resolvedWorkflow;
       const steps = await getWorkflowSteps(
-        resolvedWorkflow.workflow_id!,
+        rw.workflow_id!,
         organizationId,
         logger
       );
@@ -2375,7 +2397,7 @@ ${personality.donts || "- None specified."}
 
         let { step, nextStepNumber, skipped } = findFirstIncompleteStep({
           steps,
-          startStepNumber: resolvedWorkflow.current_step_number ?? 1,
+          startStepNumber: rw.current_step_number ?? 1,
           lastUserMessage: user_message,
         });
 
@@ -2387,27 +2409,34 @@ ${personality.donts || "- None specified."}
 
           // Persist skip-advancement so we don't re-evaluate the same skipped steps
           // (does not change workflow_logs schema)
-          const prevExpectedStep = resolvedWorkflow.current_step_number ?? 1;
+          const prevExpectedStep = rw.current_step_number ?? 1;
 
-const updated = await saveWorkflowProgress(
-  resolvedWorkflow.id,
-  organizationId,
-  nextStepNumber,
-  resolvedWorkflow.variables ?? {},
-  false,
-  logger,
-  prevExpectedStep
-);
+          const updated = await saveWorkflowProgress(
+            rw.id,
+            organizationId,
+            nextStepNumber,
+            rw.variables ?? {},
+            false,
+            logger,
+            prevExpectedStep
+          );
 
-if (updated) resolvedWorkflow = updated;
+          if (updated) resolvedWorkflow = updated;
 
-// Keep in-memory state consistent for downstream progression logic
-resolvedWorkflow.current_step_number = nextStepNumber;
+          // If update failed and returned null, bail out of workflow processing.
+          if (!resolvedWorkflow) {
+            // No behavior change intended; this guards an already-unsafe state.
+            // (Previously this would have thrown on property access.)
+            // Exit workflow evaluation for this turn.
+            step = null;
+          } else {
+            // Keep in-memory state consistent for downstream progression logic
+            resolvedWorkflow.current_step_number = nextStepNumber;
+          }
 
-// Mark step-advance only if it actually advanced
-if (nextStepNumber > prevExpectedStep) {
-  workflowStepAdvancedThisTurn = true;
-}
+          if (nextStepNumber > prevExpectedStep) {
+            workflowStepAdvancedThisTurn = true;
+          }
         }
 
         // ------------------------------------------------------------------
@@ -2420,6 +2449,7 @@ if (nextStepNumber > prevExpectedStep) {
           const isRecord = (v: unknown): v is Record<string, unknown> =>
             typeof v === "object" && v !== null && !Array.isArray(v);
 
+          if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
           const varsUnknown: unknown = resolvedWorkflow.variables;
           const vars: Record<string, unknown> = isRecord(varsUnknown)
             ? varsUnknown
@@ -2444,7 +2474,6 @@ if (nextStepNumber > prevExpectedStep) {
               slots: slotRes.next,
             };
 
-            // Update in-memory snapshot too (avoid later overwrites)
             resolvedWorkflow.variables = nextVars;
 
             // Ensure step number is always a concrete number
@@ -2468,6 +2497,7 @@ if (nextStepNumber > prevExpectedStep) {
             );
 
             if (updated) resolvedWorkflow = updated;
+            if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
 
             logger.info("[workflow] slots updated", {
               workflow_id: resolvedWorkflow.workflow_id,
@@ -2552,6 +2582,7 @@ if (nextStepNumber > prevExpectedStep) {
                 );
 
                 if (updated) resolvedWorkflow = updated;
+                if (!resolvedWorkflow) break;
 
                 logger.info("[workflow] auto-resolved model from fuel slot", {
                   fuel,
@@ -2584,6 +2615,7 @@ if (nextStepNumber > prevExpectedStep) {
             );
 
             if (updatedAdvance) resolvedWorkflow = updatedAdvance;
+            if (!resolvedWorkflow) break;
             resolvedWorkflow.current_step_number = nextStep;
             workflowStepAdvancedThisTurn = true;
 
@@ -2614,6 +2646,7 @@ if (nextStepNumber > prevExpectedStep) {
             workflowDirectiveAction = directive.action;
 
             if (directive.action === "ask" || directive.action === "escalate") {
+              if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
               // Deterministic reply; do NOT rely on the LLM.
               forcedReplyText = enforceDirective(directive);
 
@@ -2635,6 +2668,7 @@ if (nextStepNumber > prevExpectedStep) {
               );
 
               if (updated) resolvedWorkflow = updated;
+              if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
 
               if (
                 directive.action === "escalate" ||
@@ -2649,6 +2683,7 @@ if (nextStepNumber > prevExpectedStep) {
 
             // ✅ Phase 1: engine-enforced SAY (seed + schema)
             if (!forcedReplyText && directive.action === "say") {
+              if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
               // SAY must not re-open qualification loops.
               // Use ONLY already-resolved workflow slots; do not run extraction/qualification helpers.
               const vars = isRecord(resolvedWorkflow.variables)
@@ -2696,6 +2731,7 @@ if (nextStepNumber > prevExpectedStep) {
               );
 
               if (updated) resolvedWorkflow = updated;
+              if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
 
               workflowAlreadyAdvanced = true;
               workflowStepAdvancedThisTurn = true;
@@ -2846,6 +2882,144 @@ if (nextStepNumber > prevExpectedStep) {
       allowedNumbersForOutput.add(t);
     for (const t of extractNumberTokens(String(campaignContextForPrompt || "")))
       allowedNumbersForOutput.add(t);
+
+    // ------------------------------------------------------------------
+    // OPTIONAL MEDIA SENDING (WHATSApp ONLY; REQUESTED ONLY)
+    // - Must NOT change normal text behavior
+    // - Must only send when user explicitly asks AND model is confidently available
+    // ------------------------------------------------------------------
+    const wantsMedia = userWantsMedia(user_message);
+
+    const workflowSlots = asRecord(resolvedWorkflow?.variables)?.slots;
+    const slots = asRecord(workflowSlots);
+
+    const mediaModel = asNullableString(slots.vehicle_model) ??
+      asNullableString(asRecord(nextEntitiesWithKb).model) ??
+      asNullableString(aiExtract.vehicle_model) ??
+      asNullableString(lockedModel);
+
+    const mediaVariant = asNullableString(slots.vehicle_variant) ??
+      asNullableString(asRecord(nextEntitiesWithKb).variant) ??
+      asNullableString(aiExtract.vehicle_variant) ??
+      asNullableString(lockedVariant);
+
+    if (
+      (wantsMedia.wantImages || wantsMedia.wantBrochure) &&
+      channel === "whatsapp" &&
+      contactPhone &&
+      typeof mediaModel === "string" &&
+      mediaModel.trim().length > 0
+    ) {
+      try {
+        const assets = await fetchMediaAssets({
+          supabase,
+          organizationId,
+          model: mediaModel,
+          variant: mediaVariant,
+          wantImages: wantsMedia.wantImages,
+          wantBrochure: wantsMedia.wantBrochure,
+          logger,
+        });
+
+        const picked = pickAssetsForSend(assets);
+
+        // Send images (max 3)
+        for (let i = 0; i < (picked.images?.length ?? 0); i += 1) {
+          const img = picked.images[i];
+          const signed = await signMediaUrl({
+            supabase,
+            bucket: img.storage_bucket,
+            path: img.storage_path,
+            ttlSeconds: 600,
+            logger,
+          });
+          if (!signed) continue;
+
+          await supabase.from("messages").insert({
+            conversation_id,
+            organization_id: organizationId,
+            sender: "bot",
+            message_type: "image",
+            text: null,
+            channel: "whatsapp",
+            order_at: new Date().toISOString(),
+            outbound_dedupe_key: `${request_id}:media:image:${i}`,
+            media_url: signed,
+            mime_type: img.mime_type ?? "image/jpeg",
+            metadata: {
+              request_id,
+              trace_id,
+              kind: "media_asset",
+              asset_id: img.id,
+              storage_path: img.storage_path,
+            },
+          });
+
+          await safeWhatsAppSend(logger, {
+            organization_id: organizationId,
+            to: contactPhone,
+            type: "image",
+            media_url: signed,
+            metadata: { asset_id: img.id },
+          });
+        }
+
+        // Send brochure (max 1)
+        if (picked.brochure) {
+          const b = picked.brochure;
+          const signed = await signMediaUrl({
+            supabase,
+            bucket: b.storage_bucket,
+            path: b.storage_path,
+            ttlSeconds: 600,
+            logger,
+          });
+
+          if (signed) {
+            const baseName = (b.filename ?? `${b.title}.pdf`).replace(/[^a-zA-Z0-9._ -]/g, "").trim();
+            const safeName = baseName ? baseName : "brochure.pdf";
+
+            await supabase.from("messages").insert({
+              conversation_id,
+              organization_id: organizationId,
+              sender: "bot",
+              message_type: "document",
+              text: null,
+              channel: "whatsapp",
+              order_at: new Date().toISOString(),
+              outbound_dedupe_key: `${request_id}:media:brochure:0`,
+              media_url: signed,
+              mime_type: b.mime_type ?? "application/pdf",
+              metadata: {
+                request_id,
+                trace_id,
+                kind: "media_asset",
+                asset_id: b.id,
+                storage_path: b.storage_path,
+                filename: safeName,
+              },
+            });
+
+            await safeWhatsAppSend(logger, {
+              organization_id: organizationId,
+              to: contactPhone,
+              type: "document",
+              media_url: signed,
+              filename: safeName,
+              metadata: { asset_id: b.id },
+            });
+          }
+        }
+      } catch (err: unknown) {
+        // Never break the normal text reply
+        logger.warn("[media] send failed; continuing with normal text reply", {
+          error: err,
+          model: mediaModel,
+          variant: mediaVariant,
+          wants: wantsMedia,
+        });
+      }
+    }
 
     // 11) System prompt
     const systemPrompt = `
