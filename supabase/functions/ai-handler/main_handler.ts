@@ -70,7 +70,7 @@ import {
   resolveAISettings,
 } from "./wallet_quota.ts";
 import { safeSupabase, safeWhatsAppSend, safeText } from "./safe_helpers.ts";
-import { traceInsertStart, traceUpdate } from "./trace.ts";
+import { traceInsertStart, traceUpdate, mergeDecision } from "./trace.ts";
 import { createServiceTicketIfNeeded } from "./service_ticket.ts";
 import { enforceDealershipReplySchema } from "./schema_enforcement.ts";
 import { detectUrgency, enforceHighUrgencyReply, type Urgency } from "./urgency.ts";
@@ -2982,6 +2982,15 @@ ${personality.donts || "- None specified."}
     // ------------------------------------------------------------------
     const wantsMedia = userWantsMedia(user_message);
 
+    const mediaTelemetry = {
+      requested: Boolean(wantsMedia.wantImages || wantsMedia.wantBrochure),
+      want_images: Boolean(wantsMedia.wantImages),
+      want_brochure: Boolean(wantsMedia.wantBrochure),
+      sent_images: 0,
+      sent_brochure: false,
+      asset_ids: [] as string[],
+    };
+
     const workflowSlots = asRecord(resolvedWorkflow?.variables)?.slots;
     const slots = asRecord(workflowSlots);
 
@@ -3059,13 +3068,18 @@ ${personality.donts || "- None specified."}
             },
           });
 
-          await safeWhatsAppSend(logger, {
+          const sendOk = await safeWhatsAppSend(logger, {
             organization_id: organizationId,
             to: contactPhone,
             type: "image",
             media_url: signed,
             metadata: { asset_id: img.id },
           });
+
+          if (sendOk) {
+            mediaTelemetry.sent_images += 1;
+            mediaTelemetry.asset_ids.push(String(img.id));
+          }
         }
 
         // Send brochure (max 1)
@@ -3104,7 +3118,7 @@ ${personality.donts || "- None specified."}
               },
             });
 
-            await safeWhatsAppSend(logger, {
+            const sendOk = await safeWhatsAppSend(logger, {
               organization_id: organizationId,
               to: contactPhone,
               type: "document",
@@ -3112,6 +3126,11 @@ ${personality.donts || "- None specified."}
               filename: safeName,
               metadata: { asset_id: b.id },
             });
+
+            if (sendOk) {
+              mediaTelemetry.sent_brochure = true;
+              mediaTelemetry.asset_ids.push(String(b.id));
+            }
           }
         }
       } catch (err: unknown) {
@@ -3876,7 +3895,8 @@ Respond now to the customer's latest message only.
       }
     }
 
-    // 15.5) Enforce dealership response schema (single question, clear next step)
+    // 15.5) Enforce dealership response schema
+    const beforeSchema = aiResponseText;
     aiResponseText = enforceDealershipReplySchema({
       text: aiResponseText,
       intentBucket,
@@ -3885,6 +3905,11 @@ Respond now to the customer's latest message only.
       known_variant: knownVariant,
       known_transmission: knownTransmission,
     });
+    const schemaAppended = aiResponseText !== beforeSchema;
+    const appendedText =
+      schemaAppended && aiResponseText.length > beforeSchema.length
+        ? aiResponseText.slice(beforeSchema.length).trim()
+        : null;
 
     // 15.6) Enforce high urgency reply rules
     if (urgency === "high") {
@@ -3899,50 +3924,26 @@ Respond now to the customer's latest message only.
       aiResponseText = stripInterrogativesForSay(aiResponseText);
     }
 
-    // 16) Phase 6.3 — Log unanswered question
-    // - Classic fallback
-    // - OR kb_only blocked reply (P2)
-    const shouldLogUnanswered =
-      (aiResponseText === fallbackMessage && !intentNeedsKB) ||
-      (aiMode === "kb_only" && forcedReplyText !== null);
-
-    if (shouldLogUnanswered) {
-      await logUnansweredQuestion({
-        organization_id: organizationId,
-        conversation_id,
-        channel,
-        question: user_message,
-        ai_response: aiResponseText,
-        logger,
+    // BEST-EFFORT: Patch decision telemetry into trace without losing KB decision fields.
+    // Must never throw or break main flow.
+    try {
+      const decisionBase = (kbTracePatch as any)?.decision ?? {};
+      await traceUpdate(trace_id, {
+        decision: mergeDecision(decisionBase as Record<string, unknown>, {
+          inbound_attachment_marker_seen: typeof user_message === "string" && user_message.includes("[INBOUND_ATTACHMENT]"),
+          schema_enforcement_appended_question: schemaAppended,
+          schema_enforcement_appended_text: appendedText,
+          media_assets: mediaTelemetry,
+        }),
       });
-
-      // AUDIT: unanswered saved (fallback used)
-      await logAuditEvent(supabase as unknown as AuditSupabaseLike, {
-        organization_id: organizationId,
-        action: "unanswered_logged",
-        entity_type: "conversation",
-        entity_id: conversation_id,
-        actor_user_id: null,
-        actor_email: null,
-        metadata: {
-          channel,
-          request_id,
-          question: user_message.slice(0, 500),
-          kb_match: kbMatchMeta ?? null,
-          has_workflow: Boolean(workflowInstructionText?.trim()),
-        },
+    } catch (e) {
+      logger.warn("[trace] decision telemetry patch failed", {
+        trace_id,
+        error: String(e),
       });
     }
 
-    if (
-      aiExtract.intent === "pricing" &&
-      kbFound &&
-      aiResponseText === fallbackMessage
-    ) {
-      logger.error("[guard] pricing fallback despite KB present");
-    }
-
-    // 17) Save message + update conversation
+    // 16) Save message + update conversation
     await supabase.from("messages").insert({
       conversation_id,
       organization_id: organizationId,

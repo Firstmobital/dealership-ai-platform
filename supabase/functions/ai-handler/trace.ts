@@ -37,6 +37,13 @@ export async function traceUpdate(trace_id: string, patch: Record<string, any>) 
   }
 }
 
+export function mergeDecision(
+  base: Record<string, unknown> | null | undefined,
+  patch: Record<string, unknown>
+): Record<string, unknown> {
+  return { ...(base ?? {}), ...patch };
+}
+
 export async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
   const hash = await crypto.subtle.digest("SHA-256", data);
