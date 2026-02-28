@@ -16,6 +16,7 @@ import {
   Users,
   Menu,
   X,
+  Image,
 } from "lucide-react";
 
 import { SidebarLink } from "./SidebarLink";
@@ -111,6 +112,7 @@ export function Sidebar() {
 
             <SidebarLink to="/settings/whatsapp" icon={PhoneCall} label="WhatsApp Settings" />
             <SidebarLink to="/settings/ai-config" icon={Sparkles} label="AI Configuration" />
+            <SidebarLink to="/settings/media" icon={Image} label="Media Library" />
 
             <SidebarLink
               to="/settings/wallet"

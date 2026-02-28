@@ -15,6 +15,7 @@ import { WhatsappSettingsModule } from "./modules/settings/WhatsappSettingsModul
 import { UnansweredQuestionsModule } from "./modules/unanswered/UnansweredQuestionsModule";
 import { WhatsappTemplatesModule } from "./modules/settings/WhatsappTemplatesModule";
 import { AIConfigurationModule } from "./modules/settings/AIConfigurationModule";
+import { MediaLibraryModule } from "./modules/settings/MediaLibraryModule";
 
 import { LoginPage } from "./modules/auth/LoginPage";
 import { SignupPage } from "./modules/auth/SignupPage";
@@ -218,6 +219,7 @@ function App() {
           element={<WhatsappTemplatesModule />}
         />
         <Route path="settings/ai-config" element={<AIConfigurationModule />} />
+        <Route path="settings/media" element={<MediaLibraryModule />} />
         <Route path="settings/wallet" element={<WalletPage />} />
 
         {/* --------------------- Knowledge feedback -------------------------- */}
