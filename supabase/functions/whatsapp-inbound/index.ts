@@ -503,7 +503,7 @@ async function processStatusReceipt(
    VERIFY
 ===================================================================================== */
 
-async function verifyWebhook(req: Request) {
+function verifyWebhook(req: Request) {
   if (!VERIFY_TOKEN) {
     return new Response("Missing WHATSAPP_VERIFY_TOKEN", { status: 500 });
   }
@@ -740,14 +740,14 @@ if (text && replySheetTab) {
     const caption = text ? text.slice(0, MAX_TEXT_LENGTH) : "";
 
     // Preserve existing behavior for normal text messages.
-    // For media-only messages, send a synthetic message containing ONLY safe metadata.
+    // For media-only messages, send a neutral, capability-safe marker.
     const userMessage = text
       ? caption
       : (
-          `Customer sent an attachment. ` +
-          `type=${messageType}, mime=${mimeType ?? "unknown"}. ` +
-          `Caption=${caption || ""}. ` +
-          `Respond acknowledging receipt and ask what they want to do with it.`
+          `[INBOUND_ATTACHMENT] ` +
+          `type=${messageType} ` +
+          `mime=${mimeType ?? "unknown"} ` +
+          `caption=${caption || ""}`
         ).slice(0, MAX_TEXT_LENGTH);
 
     const aiRes = await triggerAIHandler({

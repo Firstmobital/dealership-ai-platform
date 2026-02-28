@@ -28,7 +28,10 @@ export function enforceDealershipReplySchema(params: {
   }
 
   // Ensure there's a clear next step if the message has no question.
-  const hasQuestion = /\?\s*$/.test(t) || t.includes("?");
+  const looksLikeQuestionWithoutQm =
+    /(^|\n)\s*(which|what|share|send)\b/i.test(t) || /\bplease share\b/i.test(t);
+  const hasQuestion =
+    /\?\s*$/.test(t) || t.includes("?") || looksLikeQuestionWithoutQm;
   if (!hasQuestion) {
     if (params.intentBucket === "service") {
       t +=
@@ -52,9 +55,13 @@ export function enforceDealershipReplySchema(params: {
         );
 
         // Only ask for model/variant/transmission when they are not already known.
-        if (!hasKnownModel || !hasKnownVariant || !hasKnownTransmission) {
-          t +=
-            "\n\nWhich exact model + variant (fuel + transmission) should I check for you?";
+        // Ask ONLY the highest-priority missing slot (one short question).
+        if (!hasKnownModel) {
+          t += "\n\nWhich model are you checking?";
+        } else if (!hasKnownVariant) {
+          t += "\n\nWhich variant are you checking?";
+        } else if (!hasKnownTransmission) {
+          t += "\n\nManual or automatic transmission?";
         }
       } else {
         t += "\n\nWhich model are you considering?";

@@ -212,7 +212,7 @@ export function buildChatMessagesFromHistory(
       typeof r.media_url === "string" && r.media_url.trim().length > 0;
 
     const placeholder = hasMedia
-      ? `[Attachment received: type=${(r.message_type ?? "media") || "media"} mime=${(r.mime_type ?? "unknown") || "unknown"}]`
+      ? `[Attachment received: type=${(r.message_type ?? "media") || "media"} mime=${(r.mime_type ?? "unknown") || "unknown"} url=present]`
       : "";
 
     const content = text
@@ -251,10 +251,12 @@ export async function validateGroundedness(params: {
   if (!sources) return { grounded: true };
 
   try {
+    type JsonObjectResponseFormat = { type: "json_object" };
+
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0,
-      response_format: { type: "json_object" } as any,
+      response_format: ({ type: "json_object" } satisfies JsonObjectResponseFormat),
       messages: [
         {
           role: "system",
