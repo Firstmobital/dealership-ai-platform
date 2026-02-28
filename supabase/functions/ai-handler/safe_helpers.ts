@@ -7,7 +7,7 @@ import type { createLogger } from "./logging.ts";
 export async function safeSupabase<T>(
   opName: string,
   logger: ReturnType<typeof createLogger>,
-  fn: () => PromiseLike<{ data: T | null; error: any }>
+  fn: () => PromiseLike<{ data: T | null; error: unknown }>
 ): Promise<T | null> {
   try {
     const { data, error } = await fn();
@@ -24,9 +24,29 @@ export async function safeSupabase<T>(
 
 export async function safeWhatsAppSend(
   logger: ReturnType<typeof createLogger>,
-  payload: any
+  payload: unknown
 ): Promise<boolean> {
   try {
+    // Back-compat + provider schema normalization:
+    // Provider expects `image_url` / `document_url` / `video_url` / `audio_url`.
+    // Callers may still pass `media_url`.
+    if (typeof payload === "object" && payload !== null) {
+      const p = payload as Record<string, unknown>;
+      const mediaUrl = typeof p.media_url === "string" && p.media_url.trim()
+        ? p.media_url
+        : null;
+
+      if (p.type === "image" && !p.image_url && mediaUrl) {
+        payload = { ...p, image_url: mediaUrl };
+      } else if (p.type === "document" && !p.document_url && mediaUrl) {
+        payload = { ...p, document_url: mediaUrl };
+      } else if (p.type === "video" && !p.video_url && mediaUrl) {
+        payload = { ...p, video_url: mediaUrl };
+      } else if (p.type === "audio" && !p.audio_url && mediaUrl) {
+        payload = { ...p, audio_url: mediaUrl };
+      }
+    }
+
     const res = await fetch(`${PROJECT_URL}/functions/v1/whatsapp-send`, {
       method: "POST",
       headers: {
@@ -54,6 +74,6 @@ export async function safeWhatsAppSend(
   }
 }
 
-export function safeText(v: any): string {
+export function safeText(v: unknown): string {
   return typeof v === "string" ? v : "";
 }

@@ -1427,15 +1427,13 @@ export async function mainHandler(params: {
       const contact = await safeSupabase<{
         phone: string | null;
         phone_e164?: string | null;
-        whatsapp_number?: string | null;
       }>(
         "load_contact_phone",
         logger,
         () =>
           supabase
-            // Prefer E.164 / WhatsApp-specific if present in schema; fallback to phone
             .from("contacts")
-            .select("id, phone, phone_e164, whatsapp_number")
+            .select("id, phone_e164, phone")
             .eq("organization_id", organizationId)
             .eq("id", contactId)
             .maybeSingle()
@@ -1443,12 +1441,10 @@ export async function mainHandler(params: {
 
       // Priority:
       // 1) E.164
-      // 2) WhatsApp-specific
-      // 3) plain phone
+      // 2) plain phone
       const p1 = asNullableString((contact as unknown as { phone_e164?: unknown })?.phone_e164);
-      const p2 = asNullableString((contact as unknown as { whatsapp_number?: unknown })?.whatsapp_number);
       const p3 = asNullableString((contact as unknown as { phone?: unknown })?.phone);
-      contactPhone = p1 ?? p2 ?? p3;
+      contactPhone = p1 ?? p3;
     }
 
     // 4) Personality (needed for greeting + fallback)
