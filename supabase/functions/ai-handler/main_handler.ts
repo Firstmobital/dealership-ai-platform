@@ -2432,6 +2432,44 @@ ${personality.donts || "- None specified."}
       }
     }
 
+    // ------------------------------------------------------------------
+    // GLOBAL SLOTS (P1.1) — deterministic slot extraction for ALL turns
+    // - Does NOT require a workflow.
+    // - Uses ai_state.slots as persisted memory.
+    // - Workflow slots (if any) get precedence ONLY when non-empty.
+    // - Persisted later via conversationUpdate (no new DB reads).
+    // ------------------------------------------------------------------
+    const aiState = asRecord(conv.ai_state);
+    const aiStateSlotsUnknown = aiState["slots"];
+    const existingAiStateSlots = asRecord(aiStateSlotsUnknown);
+
+    const wfSlots = asRecord(asRecord(resolvedWorkflow?.variables)?.slots);
+
+    const baseSlots: Record<string, unknown> = { ...existingAiStateSlots };
+
+    // Overlay workflow slots field-by-field only if non-empty.
+    for (const [k, v] of Object.entries(wfSlots)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v === "string") {
+        const s = v.trim();
+        if (!s) continue;
+        baseSlots[k] = s;
+        continue;
+      }
+      // Non-string truthy values are considered present (numbers/booleans/objects)
+      baseSlots[k] = v;
+    }
+
+    const slotResGlobal = extractSlotsFromUserText(user_message, baseSlots, {
+      onLog: (level, message, extra) => {
+        if (level === "warn") logger.warn(message, extra || {});
+        else if (level === "debug") logger.debug(message, extra || {});
+        else logger.info(message, extra || {});
+      },
+    });
+
+    const globalSlotsNext: Record<string, unknown> = asRecord(slotResGlobal?.next);
+
     if (resolvedWorkflow) {
       // Narrow for TypeScript: within this block we expect a live workflow session.
       // If it ever becomes null due to an unexpected DB state, we bail safely.
@@ -2948,11 +2986,13 @@ ${personality.donts || "- None specified."}
     const slots = asRecord(workflowSlots);
 
     const mediaModel = asNullableString(slots.vehicle_model) ??
+      asNullableString(globalSlotsNext.vehicle_model) ??
       asNullableString(asRecord(nextEntitiesWithKb).model) ??
       asNullableString(aiExtract.vehicle_model) ??
       asNullableString(lockedModel);
 
     const mediaVariant = asNullableString(slots.vehicle_variant) ??
+      asNullableString(globalSlotsNext.vehicle_variant) ??
       asNullableString(asRecord(nextEntitiesWithKb).variant) ??
       asNullableString(aiExtract.vehicle_variant) ??
       asNullableString(lockedVariant);
@@ -2962,6 +3002,7 @@ ${personality.donts || "- None specified."}
     const knownVariant = mediaVariant;
     const knownTransmission =
       asNullableString(slots.transmission) ??
+      asNullableString(globalSlotsNext.transmission) ??
       asNullableString(asRecord(nextEntitiesWithKb).transmission) ??
       asNullableTransmission(aiExtract.transmission) ??
       asNullableString(lockedTransmission);
@@ -3096,6 +3137,13 @@ Your job:
 - Use the fallback message ONLY when the question cannot be reasonably answered.
 
 IMPORTANT:
++MEDIA (WHATSAPP):
++- If the latest user message includes "[INBOUND_ATTACHMENT]" (image/pdf), acknowledge receipt naturally.
++- Do NOT say you can’t view/share PDFs/images and do NOT say the user didn’t share it.
++- If the user didn’t specify what they need from the attachment, ask ONE helpful question (e.g., extract on-road price table, variant list, or booking details).
++- If the user explicitly asks for brochure/photos on WhatsApp, you CAN send media (the system has tooling for it).
++- Proceed when the model is known; otherwise ask only for the missing model/variant.
++
 - UNVERIFIED FACTS FIREWALL (PHASE 4 — HARD):
   - This rule applies ONLY to FACTS the USER claims first (e.g., "I was told ₹X", "discount is ₹Y", "delivery in 2 weeks").
   - Treat user-provided prices/discounts/offers/availability/timelines as UNVERIFIED unless the same info appears in Knowledge Context or Campaign Context.
@@ -3444,10 +3492,6 @@ Respond now to the customer's latest message only.
     // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
     // ------------------------------------------------------------------
     const shouldValidate =
-    // ------------------------------------------------------------------
-    // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
-    // ------------------------------------------------------------------
-    const shouldValidate =
       Boolean(contextText?.trim() || campaignContextText?.trim()) &&
       aiResponseText !== fallbackMessage &&
       !looksLikeClarification;
@@ -3697,6 +3741,10 @@ Respond now to the customer's latest message only.
       last_workflow_run_at: resolvedWorkflow ? nowIso : null,
       last_kb: kbFound ? nextEntitiesWithKb?.last_kb ?? null : null,
       urgency,
+      // Persist deterministic slots when changed OR already present in ai_state.
+      ...((slotResGlobal?.changed === true || Object.keys(existingAiStateSlots).length > 0)
+        ? { slots: globalSlotsNext }
+        : {}),
     };
 
     const conversationUpdate: Record<string, unknown> = {

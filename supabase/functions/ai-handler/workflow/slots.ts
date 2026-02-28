@@ -341,4 +341,29 @@ export const __test__ = {
   shouldOverwriteVehicleModel,
   messageContainsModelToken,
   normModelValue,
+  isNonEmptySlotValue(v: unknown): boolean {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    return true;
+  },
+  mergeSlotsPreferNonEmpty(
+    base: Record<string, unknown>,
+    preferred: Record<string, unknown>
+  ): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...(base ?? {}) };
+    const src: Record<string, unknown> = { ...(preferred ?? {}) };
+
+    for (const [k, v] of Object.entries(src)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v === "string") {
+        const s = v.trim();
+        if (!s) continue;
+        out[k] = s;
+        continue;
+      }
+      out[k] = v;
+    }
+
+    return out;
+  },
 };
