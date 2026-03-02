@@ -1,6 +1,7 @@
 // supabase/functions/ai-handler/__tests__/continuity_model_lock_override.test.ts
 import { assertEquals } from "./test_harness.ts";
 import * as Slots from "../workflow/slots.ts";
+import { areRequiredEntitiesPresent } from "../workflow/required_entities_mapping.ts";
 
 function mergeModelOnly(locked: { model?: unknown }, patch: { model?: unknown }): { model?: unknown } {
   // Minimal deterministic merge for tests: if patch.model is non-empty string, use it; else keep locked.model.
@@ -45,6 +46,37 @@ function simulateContinuityNextModel(params: {
   return typeof nextEntities?.model === "string" ? String(nextEntities.model) : null;
 }
 
+function simulateFuelOnlyContinuityExtract(params: {
+  lockedModel: string | null;
+  lockedFuel?: string | null;
+  userMessage: string;
+}): { vehicle_model: string | null; fuel_type: string | null } {
+  const { lockedModel, lockedFuel, userMessage } = params;
+
+  const currentModel = lockedModel;
+  const modelDetect = Slots.extractSlotsFromUserText(userMessage, {}, {});
+  const detectedFuel =
+    typeof (modelDetect?.next as Record<string, unknown>)?.fuel_type === "string"
+      ? String((modelDetect.next as Record<string, unknown>).fuel_type)
+      : null;
+
+  const isFuelOnlyFollowup =
+    Boolean(currentModel) && Slots.isFuelFollowupMessage(userMessage);
+
+  if (isFuelOnlyFollowup) {
+    return {
+      vehicle_model: currentModel,
+      fuel_type: detectedFuel ?? (lockedFuel ?? null),
+    };
+  }
+
+  // If no locked model, do not infer model from fuel.
+  return {
+    vehicle_model: currentModel,
+    fuel_type: detectedFuel ?? (lockedFuel ?? null),
+  };
+}
+
 Deno.test("continuity: locked=Harrier, msg='xpress t' => bypass lock; model becomes xpress-t", () => {
   const next = simulateContinuityNextModel({ lockedModel: "Harrier", userMessage: "xpress t" });
   assertEquals(next, "xpress-t");
@@ -58,4 +90,71 @@ Deno.test("continuity: locked=Harrier, msg='harrier xpress t' => ambiguous; keep
 Deno.test("continuity: locked=Harrier, msg='ok' => keep Harrier", () => {
   const next = simulateContinuityNextModel({ lockedModel: "Harrier", userMessage: "ok" });
   assertEquals(next, "Harrier");
+});
+
+Deno.test("fuel-only follow-up: locked=Nexon + msg='cng' => model stays Nexon; fuel=cng", () => {
+  const res = simulateFuelOnlyContinuityExtract({
+    lockedModel: "Nexon",
+    lockedFuel: null,
+    userMessage: "cng",
+  });
+  assertEquals(res.vehicle_model, "Nexon");
+  assertEquals(res.fuel_type, "cng");
+});
+
+Deno.test("fuel-only follow-up: locked=Nexon + msg='diesel' => model stays Nexon; fuel=diesel", () => {
+  const res = simulateFuelOnlyContinuityExtract({
+    lockedModel: "Nexon",
+    lockedFuel: null,
+    userMessage: "diesel",
+  });
+  assertEquals(res.vehicle_model, "Nexon");
+  assertEquals(res.fuel_type, "diesel");
+});
+
+Deno.test("fuel-only follow-up: locked=Nexon + msg='curvv' => is NOT fuel-only (existing behavior switch allowed)", () => {
+  const isFuelOnly = Slots.isFuelFollowupMessage("curvv");
+  assertEquals(isFuelOnly, false);
+});
+
+Deno.test("fuel follow-up: locked=Nexon + msg='diesel automatic' => model stays Nexon; fuel=diesel", () => {
+  const res = simulateFuelOnlyContinuityExtract({
+    lockedModel: "Nexon",
+    lockedFuel: null,
+    userMessage: "diesel automatic",
+  });
+  assertEquals(res.vehicle_model, "Nexon");
+  assertEquals(res.fuel_type, "diesel");
+});
+
+Deno.test("fuel follow-up: locked=Nexon + msg='petrol adventure+' => model stays Nexon; fuel=petrol", () => {
+  const res = simulateFuelOnlyContinuityExtract({
+    lockedModel: "Nexon",
+    lockedFuel: null,
+    userMessage: "petrol adventure+",
+  });
+  assertEquals(res.vehicle_model, "Nexon");
+  assertEquals(res.fuel_type, "petrol");
+});
+
+Deno.test("fuel follow-up disqualifier: msg='diesel price' => NOT fuel-followup", () => {
+  const isFuelOnly = Slots.isFuelFollowupMessage("diesel price");
+  assertEquals(isFuelOnly, false);
+});
+
+Deno.test("fuel-only follow-up: no locked model + msg='cng' => vehicle_model remains null (no inference)", () => {
+  const res = simulateFuelOnlyContinuityExtract({
+    lockedModel: null,
+    lockedFuel: null,
+    userMessage: "cng",
+  });
+  assertEquals(res.vehicle_model, null);
+  assertEquals(res.fuel_type, "cng");
+});
+
+Deno.test("workflow auto-skip mapping: required_entities=['vehicle_model'] is NOT satisfied by slots{fuel_type:'cng'}", () => {
+  const required = ["vehicle_model"]; 
+  const slots: Record<string, unknown> = { fuel_type: "cng" };
+  const ok = areRequiredEntitiesPresent(required, slots);
+  assertEquals(ok, false);
 });

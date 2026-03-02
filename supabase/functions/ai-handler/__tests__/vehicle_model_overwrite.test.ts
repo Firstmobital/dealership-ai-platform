@@ -22,3 +22,12 @@ Deno.test("vehicle_model does NOT overwrite on no model signal", () => {
   assertEquals(res.next.vehicle_model, "Harrier");
   assertEquals(res.changed, false);
 });
+
+Deno.test("fuel_type does NOT infer vehicle_model when vehicle_model is missing (regression)", () => {
+  const prev = { fuel_type: "cng" };
+  const res = extractSlotsFromUserText("cng", prev);
+  // fuel_type is preserved / confirmed
+  assertEquals(res.next.fuel_type, "cng");
+  // MUST NOT implicitly create a model
+  assertEquals(res.next.vehicle_model ?? null, null);
+});

@@ -335,6 +335,76 @@ export function extractSlotsFromUserText(
   return { next, changed };
 }
 
+export function isFuelFollowupMessage(msg: string): boolean {
+  const t = norm(msg);
+  if (!t) return false;
+
+  // a) must contain a fuel mention
+  const fuels = detectFuelMentions(t);
+  if (!fuels.length) return false;
+
+  // b) must NOT contain strong model candidate (conservative)
+  const model = detectModelCandidate(t);
+  if (model?.strength === "strong") return false;
+
+  // c) must NOT contain strong non-fuel intent tokens
+  // Keep conservative: if user is asking pricing/offers/booking/service, don't treat as fuel-only.
+  if (/₹|\b\d{3,}\b/.test(t)) return false;
+  if (/\b(price|pricing|on\s*road|on-?road|breakup|quote|ex\s*showroom|ex-?showroom|emi|loan)\b/i.test(t)) return false;
+  if (/\b(offer|discount|scheme|deal)\b/i.test(t)) return false;
+  if (/\b(book|booking|test\s*drive|td|schedule|appointment|visit|delivery)\b/i.test(t)) return false;
+  if (/\b(service|servicing|workshop|maintenance|repair|warranty|rsa)\b/i.test(t)) return false;
+
+  // d) allow simple qualifiers (transmission + short trim-like tokens)
+  // But reject if we see unknown/longer content.
+  const tokens = tokenize(t);
+  if (tokens.length > 6) return false;
+
+  const allowed = new Set([
+    // fuels
+    "petrol",
+    "petroleum",
+    "petral",
+    "diesel",
+    "cng",
+    "ev",
+    "electric",
+    "battery",
+    // transmission
+    "manual",
+    "automatic",
+    "amt",
+    "dca",
+    "at",
+    // common short connectors
+    "or",
+    "and",
+    "with",
+    "in",
+  ]);
+
+  const isAllowedQualifierToken = (tok: string): boolean => {
+    const x = norm(tok);
+    if (!x) return false;
+    if (allowed.has(x)) return true;
+
+    // short variant/trim-like tokens are allowed (conservative)
+    // Examples: adventure+, xz, xz+, xza, xza+, zx, xm, xt, xms, xzs
+    if (/^[a-z0-9]{1,6}\+?$/.test(x)) return true;
+    return false;
+  };
+
+  // If any token is not in the allowed set / qualifier pattern, do not treat as fuel follow-up.
+  if (tokens.some((tok) => !isAllowedQualifierToken(tok))) return false;
+
+  return true;
+}
+
+// Backward-compatible alias (older code/tests may still import this name)
+export function isFuelOnlyFollowupMessage(msg: string): boolean {
+  return isFuelFollowupMessage(msg);
+}
+
 // Export for tests.
 export const __test__ = {
   detectModelCandidate,

@@ -10,7 +10,7 @@ import {
   validateAndRepairResponse,
   extractNumberTokens,
 } from "./workflow/validator.ts";
-import { extractSlotsFromUserText } from "./workflow/slots.ts";
+import { extractSlotsFromUserText, isFuelFollowupMessage } from "./workflow/slots.ts";
 import { openai, gemini, supabase } from "./clients.ts";
 import { AI_NO_REPLY_TOKEN, KB_DISABLE_LEXICAL } from "./env.ts";
 import { createLogger } from "./logging.ts";
@@ -81,6 +81,7 @@ import {
   pickAssetsForSend,
   signMediaUrl,
 } from "./media_assets.ts";
+import { mapRequiredEntityToSlotKey, isNonEmptySlotValue } from "./workflow/required_entities_mapping.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -790,7 +791,8 @@ async function startWorkflow(
       workflowName.toLowerCase() === "fleet leads" ||
       templateName.toLowerCase().includes("fleet");
     if (isFleetWorkflow) {
-      slots.vehicle_model = "Tata Xpress-T";
+      // IMPORTANT: Do not prefill vehicle_model implicitly.
+      // Fleet workflows must not set vehicle_model based on workflow/template.
     }
 
     // Only write slots if we have at least one prefilled key
@@ -994,7 +996,7 @@ async function saveWorkflowProgress(
   };
 }
 
-async function logUnansweredQuestion(params: {
+async function _logUnansweredQuestion(params: {
   organization_id: string;
   conversation_id: string;
   channel: string;
@@ -1705,6 +1707,14 @@ ${personality.donts || "- None specified."}
     // Strong model detection (deterministic) from the current user message.
     const userMsgForModelDetect = String(user_message || "");
     const modelDetect = extractSlotsFromUserText(userMsgForModelDetect, {}, {});
+
+    // Fuel detection (deterministic) from the current user message.
+    const detectedFuelRaw =
+      typeof modelDetect?.next?.fuel_type === "string"
+        ? String(modelDetect.next.fuel_type)
+        : null;
+    const detectedFuel = detectedFuelRaw ? detectedFuelRaw.trim() : null;
+
     const detectedModelRaw =
       typeof modelDetect?.next?.vehicle_model === "string"
         ? String(modelDetect.next.vehicle_model)
@@ -1725,7 +1735,7 @@ ${personality.donts || "- None specified."}
     const detectedModelNorm = detectedModel ? detectedModel.toLowerCase().trim() : "";
 
     // Strong model detection (deterministic): if the current message contains an unambiguous model
-    // that differs from the locked model, we bypass ONLY the model lock.
+    // that differs from the locked model, we bypass ONLY the model aspect of continuity.
     const hasStrongDifferentModel =
       Boolean(lockedModelNorm) &&
       Boolean(detectedModelNorm) &&
@@ -1740,47 +1750,38 @@ ${personality.donts || "- None specified."}
       (extractSlotsFromUserText as unknown as { __test__?: { messageContainsModelToken?: (t: string, m: string) => boolean } })
         .__test__?.messageContainsModelToken?.(userMsgForModelDetect.toLowerCase(), detectedModelNorm) === true;
 
-    const bypassModelContinuityLock =
+    const bypassModelContinuityLockOriginal =
       hasStrongDifferentModel && !isAmbiguousContainsBothModels;
 
+    // Fuel-only follow-up filter:
+    // If model is already locked and user only chooses/corrects fuel,
+    // keep model locked and just update fuel_type.
+    const isFuelOnlyFollowup =
+      Boolean(currentModel) && isFuelFollowupMessage(user_message);
+
+    const bypassModelContinuityLock = isFuelOnlyFollowup
+      ? false
+      : bypassModelContinuityLockOriginal;
+
     const shouldContinue =
-      (lockedTopic || lockedModel || lockedVariant) &&
+      (lockedTopic || lockedModel || lockedVariant || isFuelOnlyFollowup) &&
       !explicitTopicChange &&
       // Classic short follow-ups ("ok", "and?", "what about?")
-      (isShortFollowupMessage(user_message) ||
+      (isFuelOnlyFollowup ||
+        isShortFollowupMessage(user_message) ||
         // Pricing/offer follow-ups often aren't "short" but still refer to the same vehicle
         looksLikePricingOrOfferContext(user_message) ||
         /\b(final|total|on\s*road|on-?road|discount|offer|scheme|breakup)\b/i.test(
           user_message
         ));
 
-    if (shouldContinue) {
-      // If user explicitly mentioned a different model strongly, bypass only the MODEL aspect of continuity.
-      // Keep other locked entities (variant/fuel/transmission/year/intent) as before.
-      if (bypassModelContinuityLock) {
-        logger.info("[ai-handler] follow-up continuity model lock bypassed", {
-          prev_model: lockedModelNorm || null,
-          next_model: detectedModelNorm || null,
-          reason: "strong_model_signal_in_current_message",
-        });
-
-        // Prefer a fresh extract when bypassing model continuity to avoid stale intent/fuel/etc.
-        // Then explicitly override vehicle_model to the detected strong model.
-        aiExtract = await extractUserIntentWithAI({
-          userMessage: user_message,
-          logger,
-        });
-        aiExtract.vehicle_model = detectedModel;
-
-        logger.info("[ai-extract] model_override_after_continuity_bypass", {
-          prev_model: lockedModelNorm || null,
-          overridden_model: detectedModelNorm || null,
-        });
-      } else {
+     if (shouldContinue) {
+      // P1: Fuel-only follow-up filter path (deterministic)
+      if (isFuelOnlyFollowup) {
         aiExtract = {
-          vehicle_model: asNullableString(lockedModel),
+          vehicle_model: currentModel,
           vehicle_variant: asNullableString(lockedVariant),
-          fuel_type: asNullableString(lockedFuel),
+          fuel_type: asNullableString(detectedFuel) ?? asNullableString(lockedFuel),
           transmission: asNullableTransmission(lockedTransmission),
           manufacturing_year: asNullableString(lockedYear),
           intent:
@@ -1790,44 +1791,82 @@ ${personality.donts || "- None specified."}
             ) as AiExtractedIntent["intent"],
         };
 
-        // Deterministic intent precedence inside continuity (P1):
-        // Ensure heuristic overrides run even when shouldContinue applied.
-        const heuristic = inferIntentHeuristic(user_message);
-
-        // Optional: allow offer -> pricing switch if the current message is explicitly asking for on-road breakup/quote.
-        const wantsPricingSwitchFromOffer =
-          aiExtract.intent === "offer" &&
-          (heuristic.intent === "pricing" ||
-            /\b(on\s*road|on-?road|breakup|price|pricing|quote|ex\s*showroom|ex-?showroom)\b/i.test(
-              user_message
-            ));
-        if (wantsPricingSwitchFromOffer) {
-          logger.info("[ai-extract] continuity_pricing_override", {
-            from: aiExtract.intent,
-            to: "pricing",
-            signals: heuristic.signals,
-          });
-          aiExtract.intent = "pricing";
-        }
-
-        // 🔥 Offer intent must ALWAYS override a previously locked pricing intent.
-        if (heuristic.intent === "offer" && aiExtract.intent !== "offer") {
-          logger.info("[ai-extract] continuity_offer_override", {
-            from: aiExtract.intent,
-            to: "offer",
-            signals: heuristic.signals,
-          });
-          aiExtract.intent = "offer";
-        }
-
-        logger.info("[ai-handler] follow-up continuity lock applied", {
-          locked_topic: lockedTopic,
-          locked_intent: aiExtract.intent,
-          locked_model: lockedModel,
-          explicit_topic_change: explicitTopicChange,
+        logger.info("[ai-handler] fuel-only follow-up applied", {
+          locked_model: currentModel,
+          prev_fuel: asNullableString(lockedFuel),
+          next_fuel: aiExtract.fuel_type,
         });
-      }
-    } else if (!isGreetingMessage(user_message)) {
+      } else
+       // If user explicitly mentioned a different model strongly, bypass only the MODEL aspect of continuity.
+       // Keep other locked entities (variant/fuel/transmission/year/intent) as before.
+       if (bypassModelContinuityLock) {
+         logger.info("[ai-handler] follow-up continuity model lock bypassed", {
+           prev_model: lockedModelNorm || null,
+           next_model: detectedModelNorm || null,
+           reason: "strong_model_signal_in_current_message",
+         });
+         aiExtract = await extractUserIntentWithAI({
+           userMessage: user_message,
+           logger,
+         });
+         aiExtract.vehicle_model = detectedModel;
+
+         logger.info("[ai-extract] model_override_after_continuity_bypass", {
+           prev_model: lockedModelNorm || null,
+           overridden_model: detectedModelNorm || null,
+         });
+       } else {
+         aiExtract = {
+           vehicle_model: asNullableString(lockedModel),
+           vehicle_variant: asNullableString(lockedVariant),
+           fuel_type: asNullableString(lockedFuel),
+           transmission: asNullableTransmission(lockedTransmission),
+           manufacturing_year: asNullableString(lockedYear),
+           intent:
+             String(
+               lockedIntent ??
+                 (lockedTopic === "offer_pricing" ? "pricing" : "other")
+             ) as AiExtractedIntent["intent"],
+         };
+
+         // Deterministic intent precedence inside continuity (P1):
+         // Ensure heuristic overrides run even when shouldContinue applied.
+         const heuristic = inferIntentHeuristic(user_message);
+
+         // Optional: allow offer -> pricing switch if the current message is explicitly asking for on-road breakup/quote.
+         const wantsPricingSwitchFromOffer =
+           aiExtract.intent === "offer" &&
+           (heuristic.intent === "pricing" ||
+             /\b(on\s*road|on-?road|breakup|price|pricing|quote|ex\s*showroom|ex-?showroom)\b/i.test(
+               user_message
+             ));
+         if (wantsPricingSwitchFromOffer) {
+           logger.info("[ai-extract] continuity_pricing_override", {
+             from: aiExtract.intent,
+             to: "pricing",
+             signals: heuristic.signals,
+           });
+           aiExtract.intent = "pricing";
+         }
+
+         // 🔥 Offer intent must ALWAYS override a previously locked pricing intent.
+         if (heuristic.intent === "offer" && aiExtract.intent !== "offer") {
+           logger.info("[ai-extract] continuity_offer_override", {
+             from: aiExtract.intent,
+             to: "offer",
+             signals: heuristic.signals,
+           });
+           aiExtract.intent = "offer";
+         }
+
+         logger.info("[ai-handler] follow-up continuity lock applied", {
+           locked_topic: lockedTopic,
+           locked_intent: aiExtract.intent,
+           locked_model: lockedModel,
+           explicit_topic_change: explicitTopicChange,
+         });
+       }
+     } else if (!isGreetingMessage(user_message)) {
       // Only extract intent if KB may be used
       aiExtract = await extractUserIntentWithAI({
         userMessage: user_message,
@@ -2610,125 +2649,72 @@ ${personality.donts || "- None specified."}
         // - Guarded: max 3 auto-advances per inbound message to prevent loops.
         // ------------------------------------------------------------------
         if (step) {
-          const isNonEmptySlotValue = (v: unknown): boolean => {
-            if (v === null || v === undefined) return false;
-            if (typeof v === "string") return v.trim().length > 0;
-            return true;
-          };
+           
+           for (let auto = 0; auto < 3; auto += 1) {
+             if (!step) break;
 
-          const mapEntityToSlotKey = (entity: string): string => {
-            const k = String(entity || "").trim().toLowerCase();
-            if (k === "fuel" || k === "fuel_type") return "fuel_type";
-            if (k === "model" || k === "vehicle_model") return "vehicle_model";
-            if (k === "variant" || k === "vehicle_variant") return "vehicle_variant";
-            if (k === "city") return "city";
-            if (k === "transmission") return "transmission";
-            return k;
-          };
+             const directive = buildDirective(step, nextEntitiesWithKb || {});
+             if (directive.action !== "ask") break;
 
-          for (let auto = 0; auto < 3; auto += 1) {
-            if (!step) break;
+             const required = Array.isArray(directive.required_entities)
+               ? directive.required_entities
+               : [];
 
-            const directive = buildDirective(step, nextEntitiesWithKb || {});
-            if (directive.action !== "ask") break;
+             // If the step doesn't declare required entities, do NOT auto-skip.
+             if (!required.length) break;
 
-            const required = Array.isArray(directive.required_entities)
-              ? directive.required_entities
-              : [];
+             const vars = isRecord(resolvedWorkflow.variables)
+               ? resolvedWorkflow.variables
+               : {};
+             const slotsUnknown = vars["slots"];
+             const slots = isRecord(slotsUnknown) ? slotsUnknown : {};
 
-            // If the step doesn't declare required entities, do NOT auto-skip.
-            if (!required.length) break;
+             const allPresent = required
+               .map(mapRequiredEntityToSlotKey)
+               .filter(Boolean)
+               .every((slotKey) => isNonEmptySlotValue(slots[slotKey]));
 
-            const vars = isRecord(resolvedWorkflow.variables)
-              ? resolvedWorkflow.variables
-              : {};
-            const slotsUnknown = vars["slots"];
-            const slots = isRecord(slotsUnknown) ? slotsUnknown : {};
+             if (!allPresent) break;
 
-            // P2 — deterministic model resolution from fuel slot
-            if (
-              required.includes("vehicle_model") &&
-              !slots["vehicle_model"] &&
-              typeof slots["fuel_type"] === "string"
-            ) {
-              const fuel = String(slots["fuel_type"]).toLowerCase().trim();
+             // Advance one step (consistent with existing step_order numbering)
+             const currentOrder = Number(step.step_order);
+             const nextStep = Number.isFinite(currentOrder) && currentOrder > 0
+               ? currentOrder + 1
+               : Number(nextStepNumber) + 1;
 
-              if (fuel === "cng") {
-                slots["vehicle_model"] = "Tata Xpress-T";
+             const updatedAdvance = await saveWorkflowProgress(
+               resolvedWorkflow.id,
+               organizationId,
+               nextStep,
+               resolvedWorkflow.variables ?? {},
+               false,
+               logger,
+               resolvedWorkflow.current_step_number ?? 1
+             );
 
-                const nextVars = {
-                  ...vars,
-                  slots,
-                };
+             if (updatedAdvance) resolvedWorkflow = updatedAdvance;
+             if (!resolvedWorkflow) break;
+             resolvedWorkflow.current_step_number = nextStep;
+             workflowStepAdvancedThisTurn = true;
 
-                resolvedWorkflow.variables = nextVars;
+             const res = findFirstIncompleteStep({
+               steps,
+               startStepNumber: nextStep,
+               lastUserMessage: user_message,
+             });
+             step = res.step;
+             nextStepNumber = res.nextStepNumber;
+             skipped = res.skipped;
 
-                const updated = await saveWorkflowProgress(
-                  resolvedWorkflow.id,
-                  organizationId,
-                  resolvedWorkflow.current_step_number ?? 1,
-                  nextVars,
-                  false,
-                  logger,
-                  resolvedWorkflow.current_step_number ?? 1
-                );
-
-                if (updated) resolvedWorkflow = updated;
-                if (!resolvedWorkflow) break;
-
-                logger.info("[workflow] auto-resolved model from fuel slot", {
-                  fuel,
-                  model: "Tata Xpress-T",
-                });
-              }
-            }
-
-            const allPresent = required
-              .map(mapEntityToSlotKey)
-              .filter(Boolean)
-              .every((slotKey) => isNonEmptySlotValue(slots[slotKey]));
-
-            if (!allPresent) break;
-
-            // Advance one step (consistent with existing step_order numbering)
-            const currentOrder = Number(step.step_order);
-            const nextStep = Number.isFinite(currentOrder) && currentOrder > 0
-              ? currentOrder + 1
-              : Number(nextStepNumber) + 1;
-
-            const updatedAdvance = await saveWorkflowProgress(
-              resolvedWorkflow.id,
-              organizationId,
-              nextStep,
-              resolvedWorkflow.variables ?? {},
-              false,
-              logger,
-              resolvedWorkflow.current_step_number ?? 1
-            );
-
-            if (updatedAdvance) resolvedWorkflow = updatedAdvance;
-            if (!resolvedWorkflow) break;
-            resolvedWorkflow.current_step_number = nextStep;
-            workflowStepAdvancedThisTurn = true;
-
-            const res = findFirstIncompleteStep({
-              steps,
-              startStepNumber: nextStep,
-              lastUserMessage: user_message,
-            });
-            step = res.step;
-            nextStepNumber = res.nextStepNumber;
-            skipped = res.skipped;
-
-            logger.info("[workflow] auto-skipped ask step (slots already filled)", {
-              workflow_id: resolvedWorkflow.workflow_id,
-              log_id: resolvedWorkflow.id,
-              from_step: currentOrder,
-              to_step: nextStep,
-              required_entities: required.map((r) => String(r)).slice(0, 12),
-            });
-          }
-        }
+             logger.info("[workflow] auto-skipped ask step (slots already filled)", {
+               workflow_id: resolvedWorkflow.workflow_id,
+               log_id: resolvedWorkflow.id,
+               from_step: currentOrder,
+               to_step: nextStep,
+               required_entities: required.map((r) => String(r)).slice(0, 12),
+             });
+           }
+         }
 
         if (step) {
           // Engine-enforced workflow directive (the engine decides, LLM only renders)
@@ -3927,7 +3913,7 @@ Respond now to the customer's latest message only.
     // BEST-EFFORT: Patch decision telemetry into trace without losing KB decision fields.
     // Must never throw or break main flow.
     try {
-      const decisionBase = (kbTracePatch as any)?.decision ?? {};
+      const decisionBase = asRecord((kbTracePatch as unknown as Record<string, unknown>)?.decision);
       await traceUpdate(trace_id, {
         decision: mergeDecision(decisionBase as Record<string, unknown>, {
           inbound_attachment_marker_seen: typeof user_message === "string" && user_message.includes("[INBOUND_ATTACHMENT]"),
