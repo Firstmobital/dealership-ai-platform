@@ -192,6 +192,59 @@ function computeUnreadCountForConversation(
   }).length;
 }
 
+// WhatsApp edge function expects phone formatted as digits (India normalization happens server-side)
+// but it can only normalize if it receives something close to E.164 / phone-like; handle common cases.
+function normalizeToWhatsAppTo(raw: unknown): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+
+  // remove spaces, dashes, parentheses
+  const cleaned = s.replace(/[\s\-()]/g, "");
+  // allow leading +, then digits
+  const plusOk = cleaned.startsWith("+")
+    ? `+${cleaned.slice(1).replace(/\D/g, "")}`
+    : cleaned.replace(/\D/g, "");
+
+  // If it still has '+', keep it (server normalizer handles +91...)
+  if (cleaned.startsWith("+")) return plusOk;
+  return plusOk || null;
+}
+
+function pickWhatsAppToFromConversation(conv: any): string | null {
+  if (!conv) return null;
+
+  // Order matters: prefer explicit E.164 fields when present.
+  const candidates: unknown[] = [
+    conv.customer_phone_e164,
+    conv.customer_phone,
+    conv.contact_phone_e164,
+    conv.contact_phone,
+    conv.customer_whatsapp_e164,
+    conv.customer_whatsapp,
+    conv.whatsapp_number,
+    conv.whatsapp_number_e164,
+
+    // normalized conversation shape in this repo includes `contact` (see normalizeConversation)
+    conv.contact?.phone_e164,
+    conv.contact?.phone,
+    conv.contact?.whatsapp_number,
+    conv.contact?.whatsapp_number_e164,
+
+    // some queries include contacts relationship
+    conv.contacts?.phone_e164,
+    conv.contacts?.phone,
+    conv.contacts?.whatsapp_number,
+    conv.contacts?.whatsapp_number_e164,
+  ];
+
+  for (const c of candidates) {
+    const to = normalizeToWhatsAppTo(c);
+    if (to) return to;
+  }
+
+  return null;
+}
+
 function normalizeConversation(row: any): Conversation {
   const contact = row?.contacts
     ? Array.isArray(row.contacts)
@@ -775,6 +828,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: async (conversationId, payload) => {
     const text = payload.text?.trim() ?? "";
 
+    // Optimistic UI: append a local pending message immediately.
+    // For WhatsApp media messages, we show the pending bubble while the edge function sends.
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const nowIso = new Date().toISOString();
+    const optimistic: any = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender: payload.sender ?? "agent",
+      message_type: payload.message_type ?? "text",
+      text,
+      channel: payload.channel ?? "web",
+      media_url: (payload as any).media_url ?? null,
+      mime_type: (payload as any).mime_type ?? null,
+      filename: (payload as any).filename ?? null,
+      created_at: nowIso,
+      order_at: nowIso,
+    };
+
     // ✅ WhatsApp agent send (Edge Function)
     if (payload.channel === "whatsapp") {
       const messageType = (payload.message_type ?? "text").toString();
@@ -783,52 +854,102 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messageType === "document" ||
         messageType === "video" ||
         messageType === "audio"
-          ? messageType
+          ? (messageType as any)
           : "text";
 
+      // Validate minimum payload
       if (type === "text" && !text) return { noReply: false };
-      if (type !== "text" && !payload.media_url) return { noReply: false };
+      const media_url = (payload as any).media_url ?? null;
+      if (type !== "text" && !media_url) return { noReply: false };
 
-      const { data, error } = await supabase.functions.invoke("whatsapp-send", {
-        body: {
-          conversation_id: conversationId,
-          type,
-          text: text || null,
-          media_url: payload.media_url ?? null,
-          mime_type: payload.mime_type ?? null,
-          filename: (payload as any).filename ?? null,
-          message_type: messageType,
+      // Add optimistic message now (so UI shows immediate pending state)
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [conversationId]: [...(state.messages[conversationId] ?? []), optimistic],
         },
+      }));
+
+      // Best-effort: read from local cache for logging only.
+      const conv = get().conversations.find((c) => c.id === conversationId) as any;
+      const to = pickWhatsAppToFromConversation(conv);
+
+      // organization_id is only used by the edge function for settings lookup/idempotency.
+      // In this repo, whatsapp-send derives organization_id from the conversation row, but it
+      // still expects it for settings resolution. If missing locally, fetch it once.
+      let organizationId: string | null = conv?.organization_id ?? null;
+      if (!organizationId) {
+        const { data: orgRow, error: orgErr } = await supabase
+          .from("conversations")
+          .select("organization_id")
+          .eq("id", conversationId)
+          .maybeSingle();
+
+        if (orgErr) {
+          console.error("[useChatStore] failed to resolve organization_id", orgErr);
+        }
+        organizationId = (orgRow as any)?.organization_id ?? null;
+      }
+
+      console.info("[whatsapp-send invoke]", {
+        conversationId,
+        organizationId: organizationId ?? undefined,
+        to: to ?? undefined,
+        type,
+        hasMediaUrl: !!media_url,
       });
 
-      if (error) {
-        console.error("[useChatStore] whatsapp-send invoke error", error);
-        toast.error("WhatsApp send failed");
-      } else if (data?.error) {
-        console.error("[useChatStore] whatsapp-send failed", data);
-        toast.error("WhatsApp send failed");
-      } else {
-        // Reconcile authoritative state (delivery events / message row) after send.
-        void get().fetchMessages(conversationId);
+      // Align with supabase/functions/whatsapp-send contract:
+      // - Always send conversation_id so the edge function resolves conversation + contact.
+      // - Do not send `message_type` (business type enum) from the frontend.
+      const body: any = {
+        conversation_id: conversationId,
+        type,
+        text: text || null,
+        sender: "agent",
+        media_url,
+        mime_type: (payload as any).mime_type ?? null,
+        filename: (payload as any).filename ?? null,
+      };
+
+      // Optional hint only; edge function can derive org from conversation row.
+      if (organizationId) body.organization_id = organizationId;
+      // Optional hint only; edge function uses DB contact phone in conversation_id path.
+      if (to) body.to = to;
+
+      const { data, error } = await supabase.functions.invoke("whatsapp-send", {
+        body,
+      });
+
+      if (error || (data as any)?.error) {
+        console.error("[useChatStore] whatsapp-send failed", error ?? data);
+        toast.error(
+          (data as any)?.error
+            ? String((data as any).error)
+            : "WhatsApp send failed",
+        );
+
+        // Roll back optimistic message on failure.
+        set((state) => ({
+          messages: {
+            ...state.messages,
+            [conversationId]: (state.messages[conversationId] ?? []).filter(
+              (m: any) => m.id !== tempId,
+            ),
+          },
+        }));
+
+        return { noReply: false };
       }
+
+      // Reconcile authoritative state (delivery events / message row) after send.
+      void get().fetchMessages(conversationId);
 
       return { noReply: false };
     }
 
+    // Non-WhatsApp: preserve existing direct insert behavior.
     if (!text) return { noReply: false };
-
-    // Optimistic UI: append a local pending message immediately.
-    const tempId = `temp-${crypto.randomUUID()}`;
-    const optimistic: any = {
-      id: tempId,
-      conversation_id: conversationId,
-      sender: payload.sender ?? "agent",
-      message_type: payload.message_type ?? "text",
-      text,
-      channel: payload.channel ?? "web",
-      created_at: new Date().toISOString(),
-      order_at: new Date().toISOString(),
-    };
 
     set((state) => ({
       messages: {
