@@ -288,7 +288,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Guard: if already loading, don't start another request.
     if (get().conversationsLoading) return;
 
-    const cursor = reset ? null : get().conversationsCursor;
+    const cursor = reset ? null : (get().conversationsCursor as any);
 
     // Key used to prevent duplicated fetches when scroll events fire rapidly.
     const inFlightKey = JSON.stringify({
@@ -318,8 +318,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ].join(",")
       )
       .eq("organization_id", organizationId)
-      // stable ordering: last_message_at desc, then id desc
-      .order("last_message_at", { ascending: false })
+      // stable ordering: last_message_at desc (NULLS LAST), then created_at desc, then id desc
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .limit(limit);
 
@@ -332,34 +333,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Search (name/phone) - uses contact relationship.
     // Search (name/phone) - must scope OR filters to foreign table "contacts"
-if (search) {
-  const digits = search.replace(/\D/g, "");
-  const nameTerm = `%${search}%`;
+    if (search) {
+      const digits = search.replace(/\D/g, "");
+      const nameTerm = `%${search}%`;
 
-  if (digits) {
-    query = query.or(
-      `name.ilike.${nameTerm},phone.ilike.%${digits}%`,
-      { foreignTable: "contacts" }
-    );
-  } else {
-    query = query.or(
-      `name.ilike.${nameTerm}`,
-      { foreignTable: "contacts" }
-    );
-  }
-}
+      if (digits) {
+        query = query.or(`name.ilike.${nameTerm},phone.ilike.%${digits}%`, {
+          foreignTable: "contacts",
+        });
+      } else {
+        query = query.or(`name.ilike.${nameTerm}`, { foreignTable: "contacts" });
+      }
+    }
 
     // Cursor pagination: fetch records strictly "after" cursor tuple.
-    // last_message_at can be null for new/empty conversations; treat as very old.
+    // Order: last_message_at desc (NULLS LAST), created_at desc, id desc.
     if (cursor) {
       const lastTs = cursor.lastMessageAt;
+      const lastCreatedAt = cursor.createdAt;
       const lastId = cursor.id;
 
-      // (last_message_at < lastTs) OR (last_message_at = lastTs AND id < lastId)
-      // Note: last_message_at is timestamptz. We quote values.
-      query = query.or(
-        `last_message_at.lt.${lastTs},and(last_message_at.eq.${lastTs},id.lt.${lastId})`
-      );
+      // A) Normal case: last_message_at exists
+      if (lastTs) {
+        // (last_message_at < lastTs) OR (last_message_at = lastTs AND id < lastId)
+        query = query.or(
+          `last_message_at.lt.${lastTs},and(last_message_at.eq.${lastTs},id.lt.${lastId})`
+        );
+      } else {
+        // B) NULL last_message_at group: paginate within NULLS using created_at + id.
+        // last_message_at IS NULL AND (created_at < lastCreatedAt OR (created_at = lastCreatedAt AND id < lastId))
+        // Note: this assumes cursor.createdAt is present when lastMessageAt is null.
+        query = query.or(
+          `and(last_message_at.is.null,created_at.lt.${lastCreatedAt}),and(last_message_at.is.null,created_at.eq.${lastCreatedAt},id.lt.${lastId})`
+        );
+      }
     }
 
     const { data, error } = await query;
@@ -372,15 +379,64 @@ if (search) {
 
     const rows = (data ?? []).map(normalizeConversation);
 
-    // Next cursor from last row
+    // Hide conversations that ONLY have failed outbound campaign messages.
+    // Keep conversations that have at least one message where coalesce(status,'sent') != 'failed'.
+    let filteredRows = rows;
+    try {
+      const convIds = rows.map((r: any) => r?.id).filter(Boolean) as string[];
+      if (convIds.length > 0) {
+        const { data: okMsgs, error: okErr } = await supabase
+          .from("messages")
+          .select("conversation_id")
+          .eq("organization_id", organizationId)
+          .in("conversation_id", convIds)
+          // Include NULL statuses (treat as not failed): status IS NULL OR status != 'failed'
+          .or("status.is.null,status.neq.failed");
+
+        if (okErr) {
+          // Fail open: don't hide anything if we can't evaluate message statuses.
+          console.error(
+            "[useChatStore] fetchConversationsPage non-failed message filter error",
+            okErr,
+          );
+        } else {
+          const okSet = new Set(
+            (okMsgs ?? [])
+              .map((m: any) => m?.conversation_id)
+              .filter(Boolean)
+              .map(String),
+          );
+
+          const before = rows.length;
+          filteredRows = rows.filter((c: any) => okSet.has(String(c.id)));
+
+          if (import.meta.env.DEV) {
+            console.debug(
+              `[useChatStore] conversations filtered (non-failed msgs): ${before} -> ${filteredRows.length}`,
+              { organizationId },
+            );
+          }
+        }
+      }
+    } catch (e) {
+      // Fail open
+      console.error(
+        "[useChatStore] fetchConversationsPage non-failed message filter exception",
+        e,
+      );
+    }
+
+    const rowsToUse = filteredRows;
+
+    // Next cursor from last *raw* row (pagination must be based on DB page, not filtered rows)
     const last = rows[rows.length - 1] as any;
     const nextCursor =
-      last?.last_message_at && last?.id
-        ? { lastMessageAt: last.last_message_at, id: last.id }
+      last?.id
+        ? { lastMessageAt: last?.last_message_at ?? null, createdAt: last?.created_at ?? null, id: last.id }
         : null;
 
     set((state) => {
-      const merged = reset ? rows : [...state.conversations, ...rows];
+      const merged = reset ? rowsToUse : [...state.conversations, ...rowsToUse];
 
       // Deduplicate by id (safety with realtime inserts / race)
       const seen = new Set<string>();
@@ -394,9 +450,7 @@ if (search) {
 
       const aiToggle = {
         ...state.aiToggle,
-        ...Object.fromEntries(
-          rows.map((c: any) => [c.id, c.ai_enabled !== false])
-        ),
+        ...Object.fromEntries(rowsToUse.map((c: any) => [c.id, c.ai_enabled !== false])),
       };
 
       // Recompute unread map deterministically using messages already in memory.
@@ -414,7 +468,8 @@ if (search) {
         conversations: deduped,
         aiToggle,
         unread: unreadNext,
-        conversationsCursor: nextCursor,
+        conversationsCursor: nextCursor as any,
+        // hasMore must be based on raw DB rows length, not filtered length
         conversationsHasMore: rows.length === limit,
         conversationsLoading: false,
         conversationsInFlightKey: null,
