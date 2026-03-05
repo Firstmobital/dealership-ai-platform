@@ -81,7 +81,7 @@ type ChatState = {
   conversationsPageSize: number;
   conversationsLoading: boolean;
   conversationsHasMore: boolean;
-  conversationsCursor: { lastMessageAt: string; id: string } | null;
+  conversationsCursor: { lastMessageAt: string | null; createdAt: string | null; id: string } | null;
   // Used to prevent duplicate fetches for same cursor/filter.
   conversationsInFlightKey: string | null;
 
@@ -379,8 +379,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const rows = (data ?? []).map(normalizeConversation);
 
-    // Hide conversations that ONLY have failed outbound campaign messages.
-    // Keep conversations that have at least one message where coalesce(status,'sent') != 'failed'.
+    // Inbox rule: show ONLY conversations that have either:
+    // A) at least one inbound customer message, OR
+    // B) at least one campaign message that is delivered/read.
     let filteredRows = rows;
     try {
       const convIds = rows.map((r: any) => r?.id).filter(Boolean) as string[];
@@ -390,13 +391,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           .select("conversation_id")
           .eq("organization_id", organizationId)
           .in("conversation_id", convIds)
-          // Include NULL statuses (treat as not failed): status IS NULL OR status != 'failed'
-          .or("status.is.null,status.neq.failed");
+          // PostgREST OR (two cases):
+          // 1) sender = 'customer'
+          // 2) campaign message (campaign_id or campaign_message_id) AND delivered/read signal
+          .or(
+            "sender.eq.customer,and(campaign_id.not.is.null,or(delivered_at.not.is.null,read_at.not.is.null,whatsapp_status.in.(delivered,read))),and(campaign_message_id.not.is.null,or(delivered_at.not.is.null,read_at.not.is.null,whatsapp_status.in.(delivered,read)))",
+          );
 
         if (okErr) {
           // Fail open: don't hide anything if we can't evaluate message statuses.
           console.error(
-            "[useChatStore] fetchConversationsPage non-failed message filter error",
+            "[useChatStore] fetchConversationsPage inbox visibility filter error",
             okErr,
           );
         } else {
@@ -412,7 +417,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
           if (import.meta.env.DEV) {
             console.debug(
-              `[useChatStore] conversations filtered (non-failed msgs): ${before} -> ${filteredRows.length}`,
+              `[useChatStore] conversations filtered (inbox visibility): ${before} -> ${filteredRows.length}`,
               { organizationId },
             );
           }
@@ -421,7 +426,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e) {
       // Fail open
       console.error(
-        "[useChatStore] fetchConversationsPage non-failed message filter exception",
+        "[useChatStore] fetchConversationsPage inbox visibility filter exception",
         e,
       );
     }
@@ -468,7 +473,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         conversations: deduped,
         aiToggle,
         unread: unreadNext,
-        conversationsCursor: nextCursor as any,
+        conversationsCursor: nextCursor,
         // hasMore must be based on raw DB rows length, not filtered length
         conversationsHasMore: rows.length === limit,
         conversationsLoading: false,
