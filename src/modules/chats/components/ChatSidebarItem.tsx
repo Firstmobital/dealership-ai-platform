@@ -19,6 +19,24 @@ export function ChatSidebarItem({
   onClick,
 }: Props) {
   /* -------------------------------------------------------
+   * UNREAD SIGNAL (best-effort)
+   * ------------------------------------------------------- */
+  const unreadFromConversationCount =
+    typeof (conversation as any)?.unread_count === "number"
+      ? Number((conversation as any).unread_count)
+      : null;
+
+  const isUnread =
+    unreadFromConversationCount !== null
+      ? unreadFromConversationCount > 0
+      : typeof (conversation as any)?.has_unread === "boolean"
+      ? Boolean((conversation as any).has_unread)
+      : (conversation as any)?.last_read_at && conversation.last_message_at
+      ? new Date(conversation.last_message_at).getTime() >
+        new Date((conversation as any).last_read_at).getTime()
+      : unreadCount > 0;
+
+  /* -------------------------------------------------------
    * CHANNEL BADGE — Subtle CRM pills
    * ------------------------------------------------------- */
   const channelBadge = (() => {
@@ -162,6 +180,12 @@ export function ChatSidebarItem({
       <div className="flex flex-col items-end gap-1">
         {channelBadge}
         {intentBadge}
+
+        {isUnread && (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+            Unread
+          </span>
+        )}
 
         {unreadCount > 0 && (
           <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-medium text-white">

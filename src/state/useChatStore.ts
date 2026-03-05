@@ -19,9 +19,18 @@ let rtMessages:
   | ReturnType<typeof supabase.channel>
   | null = null;
 
+let rtOrgMessages:
+  | ReturnType<typeof supabase.channel>
+  | null = null;
+
 function teardownRealtime() {
   try {
     if (rtMessages) supabase.removeChannel(rtMessages);
+  } catch {
+    // ignore
+  }
+  try {
+    if (rtOrgMessages) supabase.removeChannel(rtOrgMessages);
   } catch {
     // ignore
   }
@@ -32,6 +41,7 @@ function teardownRealtime() {
   }
 
   rtMessages = null;
+  rtOrgMessages = null;
   rtConversations = null;
   realtimeOrgId = null;
 }
@@ -134,6 +144,53 @@ type ChatState = {
 /* ========================================================================== */
 /*  HELPERS                                                                   */
 /* ========================================================================== */
+
+function isInboundMessage(msg: any): boolean {
+  const sender = String(msg?.sender ?? "").toLowerCase();
+  // Treat anything not clearly an agent/system as inbound/customer.
+  return sender === "customer" || sender === "lead" || sender === "user";
+}
+
+function isUnreadMessage(msg: any): boolean {
+  // Prefer explicit read signals when available.
+  if (typeof msg?.seen === "boolean") return msg.seen === false;
+  if (msg?.read_at === null) return true;
+  if (typeof msg?.read_at === "string" && msg.read_at.length === 0) return true;
+  const status = String(msg?.status ?? "").toLowerCase();
+  if (status === "unread" || status === "received") return true;
+  return false;
+}
+
+function computeUnreadCountForConversation(
+  conversation: any,
+  messages: Message[] | undefined,
+  activeConversationId: string | null,
+): number {
+  if (!conversation?.id) return 0;
+  if (activeConversationId === conversation.id) return 0;
+
+  const msgs = messages ?? [];
+
+  // A) Count inbound messages that are explicitly unread.
+  const explicitUnread = msgs.filter((m: any) => isInboundMessage(m) && isUnreadMessage(m));
+  if (explicitUnread.length > 0) return explicitUnread.length;
+
+  // B) Fallback: compare to last_read_at if present.
+  const lastReadAtRaw = (conversation as any)?.last_read_at;
+  const lastReadAt = lastReadAtRaw ? new Date(String(lastReadAtRaw)).getTime() : null;
+  if (!lastReadAt || Number.isNaN(lastReadAt)) {
+    return msgs.filter((m: any) => isInboundMessage(m)).length;
+  }
+
+  return msgs.filter((m: any) => {
+    if (!isInboundMessage(m)) return false;
+    const ts = m?.order_at ?? m?.created_at;
+    if (!ts) return false;
+    const t = new Date(String(ts)).getTime();
+    if (Number.isNaN(t)) return false;
+    return t > lastReadAt;
+  }).length;
+}
 
 function normalizeConversation(row: any): Conversation {
   const contact = row?.contacts
@@ -342,10 +399,21 @@ if (search) {
         ),
       };
 
+      // Recompute unread map deterministically using messages already in memory.
+      const unreadNext: Record<string, number> = { ...state.unread };
+      for (const conv of deduped as any[]) {
+        unreadNext[conv.id] = computeUnreadCountForConversation(
+          conv,
+          state.messages[conv.id],
+          state.activeConversationId,
+        );
+      }
+
       return {
         ...state,
         conversations: deduped,
         aiToggle,
+        unread: unreadNext,
         conversationsCursor: nextCursor,
         conversationsHasMore: rows.length === limit,
         conversationsLoading: false,
@@ -384,12 +452,26 @@ if (search) {
       return;
     }
 
-    set((state) => ({
-      messages: {
+    set((state) => {
+      const nextMessages = {
         ...state.messages,
         [conversationId]: (data ?? []) as Message[],
-      },
-    }));
+      };
+
+      const conv = state.conversations.find((c) => c.id === conversationId) as any;
+      if (!conv) return { messages: nextMessages };
+
+      const nextUnread = {
+        ...state.unread,
+        [conversationId]: computeUnreadCountForConversation(
+          conv,
+          nextMessages[conversationId],
+          state.activeConversationId,
+        ),
+      };
+
+      return { messages: nextMessages, unread: nextUnread };
+    });
   },
 
   /* -------------------------------------------------------------------------- */
@@ -400,16 +482,11 @@ if (search) {
     // If org changes, teardown everything and re-init.
     if (!organizationId) return;
     if (realtimeOrgId && realtimeOrgId !== organizationId) {
-      // Global cleanup prevents cross-org listeners.
-      try {
-        supabase.removeAllChannels();
-      } catch {
-        // ignore
-      }
       teardownRealtime();
     }
 
-    if (realtimeOrgId === organizationId && rtConversations) {
+    // If already initialized for this org and channels exist, do not resubscribe.
+    if (realtimeOrgId === organizationId && rtConversations && rtOrgMessages) {
       return;
     }
 
@@ -428,7 +505,6 @@ if (search) {
         },
         (payload) => {
           const next = payload.new as any;
-          const prev = payload.old as any;
 
           // Reorder + update the conversation in store.
           set((state) => {
@@ -448,15 +524,16 @@ if (search) {
               ...existing.slice(idx + 1),
             ];
 
-            // Unread bump: only when last_message_at changes and convo isn't active.
-            const lastChanged =
-              (prev?.last_message_at ?? null) !== (next?.last_message_at ?? null);
             const isActive = state.activeConversationId === next.id;
 
+            // If conversation isn't active, recompute unread based on messages we have;
+            // otherwise keep it cleared.
             const unreadNext = { ...state.unread };
-            if (lastChanged && !isActive) {
-              unreadNext[next.id] = (unreadNext[next.id] ?? 0) + 1;
-            }
+            unreadNext[next.id] = computeUnreadCountForConversation(
+              updated,
+              state.messages[next.id],
+              isActive ? next.id : state.activeConversationId,
+            );
 
             return {
               ...state,
@@ -466,6 +543,66 @@ if (search) {
           });
         },
       )
+      // Also listen for message inserts at the org level to update unread for non-active convos
+      // without relying on last_message_at heuristics.
+      ;
+
+    // Messages channel scoped to org via the conversation row filter isn't available here,
+    // so we do a best-effort INSERT listener and then validate org by looking up convo in state.
+    rtOrgMessages = supabase
+      .channel(`rt-messages-org:${organizationId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          const msg = payload.new as any;
+          const rawConvId = msg?.conversation_id;
+          if (!rawConvId) return;
+          const convId = String(rawConvId);
+
+          const state = get();
+
+          // Only count inbound messages toward unread.
+          if (!isInboundMessage(msg)) return;
+
+          // If active, keep unread cleared and do no further work.
+          if (state.activeConversationId === convId) {
+            set((s) => ({ unread: { ...s.unread, [convId]: 0 } }));
+            return;
+          }
+
+          // If convo not in current list, ignore.
+          const conv = state.conversations.find((c) => c.id === convId) as any;
+          if (!conv) return;
+          if (conv.organization_id !== organizationId) return;
+
+          // If message already exists, skip set() altogether.
+          const existing = state.messages[convId] ?? [];
+          if (existing.some((m) => (m as any)?.id === msg.id)) return;
+
+          // Merge message into cache (so computeUnread can work) and bump unread.
+          set((s) => {
+            const nextList = [...(s.messages[convId] ?? []), msg as Message];
+            return {
+              messages: {
+                ...s.messages,
+                [convId]: nextList,
+              },
+              unread: {
+                ...s.unread,
+                [convId]: computeUnreadCountForConversation(
+                  conv,
+                  nextList,
+                  s.activeConversationId,
+                ),
+              },
+            };
+          });
+        },
+       )
+       .subscribe();
+
+    rtConversations
       .on(
         "postgres_changes",
         {

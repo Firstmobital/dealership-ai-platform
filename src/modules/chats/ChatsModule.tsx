@@ -36,7 +36,7 @@ export function ChatsModule() {
   const { activeOrganization } = useOrganizationStore();
 
   /* ---------------- UI STATE ---------------- */
-  const [search, setSearch] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -71,7 +71,7 @@ export function ChatsModule() {
     if (activeOrganization?.id) {
       await fetchConversationsPage(activeOrganization.id, {
         reset: true,
-        search,
+        search: searchTerm,
         replyCount: replyCountFilter,
       });
     }
@@ -93,7 +93,7 @@ export function ChatsModule() {
     if (activeOrganization?.id) {
       await fetchConversationsPage(activeOrganization.id, {
         reset: true,
-        search,
+        search: searchTerm,
         replyCount: replyCountFilter,
       });
     }
@@ -128,7 +128,7 @@ export function ChatsModule() {
     // First page only (50)
     fetchConversationsPage(activeOrganization.id, {
       reset: true,
-      search,
+      search: searchTerm,
       replyCount: replyCountFilter,
       limit: 50,
     }).catch(console.error);
@@ -141,14 +141,14 @@ export function ChatsModule() {
     const t = window.setTimeout(() => {
       fetchConversationsPage(activeOrganization.id, {
         reset: true,
-        search,
+        search: searchTerm,
         replyCount: replyCountFilter,
         limit: 50,
       }).catch(console.error);
     }, 250);
 
     return () => window.clearTimeout(t);
-  }, [search, replyCountFilter, activeOrganization?.id, fetchConversationsPage]);
+  }, [searchTerm, replyCountFilter, activeOrganization?.id, fetchConversationsPage]);
 
   // Infinite scroll: fetch next page when near bottom
   useEffect(() => {
@@ -164,7 +164,7 @@ export function ChatsModule() {
       if (remaining < 220) {
         fetchConversationsPage(activeOrganization.id, {
           reset: false,
-          search,
+          search: searchTerm,
           replyCount: replyCountFilter,
           limit: 50,
         }).catch(console.error);
@@ -178,7 +178,7 @@ export function ChatsModule() {
     conversationsLoading,
     conversationsHasMore,
     fetchConversationsPage,
-    search,
+    searchTerm,
     replyCountFilter,
   ]);
 
@@ -416,17 +416,45 @@ export function ChatsModule() {
      FILTER + SEARCH (CLIENT POST-FILTERS ONLY)
   ------------------------------------------------------- */
   const filteredConversations: Conversation[] = useMemo(() => {
+    const normalize = (v: string) => v.toLowerCase().replace(/\s+/g, "").trim();
+    const q = normalize(searchTerm);
+
     return conversations.filter((c) => {
-      if (filter === "psf") return Boolean(c.meta?.psf_case_id);
-      if (filter === "unassigned") return !c.assigned_to;
-      if (filter === "assigned") return Boolean(c.assigned_to);
-      if (filter === "bot") return c.ai_enabled;
-      if (filter === "whatsapp") return c.channel === "whatsapp";
-      if (filter === "web") return c.channel === "web";
-      if (filter === "internal") return c.channel === "internal";
-      return true;
+      // (i) base filter pass
+      const baseFilterPass =
+        filter === "psf"
+          ? Boolean(c.meta?.psf_case_id)
+          : filter === "unassigned"
+          ? !c.assigned_to
+          : filter === "assigned"
+          ? Boolean(c.assigned_to)
+          : filter === "bot"
+          ? Boolean(c.ai_enabled)
+          : filter === "whatsapp"
+          ? c.channel === "whatsapp"
+          : filter === "web"
+          ? c.channel === "web"
+          : filter === "internal"
+          ? c.channel === "internal"
+          : true;
+
+      // (ii) search term pass (phone OR contact name)
+      const searchPass = q
+        ? (() => {
+            const phone = normalize(String(c.contact?.phone ?? ""));
+            const name = normalize(String(c.contact?.name ?? ""));
+            return phone.includes(q) || name.includes(q);
+          })()
+        : true;
+
+      // (iii) replies threshold pass
+      const replies = ((c as any)?.customer_reply_count ?? 0) as number;
+      const repliesPass =
+        replyCountFilter === null ? true : Number(replies) >= replyCountFilter;
+
+      return baseFilterPass && searchPass && repliesPass;
     });
-  }, [conversations, filter]);
+  }, [conversations, filter, searchTerm, replyCountFilter]);
 
   const currentMessages =
     activeConversationId && messages[activeConversationId]
@@ -448,8 +476,8 @@ export function ChatsModule() {
       {/* LEFT PANEL */}
       <div className="w-80 border-r border-slate-200 p-3 flex flex-col h-full overflow-hidden">
         <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
           placeholder="Search by phone or name…"
           className="mb-3 w-full rounded-md border border-slate-200 px-3 py-2 text-sm
                      focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -466,12 +494,10 @@ export function ChatsModule() {
             className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
           >
             <option value="">All</option>
-            <option value="0">0</option>
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-            <option value="5">5</option>
+            <option value="1">1+</option>
+            <option value="2">2+</option>
+            <option value="3">3+</option>
+            <option value="5">5+</option>
           </select>
         </div>
 
