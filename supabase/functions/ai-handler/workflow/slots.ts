@@ -117,10 +117,10 @@ function detectModelCandidate(userTextNorm: string): DetectedModelCandidate | nu
     // High confidence: explicit Xpres-T tokenization including common misspellings.
     // Accept: "xpress t", "xpress-t", "xpres t", "xpres-t".
     {
-      model: "xpress-t",
+      model: "xpres-t",
       re: /(^|\b)(xpress|xpres)\s*[-]?\s*t(\b|$)/i,
       strength: "strong",
-      reason: "regex:xpress-t",
+      reason: "regex:xpres-t",
     },
 
     // Strong: exact model names.
@@ -151,7 +151,7 @@ function messageContainsModelToken(textNorm: string, modelNorm: string): boolean
   // Conservative ambiguity guard: check if message includes an explicit mention of the model.
   // Model tokens are hard-coded here to stay deterministic.
   const checks: Array<{ model: string; re: RegExp }> = [
-    { model: "xpress-t", re: /(^|\b)(xpress|xpres)\s*[-]?\s*t(\b|$)/i },
+    { model: "xpres-t", re: /(^|\b)(xpress|xpres)\s*[-]?\s*t(\b|$)/i },
     { model: "xpress", re: /(^|\b)xpress(\b|$)/i },
     { model: "harrier", re: /(^|\b)harrier(\b|$)/i },
     { model: "nexon", re: /(^|\b)nexon(\b|$)/i },

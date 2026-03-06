@@ -5,7 +5,7 @@ import { extractSlotsFromUserText } from "../workflow/slots.ts";
 Deno.test("vehicle_model overwrites on strong new model detection (prev=harrier, msg=xpress t)", () => {
   const prev = { vehicle_model: "Harrier" };
   const res = extractSlotsFromUserText("xpress t", prev);
-  assertEquals(res.next.vehicle_model, "xpress-t");
+  assertEquals(res.next.vehicle_model, "xpres-t");
   assertEquals(res.changed, true);
 });
 

@@ -5,7 +5,7 @@ import { extractSlotsFromUserText, __test__ } from "../workflow/slots.ts";
 Deno.test("slots: extractSlotsFromUserText does not throw when opts is omitted", () => {
   const res = extractSlotsFromUserText("xpress t", {}, /* opts omitted */);
   assertEquals(typeof res, "object");
-  assertEquals(res.next.vehicle_model, "xpress-t");
+  assertEquals(res.next.vehicle_model, "xpres-t");
 });
 
 Deno.test("slots: model normalization makes Xpres-T variants consistent", () => {
@@ -18,12 +18,12 @@ Deno.test("slots: model normalization makes Xpres-T variants consistent", () => 
   assertEquals(b, "xpress t");
   assertEquals(c, "xpres-t");
 
-  // But extraction candidate should converge to canonical "xpress-t" for all these inputs.
+  // But extraction candidate should converge to canonical "xpres-t" for all these inputs.
   const r1 = extractSlotsFromUserText("Xpres-T", {}, undefined);
   const r2 = extractSlotsFromUserText("xpress t", {}, undefined);
   const r3 = extractSlotsFromUserText("xpres-t", {}, undefined);
 
-  assertEquals(r1.next.vehicle_model, "xpress-t");
-  assertEquals(r2.next.vehicle_model, "xpress-t");
-  assertEquals(r3.next.vehicle_model, "xpress-t");
+  assertEquals(r1.next.vehicle_model, "xpres-t");
+  assertEquals(r2.next.vehicle_model, "xpres-t");
+  assertEquals(r3.next.vehicle_model, "xpres-t");
 });

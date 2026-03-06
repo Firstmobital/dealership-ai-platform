@@ -2,6 +2,10 @@
 import { assertEquals } from "./test_harness.ts";
 import * as Slots from "../workflow/slots.ts";
 import { areRequiredEntitiesPresent } from "../workflow/required_entities_mapping.ts";
+import {
+  detectVehicleModelFromMessage,
+  normalizeVehicleModelToken,
+} from "../model_normalize.ts";
 
 function mergeModelOnly(locked: { model?: unknown }, patch: { model?: unknown }): { model?: unknown } {
   // Minimal deterministic merge for tests: if patch.model is non-empty string, use it; else keep locked.model.
@@ -77,9 +81,9 @@ function simulateFuelOnlyContinuityExtract(params: {
   };
 }
 
-Deno.test("continuity: locked=Harrier, msg='xpress t' => bypass lock; model becomes xpress-t", () => {
+Deno.test("continuity: locked=Harrier, msg='xpress t' => bypass lock; model becomes xpres-t", () => {
   const next = simulateContinuityNextModel({ lockedModel: "Harrier", userMessage: "xpress t" });
-  assertEquals(next, "xpress-t");
+  assertEquals(next, "xpres-t");
 });
 
 Deno.test("continuity: locked=Harrier, msg='harrier xpress t' => ambiguous; keep Harrier", () => {
@@ -157,4 +161,41 @@ Deno.test("workflow auto-skip mapping: required_entities=['vehicle_model'] is NO
   const slots: Record<string, unknown> = { fuel_type: "cng" };
   const ok = areRequiredEntitiesPresent(required, slots);
   assertEquals(ok, false);
+});
+
+Deno.test("continuity: locked=Harrier, msg='info on xpres t' => model becomes xpres-t; next msg='pricing' stays xpres-t", () => {
+  const first = simulateContinuityNextModel({
+    lockedModel: "Harrier",
+    userMessage: "info on xpres t",
+  });
+  assertEquals(first, "xpres-t");
+
+  const second = simulateContinuityNextModel({
+    lockedModel: String(first),
+    userMessage: "pricing",
+  });
+  assertEquals(second, "xpres-t");
+});
+
+Deno.test("continuity+normalize: locked=Harrier, msg='send xpres t ev brochure' => canonical xpres-t-ev; next msg='interior photo' stays xpres-t-ev", () => {
+  // First turn: continuity harness uses slots.ts which now yields xpres-t (base)
+  const first = simulateContinuityNextModel({
+    lockedModel: "Harrier",
+    userMessage: "send xpres t ev brochure",
+  });
+  assertEquals(first, "xpres-t");
+
+  // Main handler additionally applies model_normalize, which promotes EV.
+  const detected = detectVehicleModelFromMessage("send xpres t ev brochure");
+  assertEquals(detected, "xpres-t-ev");
+
+  const persisted = normalizeVehicleModelToken(detected);
+  assertEquals(persisted, "xpres-t-ev");
+
+  // Next turn should keep the EV model when no new model is mentioned.
+  const second = simulateContinuityNextModel({
+    lockedModel: String(persisted),
+    userMessage: "interior photo",
+  });
+  assertEquals(second, "xpres-t-ev");
 });

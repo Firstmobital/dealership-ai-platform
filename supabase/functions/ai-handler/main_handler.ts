@@ -82,6 +82,10 @@ import {
   signMediaUrl,
 } from "./media_assets.ts";
 import { mapRequiredEntityToSlotKey, isNonEmptySlotValue } from "./workflow/required_entities_mapping.ts";
+import {
+  detectVehicleModelFromMessage,
+  normalizeVehicleModelToken,
+} from "./model_normalize.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -1069,6 +1073,93 @@ function renderSayFromSlots(template: string, slots: Record<string, unknown>): s
   });
 }
 
+// ------------------------------------------------------------------
+// RECENT CONVERSATION WINDOW (P0): compact prompt-safe history block
+// - Deterministic formatting
+// - Skips empty text
+// - Media-only rows become short markers
+// - Guarded max length
+// ------------------------------------------------------------------
+
+type RecentMessageRow = {
+  conversation_id: string;
+  organization_id?: string;
+  sender: string | null;
+  text: string | null;
+  message_type: string | null;
+  created_at: string | null;
+};
+
+function compactMessageText(raw: string, maxLen: number): string {
+  const t = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  if (t.length <= maxLen) return t;
+  return t.slice(0, Math.max(0, maxLen - 1)).trimEnd() + "…";
+}
+
+function messageLabel(senderRaw: unknown): "Customer" | "Assistant" {
+  const s = String(senderRaw ?? "").toLowerCase();
+  if (s === "customer" || s === "lead" || s === "user") return "Customer";
+  return "Assistant";
+}
+
+function messageMarkerForType(messageTypeRaw: unknown): string {
+  const mt = String(messageTypeRaw ?? "").toLowerCase().trim();
+  if (!mt) return "[message]";
+  if (mt === "image") return "[image]";
+  if (mt === "document") return "[document]";
+  if (mt === "audio") return "[audio]";
+  if (mt === "video") return "[video]";
+  if (mt === "sticker") return "[sticker]";
+  return `[${mt}]`;
+}
+
+export function buildRecentConversationBlock(params: {
+  messages: RecentMessageRow[];
+  organizationId: string;
+  conversationId: string;
+  maxMessages: number;
+  maxTextLen: number;
+}): string {
+  const maxMessages = Math.max(0, Math.min(8, Number(params.maxMessages || 8)));
+  const maxTextLen = Math.max(40, Math.min(500, Number(params.maxTextLen || 220)));
+
+  const msgs = Array.isArray(params.messages) ? params.messages : [];
+
+  const scoped = msgs
+    .filter((m) => String(m?.conversation_id ?? "") === String(params.conversationId))
+    .filter((m) => {
+      // If organization_id is present on the row, enforce it; otherwise leave it.
+      const org = (m as unknown as { organization_id?: unknown })?.organization_id;
+      return org === undefined || String(org) === String(params.organizationId);
+    })
+    .filter((m) => {
+      const text = String(m?.text ?? "").trim();
+      const mt = String(m?.message_type ?? "").trim().toLowerCase();
+      // keep if has text or is a known media type
+      return Boolean(text) || Boolean(mt);
+    })
+    .slice(-maxMessages);
+
+  const lines: string[] = [];
+
+  for (const m of scoped) {
+    const label = messageLabel(m?.sender);
+    const text = String(m?.text ?? "").trim();
+
+    if (text) {
+      lines.push(`${label}: ${compactMessageText(text, maxTextLen)}`);
+      continue;
+    }
+
+    // Media-only or empty-text rows
+    lines.push(`${label}: ${messageMarkerForType(m?.message_type)}`);
+  }
+
+  if (!lines.length) return "";
+  return `Recent conversation:\n${lines.join("\n")}`;
+}
+
 type AuditSupabaseLike = {
   from(table: string): {
     insert(values: unknown): unknown;
@@ -1706,6 +1797,11 @@ ${personality.donts || "- None specified."}
 
     // Strong model detection (deterministic) from the current user message.
     const userMsgForModelDetect = String(user_message || "");
+
+    // NEW: deterministic canonical model detection (handles common typos + EV).
+    const detectedModel = detectVehicleModelFromMessage(userMsgForModelDetect);
+
+    // Keep existing slot-based detection for fuel (and legacy behaviors).
     const modelDetect = extractSlotsFromUserText(userMsgForModelDetect, {}, {});
 
     // Fuel detection (deterministic) from the current user message.
@@ -1715,11 +1811,9 @@ ${personality.donts || "- None specified."}
         : null;
     const detectedFuel = detectedFuelRaw ? detectedFuelRaw.trim() : null;
 
-    const detectedModelRaw =
-      typeof modelDetect?.next?.vehicle_model === "string"
-        ? String(modelDetect.next.vehicle_model)
-        : null;
-    const detectedModel = detectedModelRaw ? detectedModelRaw.trim() : null;
+    const lockedModelNorm =
+      typeof lockedModel === "string" ? lockedModel.toLowerCase().trim() : "";
+    const detectedModelNorm = detectedModel ? detectedModel.toLowerCase().trim() : "";
 
     // Deterministic locking precedence (P1):
     // - explicit topic change => do not continue intent/topic
@@ -1729,10 +1823,6 @@ ${personality.donts || "- None specified."}
       currentModel,
       nextModelCandidate: detectedModel,
     });
-
-    const lockedModelNorm =
-      typeof lockedModel === "string" ? lockedModel.toLowerCase().trim() : "";
-    const detectedModelNorm = detectedModel ? detectedModel.toLowerCase().trim() : "";
 
     // Strong model detection (deterministic): if the current message contains an unambiguous model
     // that differs from the locked model, we bypass ONLY the model aspect of continuity.
@@ -1874,19 +1964,15 @@ ${personality.donts || "- None specified."}
       });
       logger.info("[ai-extract] result", aiExtract);
 
-      // Heuristic intent failsafe: if AI extraction is missing/other, infer from keywords.
-      // This prevents pricing/offer turns from being treated as "other" and getting blocked/hedged.
-      const heuristic = inferIntentHeuristic(user_message);
-      if (
-        (!aiExtract.intent || aiExtract.intent === "other") &&
-        heuristic.intent !== "other"
-      ) {
-        logger.info("[ai-extract] heuristic_override", {
-          from: aiExtract.intent || "other",
-          to: heuristic.intent,
-          signals: heuristic.signals,
+      // NEW: if user explicitly mentioned a model in THIS message, force canonical override
+      // even when shouldContinue=false (issue: lock could persist incorrectly).
+      if (detectedModel) {
+        const forced = normalizeVehicleModelToken(detectedModel) ?? detectedModel;
+        aiExtract.vehicle_model = forced;
+        logger.info("[ai-extract] model_forced_from_current_message", {
+          detected_model: detectedModel,
+          forced_model: forced,
         });
-        aiExtract.intent = heuristic.intent;
       }
     }
 
@@ -1897,6 +1983,7 @@ ${personality.donts || "- None specified."}
     // 🧠 Merge AI-extracted entities into locked entities (Issue 4)
     const nextEntities = mergeEntities(conv.ai_last_entities, {
       model: aiExtract.vehicle_model ?? undefined,
+      vehicle_model: aiExtract.vehicle_model ?? undefined,
       variant: aiExtract.vehicle_variant ?? undefined,
       fuel_type: aiExtract.fuel_type ?? undefined,
       transmission: aiExtract.transmission ?? undefined,
@@ -1911,6 +1998,13 @@ ${personality.donts || "- None specified."}
           ? "offer_pricing"
           : undefined,
     });
+
+    // Ensure the persisted model reflects current-message detection deterministically.
+    if (detectedModel) {
+      const forced = normalizeVehicleModelToken(detectedModel) ?? detectedModel;
+      (nextEntities as Record<string, unknown>).model = forced;
+      (nextEntities as Record<string, unknown>).vehicle_model = forced;
+    }
 
     // 7) WhatsApp typing_on before expensive work
     if (channel === "whatsapp" && contactPhone) {
@@ -1942,6 +2036,38 @@ ${personality.donts || "- None specified."}
         .limit(20)
     );
 
+    // NEW (P0): small recent-conversation window for the LLM (fail-soft)
+    // Reuse recentMessages result to avoid extra DB round-trip.
+    // - Take last 8 rows (already in chronological order)
+    // - Compact into prompt-safe block (text trimmed; media markers)
+    let recentConversationBlock = "";
+    try {
+      const windowRows = (recentMessages ?? []).slice(-8);
+
+      const adapted: RecentMessageRow[] = windowRows.map((m) => ({
+        conversation_id: conversation_id,
+        // organization_id is optional in the formatter; omit from recentMessages-derived rows.
+        sender: m.sender ?? null,
+        text: m.text ?? null,
+        message_type: m.message_type ?? null,
+        // created_at isn't available on recentMessages rows (we deliberately didn't select it).
+        // The window ordering is already chronological due to the load_recent_messages query.
+        created_at: null,
+      }));
+
+      recentConversationBlock = buildRecentConversationBlock({
+        messages: adapted,
+        organizationId,
+        conversationId: conversation_id,
+        maxMessages: 8,
+        maxTextLen: channel === "whatsapp" ? 180 : 260,
+      });
+    } catch (err) {
+      logger.warn("[history-window] exception; continuing without window", {
+        error: err,
+      });
+    }
+
     const historyMessages = buildChatMessagesFromHistory(
       (recentMessages ?? []).map((m) => ({
         sender: m.sender,
@@ -1966,7 +2092,7 @@ ${personality.donts || "- None specified."}
         : historyMessages;
 
     // ------------------------------------------------------------------
-    // PHASE 0.5 — HIGH-LEVEL INTENT + FUNNEL STAGE (DETERMINISTIC)
+    // P0.5 — HIGH-LEVEL INTENT + FUNNEL STAGE (DETERMINISTIC)
     // Purpose: persist "sales vs service" continuity across turns and
     // let workflows / UI route conversations more reliably.
     // ------------------------------------------------------------------
@@ -2980,11 +3106,17 @@ ${personality.donts || "- None specified."}
     const workflowSlots = asRecord(resolvedWorkflow?.variables)?.slots;
     const slots = asRecord(workflowSlots);
 
-    const mediaModel = asNullableString(slots.vehicle_model) ??
-      asNullableString(globalSlotsNext.vehicle_model) ??
-      asNullableString(asRecord(nextEntitiesWithKb).model) ??
-      asNullableString(aiExtract.vehicle_model) ??
-      asNullableString(lockedModel);
+    // Media model selection priority:
+    // detectedModel (current message) > aiExtract.vehicle_model > slots/globalSlots/locked memory
+    const mediaModel =
+      normalizeVehicleModelToken(detectedModel) ??
+      normalizeVehicleModelToken(asNullableString(aiExtract.vehicle_model)) ??
+      normalizeVehicleModelToken(asNullableString(slots.vehicle_model)) ??
+      normalizeVehicleModelToken(asNullableString(globalSlotsNext.vehicle_model)) ??
+      normalizeVehicleModelToken(asNullableString(asRecord(nextEntitiesWithKb).model)) ??
+      normalizeVehicleModelToken(asNullableString(conv.ai_last_entities?.model)) ??
+      normalizeVehicleModelToken(asNullableString(conv.ai_last_entities?.vehicle_model)) ??
+      null;
 
     const mediaVariant = asNullableString(slots.vehicle_variant) ??
       asNullableString(globalSlotsNext.vehicle_variant) ??
@@ -3130,9 +3262,16 @@ ${personality.donts || "- None specified."}
       }
     }
 
+    // Deterministic media-send outcome used to prevent false confirmations.
+    const mediaSent =
+      (mediaTelemetry.sent_images > 0) ||
+      (mediaTelemetry.sent_brochure === true);
+
     // 11) System prompt
     const systemPrompt = `
 You are an AI assistant representing this business.
+
+${recentConversationBlock ? recentConversationBlock + "\n\n" : ""}
 
 Your job:
 - Use Knowledge Base (KB) context when available.
@@ -3434,6 +3573,22 @@ Respond now to the customer's latest message only.
 
     let aiResponseText = forcedReplyText ?? aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
+
+    // Guardrail: If user requested media this turn but we did not actually send any,
+    // force a safe response that does NOT imply media was sent.
+    if (mediaTelemetry.requested && !mediaSent) {
+      const modelKnownNow = typeof mediaModel === "string" && mediaModel.trim().length > 0;
+
+      if (!modelKnownNow) {
+        aiResponseText = wantsMedia.wantBrochure
+          ? "Please tell me which Tata model brochure you want."
+          : "Please tell me which Tata model you want photos for.";
+      } else {
+        aiResponseText = wantsMedia.wantBrochure
+          ? "I don't have that brochure uploaded yet. I can still share specifications or details."
+          : "I don't have those images uploaded yet. I can still share specifications or details.";
+      }
+    }
 
     // Enforce SAY hard rule: final reply must not contain a question mark.
     if (workflowDirectiveAction === "say" || (workflowSaySchema?.max_questions === 0 && workflowSayMessage)) {

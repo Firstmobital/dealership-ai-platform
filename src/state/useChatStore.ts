@@ -432,47 +432,83 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const rows = (data ?? []).map(normalizeConversation);
 
-    // Inbox rule: show ONLY conversations that have either:
-    // A) at least one inbound customer message, OR
-    // B) at least one campaign message that is delivered/read.
+    // Inbox visibility rule (FINAL):
+    // Visible if any of:
+    // A) delivered/read campaign message exists
+    // B) inbound customer-side message exists
+    // C) bot/agent message exists
+    // Hidden only if ONLY failed campaign messages (or no qualifying messages)
+    // Fail-open: if helper query fails, do not filter.
     let filteredRows = rows;
     try {
       const convIds = rows.map((r: any) => r?.id).filter(Boolean) as string[];
-      if (convIds.length > 0) {
-        const { data: okMsgs, error: okErr } = await supabase
-          .from("messages")
-          .select("conversation_id")
-          .eq("organization_id", organizationId)
-          .in("conversation_id", convIds)
-          // PostgREST OR (two cases):
-          // 1) sender = 'customer'
-          // 2) campaign message (campaign_id or campaign_message_id) AND delivered/read signal
-          .or(
-            "sender.eq.customer,and(campaign_id.not.is.null,or(delivered_at.not.is.null,read_at.not.is.null,whatsapp_status.in.(delivered,read))),and(campaign_message_id.not.is.null,or(delivered_at.not.is.null,read_at.not.is.null,whatsapp_status.in.(delivered,read)))",
-          );
 
-        if (okErr) {
+      if (convIds.length > 0) {
+        const deliveredCampaignSet = new Set<string>();
+        const inboundSet = new Set<string>();
+        const botSet = new Set<string>();
+
+        // Query messages for these conversations (org-scoped) to compute visibility sets.
+        const { data: msgs, error: msgsErr } = await supabase
+          .from("messages")
+          .select(
+            "conversation_id,sender,campaign_id,campaign_message_id,delivered_at,read_at,whatsapp_status,status"
+          )
+          .eq("organization_id", organizationId)
+          .in("conversation_id", convIds);
+
+        if (msgsErr) {
           // Fail open: don't hide anything if we can't evaluate message statuses.
           console.error(
-            "[useChatStore] fetchConversationsPage inbox visibility filter error",
-            okErr,
+            "[useChatStore] fetchConversationsPage inbox visibility helper query error",
+            msgsErr,
           );
         } else {
-          const okSet = new Set(
-            (okMsgs ?? [])
-              .map((m: any) => m?.conversation_id)
-              .filter(Boolean)
-              .map(String),
-          );
+          for (const m of (msgs ?? []) as any[]) {
+            const cid = String(m?.conversation_id ?? "");
+            if (!cid) continue;
+
+            const sender = String(m?.sender ?? "").toLowerCase();
+            if (sender === "customer" || sender === "lead" || sender === "user") {
+              inboundSet.add(cid);
+            }
+            if (sender === "bot" || sender === "agent") {
+              botSet.add(cid);
+            }
+
+            const isCampaign = m?.campaign_id != null || m?.campaign_message_id != null;
+            if (isCampaign) {
+              const wa = String(m?.whatsapp_status ?? "").toLowerCase();
+              const st = String(m?.status ?? "").toLowerCase();
+              const deliveredOrRead =
+                m?.delivered_at != null ||
+                m?.read_at != null ||
+                wa === "delivered" ||
+                wa === "read" ||
+                st === "delivered" ||
+                st === "read";
+
+              if (deliveredOrRead) deliveredCampaignSet.add(cid);
+            }
+          }
+
+          const visibleSet = new Set<string>([
+            ...deliveredCampaignSet,
+            ...inboundSet,
+            ...botSet,
+          ]);
 
           const before = rows.length;
-          filteredRows = rows.filter((c: any) => okSet.has(String(c.id)));
+          filteredRows = rows.filter((c: any) => visibleSet.has(String(c.id)));
 
           if (import.meta.env.DEV) {
-            console.debug(
-              `[useChatStore] conversations filtered (inbox visibility): ${before} -> ${filteredRows.length}`,
-              { organizationId },
-            );
+            console.debug("Inbox filter stats", {
+              fetched: before,
+              visible: filteredRows.length,
+              deliveredCampaignCount: deliveredCampaignSet.size,
+              inboundCount: inboundSet.size,
+              botCount: botSet.size,
+            });
           }
         }
       }

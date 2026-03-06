@@ -2,6 +2,8 @@
 // Read-only helpers for org-scoped media asset retrieval + signed URL generation.
 // No env reads. No DB writes.
 
+import { normalizeVehicleModelToken, normalizeTextKey } from "./model_normalize.ts";
+
 export type MediaAsset = {
   id: string;
   organization_id: string;
@@ -126,17 +128,41 @@ function isNonEmpty(s: string | null | undefined): s is string {
   return typeof s === "string" && s.trim().length > 0;
 }
 
+function normalizeAssetModelForMatch(assetModelRaw: string | null): string | null {
+  if (!assetModelRaw) return null;
+
+  // Allow values like:
+  // - "Xpres-T"
+  // - "Xpres T"
+  // - "Xpres-T Brochure"
+  // - "Xpres T EV"
+  // Keep deterministic and narrow: strip a few known suffix keywords.
+  const t = normalizeTextKey(assetModelRaw)
+    .replace(/\b(brochure|brochures|pdf|catalog|catalogue)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalizeVehicleModelToken(t);
+}
+
 function scoreAsset(
   asset: MediaAsset,
   normalizedModel: string,
   normalizedVariant: string | null,
 ): number {
+  // Prefer canonical model match first; fall back to existing token heuristics.
+  const assetModelCanonical = normalizeAssetModelForMatch(asset.model);
   const assetModel = normalizeToken(asset.model ?? "");
   const assetVariant = normalizeToken(asset.variant ?? "");
 
   let score = 0;
-  if (assetModel === normalizedModel) score += 10;
-  else if (assetModel.includes(normalizedModel) || normalizedModel.includes(assetModel)) score += 6;
+
+  if (assetModelCanonical && assetModelCanonical === normalizedModel) {
+    score += 20;
+  } else {
+    if (assetModel === normalizedModel) score += 10;
+    else if (assetModel.includes(normalizedModel) || normalizedModel.includes(assetModel)) score += 6;
+  }
 
   if (normalizedVariant) {
     if (assetVariant === normalizedVariant) score += 5;
@@ -180,7 +206,9 @@ export async function fetchMediaAssets(params: {
   if (!params.wantImages && !params.wantBrochure) return { images: [], brochures: [] };
   if (!isNonEmpty(params.model)) return { images: [], brochures: [] };
 
-  const normalizedModel = normalizeToken(params.model);
+  // Request-side model is expected to be canonical already (main_handler normalizes),
+  // but re-normalize defensively.
+  const normalizedModel = normalizeVehicleModelToken(params.model) ?? normalizeToken(params.model);
   const normalizedVariant = isNonEmpty(params.variant) ? normalizeToken(params.variant) : null;
 
   let q = supabase
@@ -195,6 +223,8 @@ export async function fetchMediaAssets(params: {
   else if (!params.wantImages && params.wantBrochure) q = q.eq("asset_type", "brochure");
   else q = q.in("asset_type", ["image", "brochure"]);
 
+  // Keep the DB-side filter broad to avoid missing bad stored values; do final match in memory.
+  // Prefer a wide, deterministic prefix/term search rather than exact matching.
   const modelLike = normalizeForLike(params.model);
   q = q.ilike("model", `%${modelLike}%`);
 
@@ -214,8 +244,19 @@ export async function fetchMediaAssets(params: {
   const rowsUnknown = Array.isArray(data) ? data : [];
   const rows: MediaAsset[] = rowsUnknown.filter(isMediaAssetRow);
 
-  const ranked = rows
+  // Runtime-normalized model matching against canonical request model.
+  const matched = rows
     .filter((r) => r.organization_id === params.organizationId && r.is_active)
+    .filter((r) => {
+      const canon = normalizeAssetModelForMatch(r.model);
+      if (canon) return canon === normalizedModel;
+
+      // Fallback: if cannot canonicalize, keep legacy token match.
+      const legacy = normalizeToken(r.model ?? "");
+      return legacy === normalizedModel || legacy.includes(normalizedModel) || normalizedModel.includes(legacy);
+    });
+
+  const ranked = matched
     .map((r) => ({ r, score: scoreAsset(r, normalizedModel, normalizedVariant) }))
     .sort((a, b) => b.score - a.score);
 
@@ -271,3 +312,7 @@ export async function signMediaUrl(params: {
     return null;
   }
 }
+
+export const __test__ = {
+  normalizeAssetModelForMatch,
+};
