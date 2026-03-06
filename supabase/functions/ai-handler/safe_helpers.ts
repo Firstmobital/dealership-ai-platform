@@ -77,3 +77,65 @@ export async function safeWhatsAppSend(
 export function safeText(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
+
+// -----------------------------------------------------------------------------
+// Duplicate outbound text protection (fail-open)
+// -----------------------------------------------------------------------------
+
+type SupabaseLike = {
+  from(table: string): {
+    select(columns: string): unknown;
+  };
+};
+
+type SupabaseQueryLike = {
+  eq: (col: string, v: unknown) => SupabaseQueryLike;
+  order: (col: string, opts: { ascending: boolean }) => SupabaseQueryLike;
+  limit: (n: number) => SupabaseQueryLike;
+  maybeSingle: () => PromiseLike<{ data: unknown; error: unknown }>;
+};
+
+export async function shouldBlockDuplicateText(params: {
+  supabase: SupabaseLike;
+  organizationId: string;
+  conversationId: string;
+  text: string;
+}): Promise<boolean> {
+  const textNew = String(params.text || "").trim();
+  if (!textNew) return false;
+
+  try {
+    const q = params.supabase
+      .from("messages")
+      .select("text, order_at, created_at") as unknown as SupabaseQueryLike;
+
+    const { data, error } = await q
+      .eq("organization_id", params.organizationId)
+      .eq("conversation_id", params.conversationId)
+      .eq("sender", "bot")
+      .eq("message_type", "text")
+      .order("order_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return false; // fail-open
+
+    const row = data as { text?: unknown; order_at?: unknown; created_at?: unknown };
+
+    const lastText = String(row.text ?? "").trim();
+    if (!lastText) return false;
+
+    if (lastText !== textNew) return false;
+
+    const tsRaw = (row.order_at ?? row.created_at) as unknown;
+    const lastTs = Date.parse(String(tsRaw ?? ""));
+    if (Number.isNaN(lastTs)) return false;
+
+    const ageMs = Date.now() - lastTs;
+    if (ageMs < 0) return false;
+
+    return ageMs <= 90_000;
+  } catch {
+    return false; // fail-open
+  }
+}

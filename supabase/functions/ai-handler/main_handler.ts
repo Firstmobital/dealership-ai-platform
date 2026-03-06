@@ -87,6 +87,9 @@ import {
   normalizeVehicleModelToken,
 } from "./model_normalize.ts";
 
+// NEW: duplicate outbound protection
+import { shouldBlockDuplicateText } from "./safe_helpers.ts";
+
 type JsonObject = Record<string, unknown>;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -121,7 +124,7 @@ function asNullableTransmission(v: unknown): TransmissionValue {
    WORKFLOW ENFORCEMENT HELPERS (QUALIFICATION FLOWS)
 ============================================================================ */
 
-function isQualificationWorkflowInstruction(text: string): boolean {
+function _isQualificationWorkflowInstruction(text: string): boolean {
   const t = (text || "").toLowerCase();
   return (
     t.includes("ask the user") ||
@@ -1114,6 +1117,67 @@ function messageMarkerForType(messageTypeRaw: unknown): string {
   return `[${mt}]`;
 }
 
+function detectWorkflowMediaIntent(text: string): {
+  wantImages: boolean;
+  wantBrochure: boolean;
+} {
+  const t = String(text || "").toLowerCase();
+  const wantBrochure = /(brochure|pdf|catalog|specs)/i.test(t);
+  const wantImages = /(image|images|photo|photos|picture|pictures|pics)/i.test(t);
+  return { wantImages, wantBrochure };
+}
+
+async function shouldBlockDuplicateMediaAsset(params: {
+  supabase: typeof supabase;
+  organizationId: string;
+  conversationId: string;
+  assetId?: string | null;
+  storagePath?: string | null;
+  seconds: number;
+  logger: ReturnType<typeof createLogger>;
+}): Promise<boolean> {
+  const seconds = Number.isFinite(params.seconds) ? Math.max(1, params.seconds) : 120;
+  const assetId = (params.assetId ?? null) ? String(params.assetId) : null;
+  const storagePath = (params.storagePath ?? null) ? String(params.storagePath) : null;
+  if (!assetId && !storagePath) return false;
+
+  try {
+    // Query recent outbound bot media messages (images/docs) and compare asset_id or storage_path.
+    const afterIso = new Date(Date.now() - seconds * 1000).toISOString();
+    const { data, error } = await params.supabase
+      .from("messages")
+      .select("metadata, created_at, order_at, message_type")
+      .eq("organization_id", params.organizationId)
+      .eq("conversation_id", params.conversationId)
+      .eq("sender", "bot")
+      .in("message_type", ["image", "document"])
+      .gte("created_at", afterIso)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error || !data) return false; // fail-open
+
+    for (const r of data as Array<{ metadata?: unknown }>) {
+      const meta = asRecord(r?.metadata);
+      const kind = String(meta.kind ?? "").toLowerCase();
+      if (kind !== "media_asset") continue;
+
+      const prevAssetId = meta.asset_id ? String(meta.asset_id) : null;
+      const prevStoragePath = meta.storage_path ? String(meta.storage_path) : null;
+
+      if (assetId && prevAssetId && prevAssetId === assetId) return true;
+      if (storagePath && prevStoragePath && prevStoragePath === storagePath) return true;
+    }
+
+    return false;
+  } catch (err) {
+    params.logger.warn("[media] duplicate guard query failed (fail-open)", {
+      error: err,
+    });
+    return false;
+  }
+}
+
 export function buildRecentConversationBlock(params: {
   messages: RecentMessageRow[];
   organizationId: string;
@@ -1616,6 +1680,30 @@ ${personality.donts || "- None specified."}
         personality.fallback_message ??
         "Hello 👋 How can I help you today?";
 
+      // DUPLICATE OUTBOUND GUARD (greeting)
+      const blockGreeting = await shouldBlockDuplicateText({
+        supabase,
+        organizationId,
+        conversationId: conversation_id,
+        text: greetText,
+      });
+
+      if (blockGreeting) {
+        logger.info("[duplicate_text_blocked]", {
+          kind: "greeting",
+        });
+
+        return new Response(
+          JSON.stringify({
+            conversation_id,
+            no_reply: true,
+            request_id,
+            reason: "DUPLICATE_TEXT_BLOCKED",
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+
       // Save bot message
       await supabase.from("messages").insert({
         conversation_id,
@@ -1722,6 +1810,32 @@ ${personality.donts || "- None specified."}
         result.sentiment === "positive"
           ? "Thank you for your feedback! We’re glad you had a good experience 😊"
           : "Thank you for sharing your feedback. We appreciate you taking the time to respond.";
+
+      // DUPLICATE OUTBOUND GUARD (psf)
+      const blockPsf = await shouldBlockDuplicateText({
+        supabase,
+        organizationId,
+        conversationId: conversation_id,
+        text: replyText,
+      });
+
+      if (blockPsf) {
+        logger.info("[duplicate_text_blocked]", {
+          kind: "psf_reply",
+        });
+
+        return new Response(
+          JSON.stringify({
+            conversation_id,
+            psf_handled: true,
+            sentiment: result.sentiment,
+            request_id,
+            no_reply: true,
+            reason: "DUPLICATE_TEXT_BLOCKED",
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
 
       // Save bot reply
       await supabase.from("messages").insert({
@@ -2924,6 +3038,175 @@ ${personality.donts || "- None specified."}
               // Force the reply text so we do not call the model and we cannot ask follow-ups.
               forcedReplyText = workflowSayMessage;
 
+              // ------------------------------------------------------------
+              // WORKFLOW-DRIVEN MEDIA AUTO-SEND (WhatsApp only)
+              // Triggered by keywords in workflow step instruction_text and directive.message_seed.
+              // Runs AFTER directive resolved and replyText built, but BEFORE text send.
+              // ------------------------------------------------------------
+              try {
+                const instructionText = safeText(step?.action?.instruction_text ?? "");
+                const seedText = safeText(directive.message_seed ?? "");
+                const intent1 = detectWorkflowMediaIntent(instructionText);
+                const intent2 = detectWorkflowMediaIntent(seedText);
+                const wantImages = intent1.wantImages || intent2.wantImages;
+                const wantBrochure = intent1.wantBrochure || intent2.wantBrochure;
+
+                const modelFromSlots = asNullableString((slots as Record<string, unknown>)?.vehicle_model);
+                const modelFromLocked = asNullableString(asRecord(conv.ai_last_entities)?.model);
+                const modelFromMsg = detectVehicleModelFromMessage(user_message);
+                const mediaModel =
+                  normalizeVehicleModelToken(modelFromSlots) ??
+                  normalizeVehicleModelToken(modelFromLocked) ??
+                  normalizeVehicleModelToken(modelFromMsg) ??
+                  null;
+
+                if ((wantImages || wantBrochure) && channel === "whatsapp" && contactPhone && mediaModel) {
+                  const assets = await fetchMediaAssets({
+                    supabase,
+                    organizationId,
+                    model: mediaModel,
+                    variant: null, // workflow-driven auto-send is model-scoped
+                    wantImages,
+                    wantBrochure,
+                    logger,
+                  });
+
+                  const picked = pickAssetsForSend(assets);
+
+                  // Images (max 3)
+                  for (let i = 0; i < (picked.images?.length ?? 0); i += 1) {
+                    const img = picked.images[i];
+                    const block = await shouldBlockDuplicateMediaAsset({
+                      supabase,
+                      organizationId,
+                      conversationId: conversation_id,
+                      assetId: String(img.id),
+                      storagePath: img.storage_path ?? null,
+                      seconds: 120,
+                      logger,
+                    });
+                    if (block) {
+                      logger.info("[media] duplicate asset blocked", {
+                        asset_id: img.id,
+                        storage_path: img.storage_path,
+                        type: "image",
+                      });
+                      continue;
+                    }
+
+                    const signed = await signMediaUrl({
+                      supabase,
+                      bucket: img.storage_bucket,
+                      path: img.storage_path,
+                      ttlSeconds: 600,
+                      logger,
+                    });
+                    if (!signed) continue;
+
+                    await supabase.from("messages").insert({
+                      conversation_id,
+                      organization_id: organizationId,
+                      sender: "bot",
+                      message_type: "image",
+                      text: null,
+                      channel: "whatsapp",
+                      order_at: new Date().toISOString(),
+                      outbound_dedupe_key: `${request_id}:wf_media:image:${i}`,
+                      media_url: signed,
+                      mime_type: img.mime_type ?? "image/jpeg",
+                      metadata: {
+                        request_id,
+                        trace_id,
+                        kind: "media_asset",
+                        asset_id: img.id,
+                        storage_path: img.storage_path,
+                        workflow_id: resolvedWorkflow?.workflow_id ?? null,
+                      },
+                    });
+
+                    await safeWhatsAppSend(logger, {
+                      organization_id: organizationId,
+                      to: contactPhone,
+                      type: "image",
+                      media_url: signed,
+                      metadata: { asset_id: img.id },
+                    });
+                  }
+
+                  // Brochure (max 1)
+                  if (picked.brochure) {
+                    const b = picked.brochure;
+                    const block = await shouldBlockDuplicateMediaAsset({
+                      supabase,
+                      organizationId,
+                      conversationId: conversation_id,
+                      assetId: String(b.id),
+                      storagePath: b.storage_path ?? null,
+                      seconds: 120,
+                      logger,
+                    });
+                    if (!block) {
+                      const signed = await signMediaUrl({
+                        supabase,
+                        bucket: b.storage_bucket,
+                        path: b.storage_path,
+                        ttlSeconds: 600,
+                        logger,
+                      });
+
+                      if (signed) {
+                        const baseName = (b.filename ?? `${b.title}.pdf`)
+                          .replace(/[^a-zA-Z0-9._ -]/g, "")
+                          .trim();
+                        const safeName = baseName ? baseName : "brochure.pdf";
+
+                        await supabase.from("messages").insert({
+                          conversation_id,
+                          organization_id: organizationId,
+                          sender: "bot",
+                          message_type: "document",
+                          text: null,
+                          channel: "whatsapp",
+                          order_at: new Date().toISOString(),
+                          outbound_dedupe_key: `${request_id}:wf_media:brochure:0`,
+                          media_url: signed,
+                          mime_type: b.mime_type ?? "application/pdf",
+                          metadata: {
+                            request_id,
+                            trace_id,
+                            kind: "media_asset",
+                            asset_id: b.id,
+                            storage_path: b.storage_path,
+                            filename: safeName,
+                            workflow_id: resolvedWorkflow?.workflow_id ?? null,
+                          },
+                        });
+
+                        await safeWhatsAppSend(logger, {
+                          organization_id: organizationId,
+                          to: contactPhone,
+                          type: "document",
+                          media_url: signed,
+                          filename: safeName,
+                          metadata: { asset_id: b.id },
+                        });
+                      }
+                    } else {
+                      logger.info("[media] duplicate asset blocked", {
+                        asset_id: b.id,
+                        storage_path: b.storage_path,
+                        type: "document",
+                      });
+                    }
+                  }
+                }
+              } catch (err) {
+                // Never block the workflow text reply.
+                logger.warn("[workflow_media] auto-send failed; continuing", {
+                  error: err,
+                });
+              }
+
               // If SAY is the last step, persist completed=true.
               const currentOrder = Number(step.step_order);
               const isLast =
@@ -2996,6 +3279,10 @@ ${personality.donts || "- None specified."}
     const kbOptionTitles: string[] = Array.isArray(kbMatchMeta?.option_titles)
       ? asStringArray(kbMatchMeta.option_titles).filter(Boolean).slice(0, 6)
       : [];
+
+    // Workflow KB guard flag (referenced in systemPrompt)
+    // Keeping conservative default to avoid behavior changes.
+    const workflowRequiresKBButMissing = false;
 
     // Context packing (safe + deterministic)
     const highRiskIntentForContext =
@@ -4060,6 +4347,41 @@ Respond now to the customer's latest message only.
     }
 
     // 16) Save message + update conversation
+
+    // DUPLICATE OUTBOUND GUARD (workflow + normal AI reply)
+    const blockOutboundText = await shouldBlockDuplicateText({
+      supabase,
+      organizationId,
+      conversationId: conversation_id,
+      text: aiResponseText,
+    });
+
+    if (blockOutboundText) {
+      logger.info("[duplicate_text_blocked]", {
+        kind: workflowIsActive ? "workflow_reply" : "ai_reply",
+      });
+
+      // We intentionally skip:
+      // - message insert
+      // - WhatsApp send
+      // Conversation memory updates can still be persisted.
+      await supabase
+        .from("conversations")
+        .update(conversationUpdate)
+        .eq("id", conversation_id)
+        .eq("organization_id", organizationId);
+
+      return new Response(
+        JSON.stringify({
+          conversation_id,
+          no_reply: true,
+          request_id,
+          reason: "DUPLICATE_TEXT_BLOCKED",
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     await supabase.from("messages").insert({
       conversation_id,
       organization_id: organizationId,
