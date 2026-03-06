@@ -38,6 +38,8 @@ type SupabaseQueryAny = {
   eq: (column: string, value: unknown) => SupabaseQueryAny;
   ilike: (column: string, pattern: string) => SupabaseQueryAny;
   in: (column: string, values: string[]) => SupabaseQueryAny;
+  // PostgREST filter helper for OR conditions.
+  or?: (filters: string) => SupabaseQueryAny;
   limit: (count: number) => Promise<{ data: unknown[] | null; error: unknown | null }>;
 };
 
@@ -204,11 +206,21 @@ export async function fetchMediaAssets(params: {
   const supabase = params.supabase as unknown as SupabaseAny;
 
   if (!params.wantImages && !params.wantBrochure) return { images: [], brochures: [] };
-  if (!isNonEmpty(params.model)) return { images: [], brochures: [] };
+
+  const hasModel = isNonEmpty(params.model);
+
+  if (!hasModel) {
+    logger.info?.("[media_lookup_no_model]", {
+      wantBrochure: Boolean(params.wantBrochure),
+      wantImages: Boolean(params.wantImages),
+    });
+  }
 
   // Request-side model is expected to be canonical already (main_handler normalizes),
-  // but re-normalize defensively.
-  const normalizedModel = normalizeVehicleModelToken(params.model) ?? normalizeToken(params.model);
+  // but re-normalize defensively when present.
+  const normalizedModel = hasModel
+    ? (normalizeVehicleModelToken(params.model!) ?? normalizeToken(params.model!))
+    : null;
   const normalizedVariant = isNonEmpty(params.variant) ? normalizeToken(params.variant) : null;
 
   let q = supabase
@@ -223,10 +235,20 @@ export async function fetchMediaAssets(params: {
   else if (!params.wantImages && params.wantBrochure) q = q.eq("asset_type", "brochure");
   else q = q.in("asset_type", ["image", "brochure"]);
 
-  // Keep the DB-side filter broad to avoid missing bad stored values; do final match in memory.
-  // Prefer a wide, deterministic prefix/term search rather than exact matching.
-  const modelLike = normalizeForLike(params.model);
-  q = q.ilike("model", `%${modelLike}%`);
+  // When model is known: preserve existing behavior (broad ilike + in-memory canonical match).
+  // When model is missing: only fetch generic assets (model NULL or model == 'catalog').
+  if (hasModel) {
+    // Keep the DB-side filter broad to avoid missing bad stored values; do final match in memory.
+    // Prefer a wide, deterministic prefix/term search rather than exact matching.
+    const modelLike = normalizeForLike(params.model!);
+    q = q.ilike("model", `%${modelLike}%`);
+  } else {
+    // Generic / org-level brochures:
+    // - model IS NULL (no model specified)
+    // - model == 'catalog' (explicit generic catalog)
+    // Note: PostgREST OR syntax: col.is.null,col.eq.value
+    q = (q as SupabaseQueryAny).or?.("model.is.null,model.eq.catalog") ?? q;
+  }
 
   let data: unknown[] | null = null;
   try {
@@ -245,9 +267,12 @@ export async function fetchMediaAssets(params: {
   const rows: MediaAsset[] = rowsUnknown.filter(isMediaAssetRow);
 
   // Runtime-normalized model matching against canonical request model.
+  // If model is missing, treat all returned rows as matched (DB already restricted to generic assets).
   const matched = rows
     .filter((r) => r.organization_id === params.organizationId && r.is_active)
     .filter((r) => {
+      if (!normalizedModel) return true;
+
       const canon = normalizeAssetModelForMatch(r.model);
       if (canon) return canon === normalizedModel;
 
@@ -257,7 +282,7 @@ export async function fetchMediaAssets(params: {
     });
 
   const ranked = matched
-    .map((r) => ({ r, score: scoreAsset(r, normalizedModel, normalizedVariant) }))
+    .map((r) => ({ r, score: normalizedModel ? scoreAsset(r, normalizedModel, normalizedVariant) : 0 }))
     .sort((a, b) => b.score - a.score);
 
   const images: MediaAsset[] = [];

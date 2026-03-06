@@ -2597,6 +2597,19 @@ ${personality.donts || "- None specified."}
       }
     }
 
+    // P0: Workflow mode locking
+    // If a workflow session exists and is not completed, ALWAYS route this turn through
+    // the workflow engine (directive enforcement) and skip normal AI chat generation.
+    // This prevents conversations from silently falling back to general AI after step 1.
+    const workflowIsActive = Boolean(resolvedWorkflow && resolvedWorkflow.completed === false);
+
+    if (workflowIsActive) {
+      logger.info("[workflow_active]", {
+        workflow_id: resolvedWorkflow?.workflow_id,
+        step_number: resolvedWorkflow?.current_step_number ?? 1,
+      });
+    }
+
     // ------------------------------------------------------------------
     // GLOBAL SLOTS (P1.1) — deterministic slot extraction for ALL turns
     // - Does NOT require a workflow.
@@ -2948,52 +2961,14 @@ ${personality.donts || "- None specified."}
         }
       }
     }
-    // ------------------------------------------------------------------
-    // PHASE 3 — WORKFLOW ↔ KB RECONCILIATION (DETERMINISTIC PRECEDENCE)
-    // ------------------------------------------------------------------
-    // Rule: If KB/Campaign already provides a sufficient answer for the current intent,
-    // workflow guidance must NOT cause redundant questions or override facts.
 
-    const kbSufficientForIntent =
-      Boolean(contextText?.trim()) &&
-      (requiresAuthoritativeKB
-        ? kbHasPricingSignals || campaignHasPricingSignals
-        : true);
-
-    const workflowRequiresKB =
-      (workflowInstructionText || "")
-        .toLowerCase()
-        .includes("knowledge base") ||
-      (workflowInstructionText || "").toLowerCase().includes("kb");
-
-    let workflowRequiresKBButMissing = false;
-
-    // Do NOT suppress qualification-style workflows (they are meant to collect preferences)
-    // even if KB has relevant facts.
-    if (
-      kbSufficientForIntent &&
-      workflowInstructionText?.trim() &&
-      !isQualificationWorkflowInstruction(workflowInstructionText)
-    ) {
-      logger.info("[workflow] suppressed (KB sufficient)", {
-        intent: aiExtract.intent,
-        has_kb: kbFound,
-      });
-      workflowInstructionText = "";
-    }
-
-    if (!kbFound && workflowRequiresKB && workflowInstructionText?.trim()) {
-      // Workflow text is indicating KB usage, but KB retrieval returned nothing.
-      // Do not continue blindly; let the system prompt ask ONE clarifying question / escalate.
-      workflowRequiresKBButMissing = true;
-      logger.warn("[workflow] KB required by workflow but missing", {
-        intent: aiExtract.intent,
-      });
-    }
-
-    if (workflowInstructionText?.trim()) {
-      logger.info("[decision] workflow_guidance_active", {
-        has_workflow: true,
+    // If workflow is active and we did not produce a deterministic workflow reply,
+    // do NOT fall back to general AI chat. Ask the user to continue the workflow.
+    if (workflowIsActive && !forcedReplyText) {
+      forcedReplyText = "Okay — please share the requested detail to continue.";
+      logger.warn("[workflow] active but no directive reply produced; using safe hold", {
+        workflow_id: resolvedWorkflow?.workflow_id,
+        step_number: resolvedWorkflow?.current_step_number ?? 1,
       });
     }
 
