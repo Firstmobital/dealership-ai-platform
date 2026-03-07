@@ -7,7 +7,7 @@ import {
 import { buildDirective } from "./workflow/directive.ts";
 import { enforceDirective } from "./workflow/enforcer.ts";
 import {
-  validateAndRepairResponse,
+  validateAndRepairResponse as _validateAndRepairResponse,
   extractNumberTokens,
 } from "./workflow/validator.ts";
 import { extractSlotsFromUserText, isFuelFollowupMessage } from "./workflow/slots.ts";
@@ -23,7 +23,7 @@ import {
   truncateTextToTokenLimit,
   extractPricingFocusedContext,
   buildChatMessagesFromHistory,
-  validateGroundedness,
+  validateGroundedness as _validateGroundedness,
   type ChatMsg,
 } from "./history.ts";
 import {
@@ -43,7 +43,7 @@ import {
 } from "./kb_semantic.ts";
 import { resolveKnowledgeContextLexicalOnly } from "./kb_lexical.ts";
 import {
-  answerLooksLikePricingOrOffer,
+  answerLooksLikePricingOrOffer as _answerLooksLikePricingOrOffer,
   looksLikePricingOrOfferContext,
   redactUserProvidedPricing,
   fetchOfferCatalogText,
@@ -195,7 +195,7 @@ function _buildQualificationQuestion(
   return "Perfect — noted. I’m checking the best available stock options with applicable offers. Anything specific you want: budget or model?";
 }
 
-function enforceTechwheelsOnlyCTA(text: string): string {
+function _enforceTechwheelsOnlyCTA(text: string): string {
   let t = text || "";
   const replacements: Array<[RegExp, string]> = [
     [
@@ -2656,6 +2656,9 @@ ${personality.donts || "- None specified."}
 
     let resolvedWorkflow: WorkflowLogRow | null = null;
     let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
+    // Captured during directive resolution; used later for workflow-driven media auto-send.
+    let workflowMediaInstructionText = "";
+    let workflowMediaSeedText = "";
     let workflowAlreadyAdvanced = false;
     let workflowStepAdvancedThisTurn = false;
 
@@ -2974,6 +2977,13 @@ ${personality.donts || "- None specified."}
           try {
             const directive = buildDirective(step, nextEntitiesWithKb || {});
 
+            // Capture step text for workflow-driven media auto-send (runs later)
+            workflowMediaInstructionText = safeText(step?.action?.instruction_text ?? "");
+            workflowMediaSeedText =
+              directive.action === "say"
+                ? safeText((directive as { message_seed?: unknown }).message_seed ?? "")
+                : "";
+
             workflowDirectiveAction = directive.action;
 
             if (directive.action === "ask" || directive.action === "escalate") {
@@ -3037,175 +3047,6 @@ ${personality.donts || "- None specified."}
 
               // Force the reply text so we do not call the model and we cannot ask follow-ups.
               forcedReplyText = workflowSayMessage;
-
-              // ------------------------------------------------------------
-              // WORKFLOW-DRIVEN MEDIA AUTO-SEND (WhatsApp only)
-              // Triggered by keywords in workflow step instruction_text and directive.message_seed.
-              // Runs AFTER directive resolved and replyText built, but BEFORE text send.
-              // ------------------------------------------------------------
-              try {
-                const instructionText = safeText(step?.action?.instruction_text ?? "");
-                const seedText = safeText(directive.message_seed ?? "");
-                const intent1 = detectWorkflowMediaIntent(instructionText);
-                const intent2 = detectWorkflowMediaIntent(seedText);
-                const wantImages = intent1.wantImages || intent2.wantImages;
-                const wantBrochure = intent1.wantBrochure || intent2.wantBrochure;
-
-                const modelFromSlots = asNullableString((slots as Record<string, unknown>)?.vehicle_model);
-                const modelFromLocked = asNullableString(asRecord(conv.ai_last_entities)?.model);
-                const modelFromMsg = detectVehicleModelFromMessage(user_message);
-                const mediaModel =
-                  normalizeVehicleModelToken(modelFromSlots) ??
-                  normalizeVehicleModelToken(modelFromLocked) ??
-                  normalizeVehicleModelToken(modelFromMsg) ??
-                  null;
-
-                if ((wantImages || wantBrochure) && channel === "whatsapp" && contactPhone && mediaModel) {
-                  const assets = await fetchMediaAssets({
-                    supabase,
-                    organizationId,
-                    model: mediaModel,
-                    variant: null, // workflow-driven auto-send is model-scoped
-                    wantImages,
-                    wantBrochure,
-                    logger,
-                  });
-
-                  const picked = pickAssetsForSend(assets);
-
-                  // Images (max 3)
-                  for (let i = 0; i < (picked.images?.length ?? 0); i += 1) {
-                    const img = picked.images[i];
-                    const block = await shouldBlockDuplicateMediaAsset({
-                      supabase,
-                      organizationId,
-                      conversationId: conversation_id,
-                      assetId: String(img.id),
-                      storagePath: img.storage_path ?? null,
-                      seconds: 120,
-                      logger,
-                    });
-                    if (block) {
-                      logger.info("[media] duplicate asset blocked", {
-                        asset_id: img.id,
-                        storage_path: img.storage_path,
-                        type: "image",
-                      });
-                      continue;
-                    }
-
-                    const signed = await signMediaUrl({
-                      supabase,
-                      bucket: img.storage_bucket,
-                      path: img.storage_path,
-                      ttlSeconds: 600,
-                      logger,
-                    });
-                    if (!signed) continue;
-
-                    await supabase.from("messages").insert({
-                      conversation_id,
-                      organization_id: organizationId,
-                      sender: "bot",
-                      message_type: "image",
-                      text: null,
-                      channel: "whatsapp",
-                      order_at: new Date().toISOString(),
-                      outbound_dedupe_key: `${request_id}:wf_media:image:${i}`,
-                      media_url: signed,
-                      mime_type: img.mime_type ?? "image/jpeg",
-                      metadata: {
-                        request_id,
-                        trace_id,
-                        kind: "media_asset",
-                        asset_id: img.id,
-                        storage_path: img.storage_path,
-                        workflow_id: resolvedWorkflow?.workflow_id ?? null,
-                      },
-                    });
-
-                    await safeWhatsAppSend(logger, {
-                      organization_id: organizationId,
-                      to: contactPhone,
-                      type: "image",
-                      media_url: signed,
-                      metadata: { asset_id: img.id },
-                    });
-                  }
-
-                  // Brochure (max 1)
-                  if (picked.brochure) {
-                    const b = picked.brochure;
-                    const block = await shouldBlockDuplicateMediaAsset({
-                      supabase,
-                      organizationId,
-                      conversationId: conversation_id,
-                      assetId: String(b.id),
-                      storagePath: b.storage_path ?? null,
-                      seconds: 120,
-                      logger,
-                    });
-                    if (!block) {
-                      const signed = await signMediaUrl({
-                        supabase,
-                        bucket: b.storage_bucket,
-                        path: b.storage_path,
-                        ttlSeconds: 600,
-                        logger,
-                      });
-
-                      if (signed) {
-                        const baseName = (b.filename ?? `${b.title}.pdf`)
-                          .replace(/[^a-zA-Z0-9._ -]/g, "")
-                          .trim();
-                        const safeName = baseName ? baseName : "brochure.pdf";
-
-                        await supabase.from("messages").insert({
-                          conversation_id,
-                          organization_id: organizationId,
-                          sender: "bot",
-                          message_type: "document",
-                          text: null,
-                          channel: "whatsapp",
-                          order_at: new Date().toISOString(),
-                          outbound_dedupe_key: `${request_id}:wf_media:brochure:0`,
-                          media_url: signed,
-                          mime_type: b.mime_type ?? "application/pdf",
-                          metadata: {
-                            request_id,
-                            trace_id,
-                            kind: "media_asset",
-                            asset_id: b.id,
-                            storage_path: b.storage_path,
-                            filename: safeName,
-                            workflow_id: resolvedWorkflow?.workflow_id ?? null,
-                          },
-                        });
-
-                        await safeWhatsAppSend(logger, {
-                          organization_id: organizationId,
-                          to: contactPhone,
-                          type: "document",
-                          media_url: signed,
-                          filename: safeName,
-                          metadata: { asset_id: b.id },
-                        });
-                      }
-                    } else {
-                      logger.info("[media] duplicate asset blocked", {
-                        asset_id: b.id,
-                        storage_path: b.storage_path,
-                        type: "document",
-                      });
-                    }
-                  }
-                }
-              } catch (err) {
-                // Never block the workflow text reply.
-                logger.warn("[workflow_media] auto-send failed; continuing", {
-                  error: err,
-                });
-              }
 
               // If SAY is the last step, persist completed=true.
               const currentOrder = Number(step.step_order);
@@ -3525,7 +3366,7 @@ ${personality.donts || "- None specified."}
     }
 
     // Deterministic media-send outcome used to prevent false confirmations.
-    const mediaSent =
+    const _mediaSent =
       (mediaTelemetry.sent_images > 0) ||
       (mediaTelemetry.sent_brochure === true);
 
@@ -3833,191 +3674,164 @@ Respond now to the customer's latest message only.
           logger,
         });
 
+    // Final reply text selection (used for both workflow-forced and AI-generated replies)
     let aiResponseText = forcedReplyText ?? aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
 
-    // Guardrail: If user requested media this turn but we did not actually send any,
-    // force a safe response that does NOT imply media was sent.
-    if (mediaTelemetry.requested && !mediaSent) {
-      const modelKnownNow = typeof mediaModel === "string" && mediaModel.trim().length > 0;
+    // ------------------------------------------------------------
+    // WORKFLOW-DRIVEN MEDIA AUTO-SEND (WhatsApp only)
+    // Triggered by keywords in workflow step instruction_text and directive.message_seed.
+    // Runs AFTER directive resolved and replyText built, but BEFORE duplicate text guard / text send.
+    // ------------------------------------------------------------
+    try {
+      if (workflowIsActive && resolvedWorkflow && channel === "whatsapp" && contactPhone) {
+        const vars = isRecord(resolvedWorkflow.variables) ? resolvedWorkflow.variables : {};
+        const slotsUnknown = vars["slots"];
+        const slots = isRecord(slotsUnknown) ? slotsUnknown : {};
 
-      if (!modelKnownNow) {
-        aiResponseText = wantsMedia.wantBrochure
-          ? "Please tell me which Tata model brochure you want."
-          : "Please tell me which Tata model you want photos for.";
-      } else {
-        aiResponseText = wantsMedia.wantBrochure
-          ? "I don't have that brochure uploaded yet. I can still share specifications or details."
-          : "I don't have those images uploaded yet. I can still share specifications or details.";
-      }
-    }
+        const intent1 = detectWorkflowMediaIntent(workflowMediaInstructionText);
+        const intent2 = detectWorkflowMediaIntent(workflowMediaSeedText);
+        const wantImages = intent1.wantImages || intent2.wantImages;
+        const wantBrochure = intent1.wantBrochure || intent2.wantBrochure;
 
-    // Enforce SAY hard rule: final reply must not contain a question mark.
-    if (workflowDirectiveAction === "say" || (workflowSaySchema?.max_questions === 0 && workflowSayMessage)) {
-      aiResponseText = stripInterrogativesForSay(aiResponseText);
-    }
+        const modelFromSlots = asNullableString((slots as Record<string, unknown>)?.vehicle_model);
+        const modelFromLocked = asNullableString(asRecord(conv.ai_last_entities)?.model);
+        const modelFromMsg = detectVehicleModelFromMessage(user_message);
 
-    // Strict validators (NO prompt-trust)
-    const verifiedNumbersAvailable = Boolean(
-      kbHasPricingSignals || campaignHasPricingSignals
-    );
+        const mediaModel =
+          normalizeVehicleModelToken(modelFromSlots) ??
+          normalizeVehicleModelToken(modelFromLocked) ??
+          normalizeVehicleModelToken(modelFromMsg) ??
+          null;
 
-    const val = validateAndRepairResponse(aiResponseText, {
-      intent: aiExtract.intent,
-      verifiedNumbersAvailable,
-      allowedNumbers: allowedNumbersForOutput,
-      workflowSayMessage,
-      saySchema: workflowSaySchema,
-      known_variant: knownVariant,
-      known_transmission: knownTransmission,
-    });
+        if ((wantImages || wantBrochure) && mediaModel) {
+          const assets = await fetchMediaAssets({
+            supabase,
+            organizationId,
+            model: mediaModel,
+            variant: null,
+            wantImages,
+            wantBrochure,
+            logger,
+          });
 
-    if (!val.ok) {
-      logger.warn("[ai-validator] violations", {
-        violations: val.violations,
-        used_fallback: val.used_fallback,
-      });
-    }
-    aiResponseText = val.text;
+          const picked = pickAssetsForSend(assets);
 
-    // If user asked pricing and KB has pricing signals, but the model didn't output any numbers,
-    // show the KB options instead of only asking "confirm variant".
-    if (
-      aiExtract.intent === "pricing" &&
-      kbHasPricingSignals &&
-      !/\d/.test(aiResponseText) &&
-      /variant|confirm|which/i.test(aiResponseText)
-    ) {
-      const lines = (contextText || "")
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .filter((l) =>
-          /on[- ]?road|ex[- ]?showroom|insurance|rto|tcs|₹/i.test(l)
-        )
-        .slice(0, 12);
+          for (let i = 0; i < (picked.images?.length ?? 0); i += 1) {
+            const img = picked.images[i];
+            const block = await shouldBlockDuplicateMediaAsset({
+              supabase,
+              organizationId,
+              conversationId: conversation_id,
+              assetId: String(img.id),
+              storagePath: img.storage_path ?? null,
+              seconds: 120,
+              logger,
+            });
+            if (block) continue;
 
-      if (lines.length) {
-        aiResponseText =
-          `Here’s what I have in the knowledge base:\n` +
-          lines.map((l) => `• ${l}`).join("\n") +
-          `\n\nWhich exact variant (fuel + transmission) should I quote for you?`;
-      }
-    }
+            const signed = await signMediaUrl({
+              supabase,
+              bucket: img.storage_bucket,
+              path: img.storage_path,
+              ttlSeconds: 600,
+              logger,
+            });
+            if (!signed) continue;
 
-    const looksLikeClarification =
-      /\?\s*$/.test(aiResponseText.trim()) &&
-      !/\d/.test(aiResponseText) &&
-      !/₹/.test(aiResponseText);
+            await supabase.from("messages").insert({
+              conversation_id,
+              organization_id: organizationId,
+              sender: "bot",
+              message_type: "image",
+              text: null,
+              channel: "whatsapp",
+              order_at: new Date().toISOString(),
+              outbound_dedupe_key: `${request_id}:wf_media:image:${i}`,
+              media_url: signed,
+              mime_type: img.mime_type ?? "image/jpeg",
+              metadata: {
+                request_id,
+                trace_id,
+                kind: "media_asset",
+                asset_id: img.id,
+                storage_path: img.storage_path,
+                workflow_id: resolvedWorkflow?.workflow_id ?? null,
+              },
+            });
 
-    // ------------------------------------------------------------------
-    // REAL GROUNDEDNESS VALIDATOR (KB/Campaign supported claims only)
-    // ------------------------------------------------------------------
-    const shouldValidate =
-      Boolean(contextText?.trim() || campaignContextText?.trim()) &&
-      aiResponseText !== fallbackMessage &&
-      !looksLikeClarification;
-
-    if (shouldValidate) {
-      const highRiskIntent =
-        aiExtract.intent === "pricing" || aiExtract.intent === "offer";
-
-      // Only fail-close when pricing/offer is NOT supported by KB/Campaign signals
-      // (i.e. when the model might be guessing).
-      const failClosed =
-        highRiskIntent &&
-        pricingEstimateRequired &&
-        !kbHasPricingSignals &&
-        !campaignHasPricingSignals;
-
-      const v = await validateGroundedness({
-        answer: aiResponseText,
-        userMessage: user_message,
-        kbContext: contextText,
-        campaignContext: campaignContextText,
-        logger,
-        failClosed,
-      });
-
-      if (!v.grounded) {
-        // Prefer grounded rewrite; if missing, fall back to safe clarification
-        // For offer/discount queries, never allow ungrounded numbers to pass through.
-        if (aiExtract.intent === "offer") {
-          aiResponseText =
-            v.revised_answer?.trim() ||
-            "I can share the active stock offers — which model are you checking (Nexon / Altroz / Harrier / Safari / Curvv)?";
-
-          // Extra safety: if the validator rewrite still contains currency/numbers,
-          // strip them and ask a single clarifying question.
-          if (/₹|\b\d{3,}\b/.test(aiResponseText)) {
-            aiResponseText =
-              "I can share the active stock offers — which model are you checking (Nexon / Altroz / Harrier / Safari / Curvv)?";
+            await safeWhatsAppSend(logger, {
+              organization_id: organizationId,
+              to: contactPhone,
+              type: "image",
+              media_url: signed,
+              metadata: { asset_id: img.id },
+            });
           }
-        } else {
-          aiResponseText =
-            v.revised_answer ||
-            "I can help — which exact variant (fuel + transmission) is this for? I’ll share the exact pricing from the knowledge base.";
+
+          if (picked.brochure) {
+            const b = picked.brochure;
+            const block = await shouldBlockDuplicateMediaAsset({
+              supabase,
+              organizationId,
+              conversationId: conversation_id,
+              assetId: String(b.id),
+              storagePath: b.storage_path ?? null,
+              seconds: 120,
+              logger,
+            });
+            if (!block) {
+              const signed = await signMediaUrl({
+                supabase,
+                bucket: b.storage_bucket,
+                path: b.storage_path,
+                ttlSeconds: 600,
+                logger,
+              });
+
+              if (signed) {
+                const baseName = (b.filename ?? `${b.title}.pdf`)
+                  .replace(/[^a-zA-Z0-9._ -]/g, "")
+                  .trim();
+                const safeName = baseName ? baseName : "brochure.pdf";
+
+                await supabase.from("messages").insert({
+                  conversation_id,
+                  organization_id: organizationId,
+                  sender: "bot",
+                  message_type: "document",
+                  text: null,
+                  channel: "whatsapp",
+                  order_at: new Date().toISOString(),
+                  outbound_dedupe_key: `${request_id}:wf_media:brochure:0`,
+                  media_url: signed,
+                  mime_type: b.mime_type ?? "application/pdf",
+                  metadata: {
+                    request_id,
+                    trace_id,
+                    kind: "media_asset",
+                    asset_id: b.id,
+                    storage_path: b.storage_path,
+                    filename: safeName,
+                    workflow_id: resolvedWorkflow?.workflow_id ?? null,
+                  },
+                });
+
+                await safeWhatsAppSend(logger, {
+                  organization_id: organizationId,
+                  to: contactPhone,
+                  type: "document",
+                  media_url: signed,
+                  filename: safeName,
+                  metadata: { asset_id: b.id },
+                });
+              }
+            }
+          }
         }
       }
-    }
-
-    // ------------------------------------------------------------------
-    // GROUNDEDNESS VALIDATOR (HIGH-RISK: pricing/offer/spec/policy)
-    // If pricing signals are missing from KB/Campaign, block numeric answers.
-    // ------------------------------------------------------------------
-    const highRiskIntent =
-      aiExtract.intent === "pricing" || aiExtract.intent === "offer";
-
-    const pricingIsActuallyAvailable =
-      (kbFound && kbHasPricingSignals) || campaignHasPricingSignals;
-
-    // Block pricing-style answers ONLY when pricing is truly unsupported by KB or campaign
-    if (
-      highRiskIntent &&
-      !pricingIsActuallyAvailable &&
-      pricingEstimateRequired &&
-      !kbHasPricingSignals &&
-      !campaignHasPricingSignals
-    ) {
-      const hasAnyNumber = /\d/.test(aiResponseText);
-
-      if (answerLooksLikePricingOrOffer(aiResponseText) || hasAnyNumber) {
-        logger.warn("[validator] blocked unsupported pricing-style answer", {
-          intent: aiExtract.intent,
-          kb_found: kbFound,
-          kb_has_pricing_signals: kbHasPricingSignals,
-          campaign_has_pricing_signals: campaignHasPricingSignals,
-        });
-
-        aiResponseText =
-          "I can help — which exact variant (fuel + transmission) is this for? I’ll share the exact quote from the knowledge base.";
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // HARD DO-NOT-SAY ENFORCEMENT:
-    // Do not say "can't verify/can't confirm" unless user provided a numeric claim.
-    // ------------------------------------------------------------------
-    const userProvidedNumber = /\d|₹/.test(user_message || "");
-    const containsCantVerify =
-      /\b(can'?t|cannot)\s+(verify|confirm)\b/i.test(aiResponseText) ||
-      /verify\s+nahi/i.test(aiResponseText) ||
-      /मैं\s+verify/i.test(aiResponseText);
-
-    if (!userProvidedNumber && containsCantVerify) {
-      logger.warn(
-        "[validator] removed cant-verify phrasing (no user numeric claim)",
-        {
-          intent: aiExtract.intent,
-        }
-      );
-
-      // Replace with one short clarifying question (variant only).
-      aiResponseText =
-        "Sure — which exact variant (fuel + transmission) should I quote for?";
-
-      // Techwheels-only CTA enforcement
-      aiResponseText = enforceTechwheelsOnlyCTA(aiResponseText);
+    } catch (err) {
+      logger.warn("[workflow_media] auto-send failed; continuing", { error: err });
     }
 
     // 14) Wallet debit + AI usage log (only if AI was actually called)
