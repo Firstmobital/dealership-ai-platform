@@ -994,6 +994,17 @@ async function linkMessageToConversationAndPsf(params: {
             workflow_org: wf.organization_id,
           },
         );
+      } else if (wf.is_active !== true) {
+        // Phase 5 final rule: explicit campaign.workflow_id must be active.
+        console.error(
+          "[campaign-dispatch] campaign.workflow_id points to inactive workflow (skipping workflow attach)",
+          {
+            campaign_id: params.campaign.id,
+            campaign_org: params.campaign.organization_id,
+            workflow_id: wf.id,
+            is_active: wf.is_active,
+          },
+        );
       } else {
         attachedWorkflowId = wf.id;
       }
@@ -1063,15 +1074,21 @@ async function linkMessageToConversationAndPsf(params: {
     ...(seedTopic ? { topic: seedTopic, intent: "offer" } : {}),
   };
 
+  // Phase 5 finalization: NEVER null-overwrite an existing conversations.workflow_id.
+  // Only set workflow_id when we actually attached a valid workflow.
+  const conversationUpdate: Record<string, unknown> = {
+    campaign_id: params.msg.campaign_id,
+    campaign_context: campaignContext,
+    campaign_reply_sheet_tab: params.campaign.reply_sheet_tab ?? null,
+    ai_last_entities: nextEntities,
+  };
+  if (attachedWorkflowId) {
+    conversationUpdate.workflow_id = attachedWorkflowId;
+  }
+
   await supabaseAdmin
     .from("conversations")
-    .update({
-      campaign_id: params.msg.campaign_id,
-      workflow_id: attachedWorkflowId,
-      campaign_context: campaignContext,
-      campaign_reply_sheet_tab: params.campaign.reply_sheet_tab ?? null,
-      ai_last_entities: nextEntities,
-    })
+    .update(conversationUpdate)
     .eq("id", params.conversationId);
 
   // Ensure one active workflow log exists (repo uses unique index on (org, conversation, workflow) where completed=false)

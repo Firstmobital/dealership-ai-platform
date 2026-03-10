@@ -274,413 +274,414 @@ alter table "public"."campaign_messages" enable row level security;
     "campaign_kind" text,
     "parent_campaign_id" uuid,
     "reply_sheet_tab" text,
-    "meta" jsonb default '{}'::jsonb
-      );
-
-
-alter table "public"."campaigns" enable row level security;
-
-
-  create table "public"."contact_uploads" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "file_name" text,
-    "inserted_count" integer,
-    "updated_count" integer,
-    "skipped_count" integer,
-    "created_at" timestamp with time zone default now()
-      );
-
-
-alter table "public"."contact_uploads" enable row level security;
-
-
-  create table "public"."contacts" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "phone" text not null,
-    "name" text,
-    "labels" jsonb default '{}'::jsonb,
-    "created_at" timestamp with time zone default now(),
-    "first_name" text,
-    "last_name" text,
-    "model" text,
-    "metadata" jsonb not null default '{}'::jsonb
-      );
-
-
-alter table "public"."contacts" enable row level security;
-
-
-  create table "public"."conversation_state" (
-    "conversation_id" uuid not null,
-    "workflow_id" uuid not null,
-    "current_step" integer not null default 1,
-    "variables" jsonb not null default '{}'::jsonb,
-    "last_step_reason" text,
-    "updated_at" timestamp with time zone default now(),
-    "organization_id" uuid not null
-      );
-
-
-alter table "public"."conversation_state" enable row level security;
-
-
-  create table "public"."conversations" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "contact_id" uuid,
-    "assigned_to" uuid,
-    "ai_enabled" boolean default true,
-    "channel" text not null default 'web'::text,
-    "last_message_at" timestamp with time zone,
-    "created_at" timestamp with time zone default now(),
-    "whatsapp_user_phone" text,
-    "intent" text,
-    "intent_source" text default 'ai'::text,
-    "intent_update_count" integer not null default 0,
-    "ai_summary" text,
-    "ai_last_entities" jsonb,
-    "ai_context_updated_at" timestamp with time zone,
-    "ai_mode" text default 'auto'::text,
-    "ai_locked" boolean not null default false,
-    "ai_locked_by" uuid,
-    "ai_locked_at" timestamp with time zone,
-    "ai_lock_reason" text,
-    "ai_locked_until" timestamp with time zone,
-    "campaign_id" uuid,
+    "meta" jsonb default '{}'::jsonb,
     "workflow_id" uuid,
-    "campaign_context" jsonb default '{}'::jsonb,
-    "campaign_reply_sheet_tab" text
-      );
-
-
-alter table "public"."conversations" enable row level security;
-
-
-  create table "public"."knowledge_articles" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "title" text not null,
-    "description" text,
-    "content" text not null,
-    "created_at" timestamp with time zone default now(),
-    "updated_at" timestamp with time zone default now(),
-    "source_type" text not null default 'text'::text,
-    "source_filename" text,
-    "raw_content" text,
-    "last_processed_at" timestamp with time zone,
-    "processing_error" text,
-    "file_bucket" text,
-    "file_path" text,
-    "mime_type" text,
-    "original_filename" text,
-    "keywords" text[] not null default '{}'::text[],
-    "status" text default 'draft'::text,
-    "published_at" timestamp with time zone,
-    "updated_by" uuid,
-    "processing_status" text
-      );
-
-
-alter table "public"."knowledge_articles" enable row level security;
-
-
-  create table "public"."knowledge_chunks" (
-    "id" uuid not null default gen_random_uuid(),
-    "article_id" uuid not null,
-    "chunk" text not null,
-    "embedding" public.vector(1536) not null,
-    "chunk_index" integer not null default 0,
-    "organization_id" uuid not null,
-    "created_at" timestamp with time zone not null default now()
-      );
-
-
-alter table "public"."knowledge_chunks" enable row level security;
-
-
-  create table "public"."message_delivery_dlq" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "source" text not null,
-    "entity_type" text not null,
-    "entity_id" uuid not null,
-    "reason" text not null,
-    "payload" jsonb not null default '{}'::jsonb,
-    "created_at" timestamp with time zone not null default now()
-      );
-
-
-alter table "public"."message_delivery_dlq" enable row level security;
-
-
-  create table "public"."message_delivery_events" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "message_id" uuid,
-    "campaign_message_id" uuid,
-    "event_type" text not null,
-    "source" text not null,
-    "event_at" timestamp with time zone not null default now(),
-    "payload" jsonb not null default '{}'::jsonb
-      );
-
-
-alter table "public"."message_delivery_events" enable row level security;
-
-
-  create table "public"."messages" (
-    "id" uuid not null default gen_random_uuid(),
-    "conversation_id" uuid,
-    "sender" public.message_sender not null,
-    "message_type" text not null default 'text'::text,
-    "text" text,
-    "media_url" text,
-    "channel" text not null default 'web'::text,
-    "created_at" timestamp with time zone default now(),
-    "mime_type" text,
-    "whatsapp_message_id" text,
-    "wa_received_at" timestamp with time zone,
-    "campaign_id" uuid,
-    "campaign_message_id" uuid,
-    "outbound_dedupe_key" text,
-    "whatsapp_status" text,
-    "sent_at" timestamp with time zone,
-    "delivered_at" timestamp with time zone,
-    "read_at" timestamp with time zone,
-    "metadata" jsonb,
-    "organization_id" uuid not null,
-    "order_at" timestamp with time zone
-      );
-
-
-alter table "public"."messages" enable row level security;
-
-
-  create table "public"."organization_users" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "user_id" uuid not null,
-    "role" text default 'agent'::text,
-    "created_at" timestamp with time zone default now(),
-    "is_primary" boolean default true,
-    "last_active_at" timestamp with time zone
-      );
-
-
-alter table "public"."organization_users" enable row level security;
-
-
-  create table "public"."organizations" (
-    "id" uuid not null default gen_random_uuid(),
-    "name" text not null,
-    "logo_url" text,
-    "type" text,
-    "created_at" timestamp with time zone default now(),
-    "is_active" boolean not null default true,
-    "status" text not null default 'active'::text,
-    "google_sheet_id" text
-      );
-
-
-alter table "public"."organizations" enable row level security;
-
-
-  create table "public"."psf_cases" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "campaign_id" uuid not null,
-    "conversation_id" uuid,
-    "phone" text not null,
-    "uploaded_data" jsonb not null default '{}'::jsonb,
-    "initial_sent_at" timestamp with time zone,
-    "reminder_sent_at" timestamp with time zone,
-    "last_customer_reply_at" timestamp with time zone,
-    "sentiment" text,
-    "ai_summary" text,
-    "action_required" boolean not null default false,
-    "resolution_status" text not null default 'open'::text,
-    "created_at" timestamp with time zone not null default now(),
-    "updated_at" timestamp with time zone not null default now(),
-    "customer_name" text,
-    "resolved_at" timestamp with time zone,
-    "resolved_by" uuid,
-    "reminder_count" integer not null default 0,
-    "last_reminder_at" timestamp with time zone,
-    "first_customer_reply_at" timestamp with time zone,
-    "model" text
-      );
-
-
-alter table "public"."psf_cases" enable row level security;
-
-
-  create table "public"."razorpay_orders" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "wallet_id" uuid not null,
-    "amount_paise" integer not null,
-    "currency" text not null default 'INR'::text,
-    "receipt" text not null,
-    "status" text not null default 'created'::text,
-    "razorpay_order_id" text not null,
-    "notes" jsonb not null default '{}'::jsonb,
-    "created_by" uuid,
-    "created_at" timestamp with time zone not null default now(),
-    "updated_at" timestamp with time zone not null default now()
-      );
-
-
-alter table "public"."razorpay_orders" enable row level security;
-
-
-  create table "public"."razorpay_payments" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "wallet_id" uuid not null,
-    "razorpay_order_id" text not null,
-    "razorpay_payment_id" text not null,
-    "amount_paise" integer not null,
-    "currency" text not null default 'INR'::text,
-    "status" text not null,
-    "raw_event" jsonb not null default '{}'::jsonb,
-    "created_at" timestamp with time zone not null default now()
-      );
-
-
-alter table "public"."razorpay_payments" enable row level security;
-
-
-  create table "public"."replay_requests" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "entity_type" text not null,
-    "entity_id" uuid not null,
-    "requested_by" uuid default auth.uid(),
-    "requested_at" timestamp with time zone not null default now(),
-    "status" text not null default 'queued'::text,
-    "last_error" text,
-    "result" jsonb not null default '{}'::jsonb
-      );
-
-
-alter table "public"."replay_requests" enable row level security;
-
-
-  create table "public"."unanswered_questions" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid,
-    "question" text not null,
-    "occurrences" integer default 1,
-    "created_at" timestamp with time zone default now(),
-    "conversation_id" uuid,
-    "channel" text,
-    "status" text not null default 'open'::text,
-    "ai_response" text,
-    "last_seen_at" timestamp with time zone not null default now(),
-    "resolved_at" timestamp with time zone,
-    "resolution_article_id" uuid,
-    "resolved_by" uuid,
-    "updated_at" timestamp with time zone not null default now()
-      );
-
-
-alter table "public"."unanswered_questions" enable row level security;
-
-
-  create table "public"."wallet_alert_logs" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "wallet_id" uuid not null,
-    "alert_type" text not null,
-    "triggered_at" timestamp with time zone not null default now(),
-    "resolved_at" timestamp with time zone,
-    "created_at" timestamp with time zone not null default now()
-      );
-
-
-alter table "public"."wallet_alert_logs" enable row level security;
-
-
-  create table "public"."wallet_transactions" (
-    "id" uuid not null default gen_random_uuid(),
-    "wallet_id" uuid not null,
-    "type" text not null,
-    "direction" text not null,
-    "amount" numeric(12,4) not null,
-    "reference_type" text,
-    "reference_id" uuid,
-    "metadata" jsonb not null default '{}'::jsonb,
-    "created_at" timestamp with time zone not null default now(),
-    "purpose" text not null default 'ai_chat'::text,
-    "created_by" uuid,
-    "created_by_role" text not null default 'system'::text,
-    "balance_before" numeric(12,4),
-    "balance_after" numeric(12,4),
-    "organization_id" uuid not null
-      );
-
-
-alter table "public"."wallet_transactions" enable row level security;
-
-
-  create table "public"."wallets" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "balance" numeric(12,4) not null default 0,
-    "total_credited" numeric(12,4) not null default 0,
-    "total_debited" numeric(12,4) not null default 0,
-    "currency" text not null default 'INR'::text,
-    "status" text not null default 'active'::text,
-    "created_at" timestamp with time zone not null default now(),
-    "updated_at" timestamp with time zone not null default now(),
-    "low_balance_threshold" numeric default 50,
-    "critical_balance_threshold" numeric default 10
-      );
-
-
-alter table "public"."wallets" enable row level security;
-
-
-  create table "public"."whatsapp_bulk_logs" (
-    "id" uuid not null default gen_random_uuid(),
-    "phone" text not null,
-    "template" text not null,
-    "status" text not null,
-    "error" text,
-    "created_at" timestamp with time zone default now(),
-    "organization_id" uuid not null
-      );
-
-
-alter table "public"."whatsapp_bulk_logs" enable row level security;
-
-
-  create table "public"."whatsapp_settings" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid,
-    "phone_number" text,
-    "api_token" text,
-    "verify_token" text,
-    "whatsapp_phone_id" text,
-    "whatsapp_business_id" text,
-    "is_active" boolean not null default true,
-    "created_at" timestamp with time zone default now(),
-    "updated_at" timestamp with time zone default now()
-      );
-
-
-alter table "public"."whatsapp_settings" enable row level security;
-
-
-  create table "public"."whatsapp_templates" (
-    "id" uuid not null default gen_random_uuid(),
-    "organization_id" uuid not null,
-    "name" text not null,
-    "category" text default 'MARKETING'::text,
-    "language" text default 'en'::text,
-    "header_type" text,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
+    "workflow_id" uuid,
     "header_text" text,
     "body" text,
     "footer" text,
@@ -1224,6 +1225,10 @@ alter table "public"."campaigns" validate constraint "campaigns_parent_campaign_
 alter table "public"."campaigns" add constraint "campaigns_whatsapp_template_id_fkey" FOREIGN KEY (whatsapp_template_id) REFERENCES public.whatsapp_templates(id) ON DELETE SET NULL not valid;
 
 alter table "public"."campaigns" validate constraint "campaigns_whatsapp_template_id_fkey";
+
+alter table "public"."campaigns" add constraint "campaigns_workflow_id_fkey" FOREIGN KEY (workflow_id) REFERENCES public.workflows(id) ON DELETE SET NULL not valid;
+
+alter table "public"."campaigns" validate constraint "campaigns_workflow_id_fkey";
 
 alter table "public"."contacts" add constraint "contacts_organization_id_fkey" FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE not valid;
 

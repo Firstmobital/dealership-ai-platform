@@ -580,3 +580,23 @@ Existing campaigns with `workflow_id = null` keep the previous behavior (reply-t
 ### Risks
 - Organizations with multiple similarly named workflows may still get incorrect matches for legacy campaigns. Mitigation: set `workflow_id` for new campaigns.
 - If a workflow is deleted, `workflow_id` becomes null (FK `SET NULL`) and the system falls back to legacy matching unless explicitly prevented by setting/clearing.
+
+## 2026-03-10 — Phase 5 finalization: safe campaign → workflow attach
+
+### Summary
+- Fixed a Phase 5 edge-case where `campaign-dispatch` could **accidentally null out** an existing `conversations.workflow_id` when no workflow was attached.
+- Enforced the product rule for explicit `campaigns.workflow_id`: it may attach **only** when the workflow **exists**, belongs to the **same organization**, and `is_active = true`.
+- Preserved backward compatibility for legacy campaigns (`workflow_id IS NULL`) that use `reply_sheet_tab` ↔ `workflow.name` matching.
+
+### Behavior changes (production-safe)
+- Conversation updates now **only include** `workflow_id` when a **valid** workflow was attached.
+- If `campaign.workflow_id` points to a missing, wrong-org, or **inactive** workflow:
+  - dispatch continues
+  - logs clearly
+  - does **not** attach
+  - does **not** create `workflow_logs`
+  - does **not** clear any existing `conversations.workflow_id`
+- Legacy matching runs only when `campaign.workflow_id` is null and also never clears an existing `conversations.workflow_id` when no match is found.
+
+### Schema snapshots
+- Synced schema reference SQL files to reflect `public.campaigns.workflow_id uuid null` with FK → `public.workflows(id)` and `ON DELETE SET NULL`.

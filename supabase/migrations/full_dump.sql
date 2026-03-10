@@ -4557,6 +4557,11 @@ COMMENT ON COLUMN public.campaigns.launched_at IS 'Timestamp when campaign was m
 
 COMMENT ON COLUMN public.campaigns.variable_mapping IS 'Maps WhatsApp template variables to contact fields. Example: { "1": "first_name", "2": "model" }';
 
+-- Name: campaigns campaigns_workflow_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+
+ALTER TABLE ONLY public.campaigns
+    ADD CONSTRAINT campaigns_workflow_id_fkey FOREIGN KEY (workflow_id) REFERENCES public.workflows(id) ON DELETE SET NULL;
+
 
 --
 -- TOC entry 438 (class 1259 OID 78875)
