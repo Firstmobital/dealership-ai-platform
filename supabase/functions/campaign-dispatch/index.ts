@@ -6,6 +6,68 @@ import { logAuditEvent } from "../_shared/audit.ts";
 import { getRequestId } from "../_shared/auth.ts";
 
 /* ============================================================
+   SAFE JSON TYPES (local)
+   - Avoids `any` while still allowing arbitrary JSON payloads
+============================================================ */
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+type JsonObject = { [key: string]: JsonValue };
+
+function isJsonObject(v: unknown): v is JsonObject {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function getNestedString(root: unknown, path: Array<string | number>): string | null {
+  let cur: unknown = root;
+  for (const key of path) {
+    if (typeof key === "number") {
+      if (!Array.isArray(cur)) return null;
+      cur = cur[key];
+      continue;
+    }
+    if (!isJsonObject(cur)) return null;
+    cur = cur[key];
+  }
+  return typeof cur === "string" ? cur : null;
+}
+
+function unknownToJsonValue(v: unknown): JsonValue {
+  if (v === null) return null;
+  switch (typeof v) {
+    case "string":
+    case "number":
+    case "boolean":
+      return v;
+    case "object": {
+      if (Array.isArray(v)) return v.map(unknownToJsonValue);
+      const out: JsonObject = {};
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        out[k] = unknownToJsonValue(val);
+      }
+      return out;
+    }
+    default:
+      return String(v);
+  }
+}
+
+function unknownToJsonObject(v: unknown): JsonObject {
+  return isJsonObject(v) ? (unknownToJsonValue(v) as JsonObject) : {};
+}
+
+// A permissive record type for uploaded rows / dynamic columns.
+// We avoid `any` but still allow indexing into unknown values.
+type UnknownRecord = Record<string, unknown>;
+
+// WhatsApp template component subset used by this function.
+// (Match payload shape sent to whatsapp-send; keep minimal.)
+type WhatsappTemplateComponent = {
+  type: string;
+  parameters?: JsonValue[];
+  [key: string]: JsonValue | undefined;
+};
+
+/* ============================================================
    ENV
 ============================================================ */
 const PROJECT_URL = Deno.env.get("PROJECT_URL")!;
@@ -29,7 +91,7 @@ async function logDeliveryEvent(params: {
   source: string;
   message_id?: string | null;
   campaign_message_id?: string | null;
-  payload?: Record<string, any>;
+  payload?: JsonObject;
 }) {
   try {
     await supabaseAdmin.from("message_delivery_events").insert({
@@ -126,6 +188,7 @@ type Campaign = {
     is_psf?: boolean;
   } | null;
   reply_sheet_tab: string | null;
+  workflow_id: string | null; // Phase 5 (optional explicit binding)
 };
 
 type CampaignMessageStatus =
@@ -142,7 +205,7 @@ type CampaignMessage = {
   campaign_id: string;
   contact_id: string | null;
   phone: string;
-  raw_row: Record<string, any> | null;
+  raw_row: UnknownRecord | null;
   variables: Record<string, unknown> | null; // legacy
   status: CampaignMessageStatus;
   send_attempts?: number;
@@ -207,19 +270,19 @@ function waToFromE164(phonePlus: string) {
 }
 function buildWhatsappParamsFromRow(params: {
   template: WhatsappTemplate;
-  rawRow: Record<string, any> | null;
+  rawRow: UnknownRecord | null;
   variableMap: Record<string, string> | undefined;
 }) {
   if (!params.variableMap || !params.rawRow) return [];
 
-  const out: any[] = [];
+  const out: { type: "text"; text: string }[] = [];
 
   const headerVars = params.template.header_variable_indices ?? [];
   const bodyVars = params.template.body_variable_indices ?? [];
 
   for (const idx of [...headerVars, ...bodyVars]) {
     const column = params.variableMap[String(idx)];
-    let rawValue = column ? params.rawRow[column] : "";
+    const rawValue: unknown = column ? (params.rawRow as UnknownRecord)[column] : "";
 
     let value = "";
 
@@ -228,12 +291,13 @@ function buildWhatsappParamsFromRow(params: {
     } else if (typeof rawValue === "string" || typeof rawValue === "number") {
       value = String(rawValue);
     } else if (typeof rawValue === "object") {
+      const obj = rawValue as Record<string, unknown>;
       // try common patterns first
       value =
-        rawValue.name ??
-        rawValue.label ??
-        rawValue.value ??
-        rawValue.text ??
+        String(obj["name"] ?? "") ||
+        String(obj["label"] ?? "") ||
+        String(obj["value"] ?? "") ||
+        String(obj["text"] ?? "") ||
         JSON.stringify(rawValue);
     } else {
       value = String(rawValue);
@@ -306,7 +370,7 @@ function isLikelyOfferOrPricing(text: string): boolean {
 }
 
 function inferVehicleModelFromRow(
-  raw: Record<string, any> | null
+  raw: UnknownRecord | null
 ): string | null {
   if (!raw) return null;
   const keys = Object.keys(raw);
@@ -322,14 +386,14 @@ function inferVehicleModelFromRow(
   for (const c of candidates) {
     const k = keys.find((kk) => kk.toLowerCase() === c);
     if (k) {
-      const v = (raw as any)[k];
+      const v: unknown = raw[k];
       if (typeof v === "string" && v.trim()) return v.trim();
     }
   }
   // fuzzy match: any key containing 'model'
   for (const k of keys) {
     if (k.toLowerCase().includes("model")) {
-      const v = (raw as any)[k];
+      const v: unknown = raw[k];
       if (typeof v === "string" && v.trim()) return v.trim();
     }
   }
@@ -338,7 +402,7 @@ function inferVehicleModelFromRow(
 
 function resolveTemplateText(
   templateBody: string,
-  rawRow: Record<string, any> | null,
+  rawRow: UnknownRecord | null,
   mapping: Record<string, string> | null
 ) {
   let text = templateBody ?? "";
@@ -479,7 +543,7 @@ async function sendWhatsappTemplate(params: {
   campaign_message_id: string;
 
   // Phase 2.4
-  templateComponents?: any[];
+  templateComponents?: WhatsappTemplateComponent[];
   mediaUrl?: string | null;
   mimeType?: string | null;
   messageType?: "template" | "image" | "document";
@@ -534,7 +598,12 @@ async function sendWhatsappTemplate(params: {
     }),
   });
 
-  const body = await res.json().catch(() => ({}));
+  let body: unknown = {};
+  try {
+    body = await res.json();
+  } catch {
+    body = {};
+  }
   if (!res.ok) {
     logAuditEvent(supabaseAdmin, {
       organization_id: params.organizationId,
@@ -544,17 +613,17 @@ async function sendWhatsappTemplate(params: {
       metadata: {
         campaign_id: params.campaign_id,
         template: params.templateName,
-        error: body,
+        error: unknownToJsonValue(body),
       },
     });
     throw new Error(JSON.stringify(body));
   }
 
   const waId =
-    body?.meta_response?.messages?.[0]?.id ??
-    body?.meta_response?.message_id ??
-    body?.messages?.[0]?.id ??
-    body?.message_id ??
+    getNestedString(body, ["meta_response", "messages", 0, "id"]) ??
+    getNestedString(body, ["meta_response", "message_id"]) ??
+    getNestedString(body, ["messages", 0, "id"]) ??
+    getNestedString(body, ["message_id"]) ??
     null;
 
   logAuditEvent(supabaseAdmin, {
@@ -579,7 +648,7 @@ async function fetchCampaignById(campaignId: string): Promise<Campaign | null> {
   const { data, error } = await supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab, workflow_id"
     )
     .eq("id", campaignId)
     .maybeSingle();
@@ -595,7 +664,7 @@ async function fetchEligibleCampaigns(nowIso: string, campaignId?: string | null
   let query = supabaseAdmin
     .from("campaigns")
     .select(
-      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab"
+      "id, organization_id, whatsapp_template_id, status, scheduled_at, started_at, launched_at, meta, reply_sheet_tab, workflow_id"
     );
 
   if (campaignId) {
@@ -663,9 +732,10 @@ async function createPsfCasesForCampaign(params: {
   if (!rows.length) return;
 
   // Idempotent insert: avoid duplicates
-  const { error } = await supabaseAdmin
-    .from("psf_cases")
-    .insert(rows, { ignoreDuplicates: true });
+  // NOTE: Supabase JS Deno types do not support `ignoreDuplicates`.
+  const { error } = await (supabaseAdmin.from("psf_cases") as unknown as {
+    insert: (values: unknown) => Promise<{ error: unknown | null }>;
+  }).insert(rows);
 
   if (error) {
     console.error("[PSF] Failed to create PSF cases", error);
@@ -739,7 +809,7 @@ async function writeDlq(params: {
   organizationId: string;
   entityId: string;
   reason: string;
-  payload: Record<string, any>;
+  payload: JsonObject;
 }) {
   await supabaseAdmin.from("message_delivery_dlq").insert({
     organization_id: params.organizationId,
@@ -785,7 +855,7 @@ async function setMessageConversationId(params: {
 }
 
 async function markCampaignSending(campaignId: string, isImmediate: boolean) {
-  const patch: Record<string, any> = {
+  const patch: JsonObject = {
     status: "sending",
     started_at: new Date().toISOString(),
   };
@@ -854,11 +924,15 @@ async function linkMessageToConversationAndPsf(params: {
   renderedText: string;
   conversationId: string;
 }) {
-  const { msg, contactId, campaign, phoneDigits, renderedText, conversationId } =
-  params;
+  // (intentionally no destructuring here; we use params.* consistently)
   // Persist campaign context on the conversation so the AI + Google Sheets routing
   // remain stable across multiple replies (even if the latest outbound message isn't reloaded).
-  const campaignContext: any = {
+  const campaignContext: {
+    campaign_id: string;
+    campaign_message_id: string;
+    reply_sheet_tab: string | null;
+    variables: Record<string, string>;
+  } = {
     campaign_id: params.msg.campaign_id,
     campaign_message_id: params.msg.id,
     reply_sheet_tab: params.campaign.reply_sheet_tab ?? null,
@@ -868,9 +942,9 @@ async function linkMessageToConversationAndPsf(params: {
   // Extract only mapped variables (prevents huge raw_row payloads)
   try {
     const varMap = params.campaign.meta?.variable_map ?? {};
-    const raw = params.msg.raw_row ?? {};
+    const raw: UnknownRecord = params.msg.raw_row ?? {};
     for (const [idx, col] of Object.entries(varMap)) {
-      const v: any = (raw as any)?.[String(col)];
+      const v: unknown = raw[String(col)];
       campaignContext.variables[String(idx)] =
         v === null || v === undefined ? "" : String(v);
     }
@@ -878,54 +952,113 @@ async function linkMessageToConversationAndPsf(params: {
     // best-effort only
   }
 
-  // Best-effort: auto-attach a workflow by matching workflow.name to reply_sheet_tab
-  // (e.g. Service / Sales / PSF). If found, start it immediately.
-  let matchedWorkflowId: string | null = null;
-  try {
-    const tab = (params.campaign.reply_sheet_tab ?? "").trim().toLowerCase();
-    if (tab) {
-      const { data: wfs } = await supabaseAdmin
-        .from("workflows")
-        .select("id, name, is_active")
-        .eq("organization_id", params.msg.organization_id)
-        .eq("is_active", true);
+  // Phase 5: attach workflow to conversation with strict org validation.
+  // Priority 1: explicit campaign.workflow_id
+  // Priority 2: LEGACY COMPATIBILITY PATH (reply_sheet_tab ↔ workflow.name matching) only if workflow_id is null.
+  let attachedWorkflowId: string | null = null;
 
-        const match = (wfs ?? []).find((w: any) => {
+  if (params.campaign.workflow_id) {
+    // Priority 1: explicit workflow_id path
+    try {
+      const { data: wf, error: wfErr } = await supabaseAdmin
+        .from("workflows")
+        .select("id, organization_id, is_active")
+        .eq("id", params.campaign.workflow_id)
+        .maybeSingle();
+
+      if (wfErr) {
+        console.error(
+          "[campaign-dispatch] workflow lookup failed for campaign.workflow_id",
+          {
+            campaign_id: params.campaign.id,
+            workflow_id: params.campaign.workflow_id,
+            error: wfErr,
+          },
+        );
+      } else if (!wf?.id) {
+        console.error(
+          "[campaign-dispatch] campaign.workflow_id points to missing workflow",
+          {
+            campaign_id: params.campaign.id,
+            workflow_id: params.campaign.workflow_id,
+          },
+        );
+      } else if (wf.organization_id !== params.campaign.organization_id) {
+        // Fail safely: never attach a workflow across organizations.
+        console.error(
+          "[campaign-dispatch] unsafe campaign.workflow_id org mismatch (skipping workflow attach)",
+          {
+            campaign_id: params.campaign.id,
+            campaign_org: params.campaign.organization_id,
+            workflow_id: wf.id,
+            workflow_org: wf.organization_id,
+          },
+        );
+      } else {
+        attachedWorkflowId = wf.id;
+      }
+    } catch (e) {
+      console.error(
+        "[campaign-dispatch] workflow attach via campaign.workflow_id failed (continuing dispatch)",
+        e,
+      );
+    }
+  } else {
+    // Priority 2: LEGACY COMPATIBILITY PATH
+    // Best-effort: auto-attach a workflow by matching workflow.name to reply_sheet_tab
+    // (e.g. Service / Sales / PSF). Kept for backwards compatibility with existing campaigns.
+    try {
+      const tab = (params.campaign.reply_sheet_tab ?? "").trim().toLowerCase();
+      if (tab) {
+        const { data: wfs } = await supabaseAdmin
+          .from("workflows")
+          .select("id, name, is_active")
+          .eq("organization_id", params.msg.organization_id)
+          .eq("is_active", true);
+
+        const match = (wfs ?? []).find((w: { id: string; name: string | null; is_active: boolean }) => {
           const wfName = String(w.name ?? "");
           return workflowMatches(tab, wfName);
         });
-        
-        if (match?.id) matchedWorkflowId = match.id;        
+
+        if (match?.id) attachedWorkflowId = match.id;
+      }
+    } catch {
+      // best-effort only
     }
-  } catch {
-    // best-effort only
   }
 
   // Save to conversation
-  // Phase 2: seed a stable topic/model lock so short replies ("tell me more") continue the campaign thread.
   const existingConv = await supabaseAdmin
     .from("conversations")
     .select("ai_last_entities")
-    .eq("id", conversationId)
+    .eq("id", params.conversationId)
     .maybeSingle();
 
-  const seededModel =
-    inferVehicleModelFromRow(params.msg.raw_row ?? null) ||
-    (await supabaseAdmin
-      .from("contacts")
-      .select("model")
-      .eq("id", params.contactId)
-      .maybeSingle()
-      .then((r) => (r.data as any)?.model ?? null)
-      .catch(() => null));
+  let seededModel: string | null = null;
+  try {
+    const inferred = inferVehicleModelFromRow(params.msg.raw_row ?? null);
+    if (inferred) {
+      seededModel = inferred;
+    } else {
+      const { data: cData, error: cErr } = await supabaseAdmin
+        .from("contacts")
+        .select("model")
+        .eq("id", params.contactId)
+        .maybeSingle();
+      if (!cErr) seededModel = (cData as { model?: unknown } | null)?.model ? String((cData as { model?: unknown }).model) : null;
+    }
+  } catch {
+    seededModel = inferVehicleModelFromRow(params.msg.raw_row ?? null) || null;
+  }
 
   const seedTopic = isLikelyOfferOrPricing(params.renderedText)
     ? "offer_pricing"
     : null;
 
-  const prevEntities = (existingConv as any)?.data?.ai_last_entities ?? null;
-  const nextEntities = {
-    ...(prevEntities ?? {}),
+  const prevEntities = (existingConv as { data?: { ai_last_entities?: unknown } } | null)?.data?.ai_last_entities ?? null;
+  const nextEntities: JsonObject = {
+    ...(isJsonObject(prevEntities) ? prevEntities : {}),
     ...(seededModel ? { model: seededModel } : {}),
     ...(seedTopic ? { topic: seedTopic, intent: "offer" } : {}),
   };
@@ -934,53 +1067,66 @@ async function linkMessageToConversationAndPsf(params: {
     .from("conversations")
     .update({
       campaign_id: params.msg.campaign_id,
-      workflow_id: matchedWorkflowId,
+      workflow_id: attachedWorkflowId,
       campaign_context: campaignContext,
       campaign_reply_sheet_tab: params.campaign.reply_sheet_tab ?? null,
       ai_last_entities: nextEntities,
     })
-    .eq("id", conversationId);
+    .eq("id", params.conversationId);
 
-  // Start workflow log once (if matched)
-  if (matchedWorkflowId) {
-    const { data: existing } = await supabaseAdmin
-      .from("workflow_logs")
-      .select("id")
-      .eq("conversation_id", conversationId)
-      .eq("workflow_id", matchedWorkflowId)
-      .eq("organization_id", params.campaign.organization_id)
-      .eq("completed", false)
-      .maybeSingle();
+  // Ensure one active workflow log exists (repo uses unique index on (org, conversation, workflow) where completed=false)
+  if (attachedWorkflowId) {
+    try {
+      const { data: existing } = await supabaseAdmin
+        .from("workflow_logs")
+        .select("id")
+        .eq("conversation_id", params.conversationId)
+        .eq("workflow_id", attachedWorkflowId)
+        .eq("organization_id", params.campaign.organization_id)
+        .eq("completed", false)
+        .maybeSingle();
 
-    if (!existing?.id) {
-      await supabaseAdmin.from("workflow_logs").insert({
-        organization_id: params.campaign.organization_id, // or params.msg.organization_id (whichever exists there)
-        workflow_id: matchedWorkflowId,
-        conversation_id: conversationId,
-        current_step_number: 1,
-        variables: campaignContext.variables ?? {},
-        completed: false,
-      });
+      if (!existing?.id) {
+        await supabaseAdmin.from("workflow_logs").insert({
+          organization_id: params.campaign.organization_id,
+          workflow_id: attachedWorkflowId,
+          conversation_id: params.conversationId,
+          current_step_number: 1,
+          variables: campaignContext.variables ?? {},
+          completed: false,
+        });
+      }
+    } catch (e) {
+      // Fail safely; don't block campaign sending.
+      console.error(
+        "[campaign-dispatch] workflow_log ensure failed (continuing dispatch)",
+        {
+          campaign_id: params.campaign.id,
+          conversation_id: params.conversationId,
+          workflow_id: attachedWorkflowId,
+          error: e instanceof Error ? e.message : String(e),
+        },
+      );
     }
   }
 
   // requires migration: campaign_messages.conversation_id
   await setMessageConversationId({
     campaignMessageId: params.msg.id,
-    conversationId,
+    conversationId: params.conversationId,
   });
 
   // Safe no-op for non-PSF campaigns (no matching rows)
   await supabaseAdmin
     .from("psf_cases")
-    .update({ conversation_id: conversationId })
+    .update({ conversation_id: params.conversationId })
     .eq("campaign_id", params.msg.campaign_id)
     .eq("phone", params.phoneDigits);
 }
 
 function assertTemplateVariablesPresent(params: {
   template: WhatsappTemplate;
-  rawRow: Record<string, any> | null;
+  rawRow: UnknownRecord | null;
   variableMap: Record<string, string> | undefined;
 }) {
   const missing: number[] = [];
@@ -1013,12 +1159,6 @@ if (campaign.status === "completed" || campaign.status === "cancelled")
   return { sent: 0, more: false };
 
   const template = await fetchTemplate(campaign.whatsapp_template_id);
-  const schema = {
-    header_variable_count: template.header_variable_count,
-    header_variable_indices: template.header_variable_indices,
-    body_variable_count: template.body_variable_count,
-    body_variable_indices: template.body_variable_indices,
-  };
 
   const messages = await fetchMessages(campaign.id, opts.maxToSend);
   // ✅ PSF STEP 2 — create PSF cases before sending
@@ -1054,7 +1194,7 @@ if (campaign.status === "completed" || campaign.status === "cancelled")
       let renderedText = `Template: ${template.name}`;
       try {
         if (template.body) {
-          const contactRow = await fetchContact(contactId);
+          await fetchContact(contactId);
           renderedText = resolveTemplateText(
             template.body,
             msg.raw_row ?? {},
@@ -1087,7 +1227,7 @@ if (campaign.status === "completed" || campaign.status === "cancelled")
           rawRow: msg.raw_row ?? null,
           variableMap: campaign.meta?.variable_map,
         });
-      } catch (e) {
+      } catch {
         await markFailed(msg.id, "variable_mismatch");
         continue;
       }
@@ -1230,7 +1370,7 @@ if (campaign.status === "completed" || campaign.status === "cancelled")
    MAIN
 ============================================================ */
 serve(async (req: Request) => {
-  const request_id = getRequestId(req);
+  const _request_id = getRequestId(req);
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -1254,16 +1394,22 @@ const actor = { type: isInternal ? "internal" : "external" };
   try {
     const nowIso = new Date().toISOString();
 
-    let body: any;
+    let body: unknown;
     try {
       body = await req.json();
     } catch {
       body = {};
     }
 
-    const mode: DispatchMode = body?.mode ?? "scheduled";
-    const immediateCampaignId: string | undefined = body?.campaign_id;
-    const batchLimit = Number.isFinite(body?.limit) ? Math.max(1, Math.min(Number(body.limit), GLOBAL_MAX_MESSAGES_PER_RUN)) : DEFAULT_BATCH_LIMIT;
+    const bodyObj = unknownToJsonObject(body);
+
+    const mode: DispatchMode = (typeof bodyObj.mode === "string" ? (bodyObj.mode as DispatchMode) : "scheduled");
+    const immediateCampaignId: string | undefined = typeof bodyObj.campaign_id === "string" ? bodyObj.campaign_id : undefined;
+    const limitRaw = bodyObj.limit;
+    const limitNum = typeof limitRaw === "number" ? limitRaw : (typeof limitRaw === "string" ? Number(limitRaw) : NaN);
+    const batchLimit = Number.isFinite(limitNum)
+      ? Math.max(1, Math.min(Number(limitNum), GLOBAL_MAX_MESSAGES_PER_RUN))
+      : DEFAULT_BATCH_LIMIT;
     const deadlineMs = Date.now() + TIME_BUDGET_MS;
 
 
@@ -1384,15 +1530,9 @@ if (mode === "scheduled" && actor.type !== "internal") {
       }
 
       const template = await fetchTemplate(campaign.whatsapp_template_id);
-      const schema = {
-        header_variable_count: template.header_variable_count,
-        header_variable_indices: template.header_variable_indices,
-        body_variable_count: template.body_variable_count,
-        body_variable_indices: template.body_variable_indices,
-      };
 
       const remaining = Math.max(0, batchLimit - globalSent);
-const messages = await fetchMessages(campaign.id, Math.min(remaining, MAX_MESSAGES_PER_CAMPAIGN_PER_RUN));
+      const messages = await fetchMessages(campaign.id, Math.min(remaining, MAX_MESSAGES_PER_CAMPAIGN_PER_RUN));
       for (const m of messages) {
         await logDeliveryEvent({
           organization_id: m.organization_id,
@@ -1432,7 +1572,7 @@ const messages = await fetchMessages(campaign.id, Math.min(remaining, MAX_MESSAG
           let renderedText = `Template: ${template.name}`;
           try {
             if (template.body) {
-              const contactRow = await fetchContact(contactId);
+              await fetchContact(contactId);
               renderedText = resolveTemplateText(
                 template.body,
                 msg.raw_row ?? {},
@@ -1486,7 +1626,7 @@ const messages = await fetchMessages(campaign.id, Math.min(remaining, MAX_MESSAG
               rawRow: msg.raw_row ?? null,
               variableMap: campaign.meta?.variable_map,
             });
-          } catch (e) {
+          } catch {
             await markFailed(msg.id, "variable_mismatch");
             continue;
           }

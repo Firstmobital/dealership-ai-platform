@@ -187,6 +187,7 @@ export type Database = {
           template_variables: string[] | null
           total_recipients: number
           updated_at: string
+          workflow_id: string | null
         }
         Insert: {
           channel?: string
@@ -206,6 +207,7 @@ export type Database = {
           template_variables?: string[] | null
           total_recipients?: number
           updated_at?: string
+          workflow_id?: string | null
         }
         Update: {
           channel?: string
@@ -225,6 +227,7 @@ export type Database = {
           template_variables?: string[] | null
           total_recipients?: number
           updated_at?: string
+          workflow_id?: string | null
         }
         Relationships: [
           {
@@ -232,6 +235,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaigns_workflow_id_fkey"
+            columns: ["workflow_id"]
+            isOneToOne: false
+            referencedRelation: "workflows"
             referencedColumns: ["id"]
           },
         ]

@@ -32,6 +32,7 @@ type BuilderState = {
   description: string;
   whatsapp_template_id: string;
   reply_sheet_tab: string;
+  workflow_id?: string | null;
 };
 
 type Mode = "view" | "create";
@@ -269,10 +270,8 @@ export function CampaignsModule() {
     description: "",
     whatsapp_template_id: "",
     reply_sheet_tab: "",
+    workflow_id: null,
   });
-
-  const [csvText, setCsvText] = useState("");
-  const [parsedRows, setParsedRows] = useState<ParsedCsvRow[]>([]);
 
   // ✅ Phase B: File-based import (CSV / Excel)
   const [importedRows, setImportedRows] = useState<
@@ -290,6 +289,48 @@ export function CampaignsModule() {
   const [testPhone, setTestPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [retrying, setRetrying] = useState(false);
+
+  // Phase 5: optional explicit workflow binding
+  const [workflows, setWorkflows] = useState<
+    { id: string; name: string; is_active: boolean | null }[]
+  >([]);
+  const [workflowsLoading, setWorkflowsLoading] = useState(false);
+
+  // Phase B/C existing state (required by builder logic)
+  const [csvText, setCsvText] = useState<string>("");
+  const [parsedRows, setParsedRows] = useState<ParsedCsvRow[]>([]);
+
+  useEffect(() => {
+    if (!activeOrganization?.id) return;
+
+    let cancelled = false;
+    (async () => {
+      setWorkflowsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("workflows")
+          .select("id, name, is_active")
+          .eq("organization_id", activeOrganization.id)
+          .eq("is_active", true)
+          .order("name", { ascending: true });
+
+        if (!cancelled) {
+          if (error) {
+            console.error("[CampaignsModule] fetch workflows error", error);
+            setWorkflows([]);
+          } else {
+            setWorkflows((data ?? []) as any);
+          }
+        }
+      } finally {
+        if (!cancelled) setWorkflowsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeOrganization?.id]);
 
   async function onImportContactsFile(file: File) {
     setImportError(null);
@@ -542,6 +583,7 @@ const variableValidation = useMemo(() => {
       description: "",
       whatsapp_template_id: "",
       reply_sheet_tab: "",
+      workflow_id: null,
     });
     setCsvText("");
     setParsedRows([]);
@@ -641,6 +683,7 @@ const variableValidation = useMemo(() => {
         description: builder.description?.trim() ?? "",
         whatsapp_template_id: builder.whatsapp_template_id,
         reply_sheet_tab: builder.reply_sheet_tab.trim(),
+        workflow_id: builder.workflow_id ?? null,
         scheduledAt: scheduledAtIsoOrNull(),
         rows: parsedRows,
         variable_map: variableMap,
@@ -1040,7 +1083,34 @@ alert("🚀 Campaign sent immediately");
                 disabled={busy}
               />
               <div className="text-[11px] text-slate-500">
-                Replies for this campaign will be logged into this tab.
+                Replies for this campaign will be logged into this tab. Workflow routing is controlled by the optional Workflow field below.
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-700">
+                Workflow (optional)
+              </label>
+              <select
+                className="w-full rounded-md border px-3 py-2 text-sm"
+                value={builder.workflow_id ?? ""}
+                onChange={(e) =>
+                  setBuilder((b) => ({
+                    ...b,
+                    workflow_id: e.target.value ? e.target.value : null,
+                  }))
+                }
+                disabled={busy || workflowsLoading}
+              >
+                <option value="">(No workflow)</option>
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+              <div className="text-[11px] text-slate-500">
+                If set, customer replies will be attached to this workflow (validated by organization) and will not use reply-tab name matching.
               </div>
             </div>
 

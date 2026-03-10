@@ -328,6 +328,7 @@ export type Campaign = {
   template_variables: string[] | null;
 
   reply_sheet_tab?: string | null;
+  workflow_id?: UUID | null;
 
   total_recipients: number;
   sent_count: number;

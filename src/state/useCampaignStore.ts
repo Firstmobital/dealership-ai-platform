@@ -32,6 +32,7 @@ type CampaignState = {
     description?: string;
     whatsapp_template_id: string;
     reply_sheet_tab: string;
+    workflow_id?: string | null;
     scheduledAt: string | null;
     rows: CsvRow[];
     variable_map: Record<string, string>; // "1" -> columnName
@@ -117,6 +118,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
     description,
     whatsapp_template_id,
     reply_sheet_tab,
+    workflow_id,
     scheduledAt,
     rows,
     variable_map,
@@ -232,6 +234,7 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
         scheduled_at: scheduledAt,
 
         reply_sheet_tab: reply_sheet_tab || null,
+        workflow_id: workflow_id ?? null,
 
         meta: {
           variable_map,

@@ -548,3 +548,35 @@ insert into public.media_assets (
 5) Confirm:
    - Outbound media appears in the **UI chat** (message_type image/document)
    - The same media arrives on **WhatsApp**
+
+## 2026-03-10 — Phase 5: Explicit campaign → workflow binding (optional)
+
+### Objective
+Add an optional, explicit workflow binding to campaigns so campaign replies can be routed to the intended workflow without relying on `reply_sheet_tab` string matching.
+
+### Schema change
+- Added `public.campaigns.workflow_id uuid null` with FK to `public.workflows(id)` (`ON DELETE SET NULL`).
+- No RLS changes made (campaign/workflow access already scoped by organization policies).
+- No new index added (repo usage reads campaigns by `organization_id/status` and validates workflows by primary key during dispatch).
+
+### Backend files changed
+- `supabase/functions/campaign-dispatch/index.ts`
+  - Fetches `campaigns.workflow_id`.
+  - Workflow attach priority:
+    1) If `campaign.workflow_id` present: validate workflow exists and org matches campaign; then attach to `conversations.workflow_id` and ensure exactly one active `workflow_logs` row.
+    2) If `campaign.workflow_id` is null: LEGACY COMPATIBILITY PATH uses existing `reply_sheet_tab` ↔ `workflow.name` matching.
+  - Unsafe/missing workflows fail safely (logged, dispatch continues).
+
+### Frontend files changed
+- `src/state/useCampaignStore.ts`
+  - Campaign create payload supports optional `workflow_id` and persists it.
+- `src/modules/campaigns/CampaignsModule.tsx`
+  - Added optional workflow selector fetching org-scoped active workflows via client-side Supabase.
+  - Helper text clarifies `reply_sheet_tab` is for operational logging/sheets, not workflow routing authority.
+
+### Backward compatibility
+Existing campaigns with `workflow_id = null` keep the previous behavior (reply-tab matching). Campaign sheet logging via `reply_sheet_tab` is unchanged.
+
+### Risks
+- Organizations with multiple similarly named workflows may still get incorrect matches for legacy campaigns. Mitigation: set `workflow_id` for new campaigns.
+- If a workflow is deleted, `workflow_id` becomes null (FK `SET NULL`) and the system falls back to legacy matching unless explicitly prevented by setting/clearing.
