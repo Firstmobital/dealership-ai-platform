@@ -2449,12 +2449,30 @@ ${personality.donts || "- None specified."}
     } | null = null;
 
     let resolvedWorkflow: WorkflowLogRow | null = null;
-    let workflowDirectiveAction: "ask" | "say" | "escalate" | null = null;
+    let workflowDirectiveAction: "ask" | "say" | "escalate" | "guide" | null = null;
     // Captured during directive resolution; used later for workflow-driven media auto-send.
     let workflowMediaInstructionText = "";
     let workflowMediaSeedText = "";
     let workflowAlreadyAdvanced = false;
     let workflowStepAdvancedThisTurn = false;
+
+    // Phase 2: workflow-first mode (GUIDE steps are authoritative for stage)
+    let workflowGuideActive = false;
+
+    // Phase 3: defer workflow progression until outbound is accepted.
+    // Only set when we intend to advance workflow state as a result of this turn.
+    // This is committed ONLY after duplicate-blocker passes and message insert succeeds.
+    let pendingWorkflowAdvance:
+      | {
+          logId: string;
+          organizationId: string;
+          nextStepNum: number;
+          vars: Record<string, unknown>;
+          completed: boolean;
+          expectedCurrentStep: number;
+          reason: "ask" | "say" | "escalate" | "generic" | "auto_skip";
+        }
+      | null = null;
 
     const activeWorkflow = await loadActiveWorkflow(
       conversation_id,
@@ -2588,34 +2606,33 @@ ${personality.donts || "- None specified."}
             nextStepNumber,
           });
 
-          // Persist skip-advancement so we don't re-evaluate the same skipped steps
-          // (does not change workflow_logs schema)
-          const prevExpectedStep = rw.current_step_number ?? 1;
+          // Phase 3: defer persisting skip-advancement until outbound accepted.
+          if (resolvedWorkflow) {
+            const prevExpectedStep = resolvedWorkflow.current_step_number ?? 1;
+            pendingWorkflowAdvance = {
+              logId: resolvedWorkflow.id,
+              organizationId,
+              nextStepNum: nextStepNumber,
+              vars: (resolvedWorkflow.variables ?? {}) as Record<string, unknown>,
+              completed: false,
+              expectedCurrentStep: prevExpectedStep,
+              reason: "auto_skip",
+            };
+            logger.info("[workflow] progression deferred", {
+              workflow_id: resolvedWorkflow.workflow_id,
+              log_id: resolvedWorkflow.id,
+              from_step: prevExpectedStep,
+              to_step: nextStepNumber,
+              reason: "auto_skip",
+            });
+          }
 
-          const updated = await saveWorkflowProgress(
-            rw.id,
-            organizationId,
-            nextStepNumber,
-            rw.variables ?? {},
-            false,
-            logger,
-            prevExpectedStep
-          );
-
-          if (updated) resolvedWorkflow = updated;
-
-          // If update failed and returned null, bail out of workflow processing.
-          if (!resolvedWorkflow) {
-            // No behavior change intended; this guards an already-unsafe state.
-            // (Previously this would have thrown on property access.)
-            // Exit workflow evaluation for this turn.
-            step = null;
-          } else {
-            // Keep in-memory state consistent for downstream progression logic
+          // Keep in-memory state consistent for downstream logic in this request.
+          if (resolvedWorkflow) {
             resolvedWorkflow.current_step_number = nextStepNumber;
           }
 
-          if (nextStepNumber > prevExpectedStep) {
+          if (nextStepNumber > (rw.current_step_number ?? 1)) {
             workflowStepAdvancedThisTurn = true;
           }
         }
@@ -2732,18 +2749,50 @@ ${personality.donts || "- None specified."}
                ? currentOrder + 1
                : Number(nextStepNumber) + 1;
 
-             const updatedAdvance = await saveWorkflowProgress(
-               resolvedWorkflow.id,
-               organizationId,
-               nextStep,
-               resolvedWorkflow.variables ?? {},
-               false,
-               logger,
-               resolvedWorkflow.current_step_number ?? 1
-             );
+             // Phase 3: defer ask-step auto-skip persistence until outbound accepted.
+             // Merge with existing pendingWorkflowAdvance if one already exists.
+             const expectedStep = resolvedWorkflow.current_step_number ?? 1;
 
-             if (updatedAdvance) resolvedWorkflow = updatedAdvance;
-             if (!resolvedWorkflow) break;
+             if (!pendingWorkflowAdvance) {
+               pendingWorkflowAdvance = {
+                 logId: resolvedWorkflow.id,
+                 organizationId,
+                 nextStepNum: nextStep,
+                 vars: (resolvedWorkflow.variables ?? {}) as Record<string, unknown>,
+                 completed: false,
+                 expectedCurrentStep: expectedStep,
+                 reason: "auto_skip",
+               };
+
+               logger.info("[workflow] progression deferred", {
+                 workflow_id: resolvedWorkflow.workflow_id,
+                 log_id: resolvedWorkflow.id,
+                 from_step: expectedStep,
+                 to_step: nextStep,
+                 reason: "auto_skip",
+               });
+             } else {
+               // Keep the earliest expected step (optimistic locking) and extend to the farthest next step.
+               pendingWorkflowAdvance.nextStepNum = Math.max(
+                 Number(pendingWorkflowAdvance.nextStepNum || 0),
+                 Number(nextStep || 0)
+               );
+               pendingWorkflowAdvance.completed = pendingWorkflowAdvance.completed || false;
+
+               // Prefer workflow variables from the latest in-memory state.
+               pendingWorkflowAdvance.vars =
+                 (resolvedWorkflow.variables ?? pendingWorkflowAdvance.vars ?? {}) as Record<string, unknown>;
+
+               logger.debug("[workflow] progression deferred (merged)", {
+                 workflow_id: resolvedWorkflow.workflow_id,
+                 log_id: resolvedWorkflow.id,
+                 expected_step: pendingWorkflowAdvance.expectedCurrentStep,
+                 next_step: pendingWorkflowAdvance.nextStepNum,
+                 reason: pendingWorkflowAdvance.reason,
+               });
+             }
+
+             // Keep in-memory state consistent for downstream logic in this request.
              resolvedWorkflow.current_step_number = nextStep;
              workflowStepAdvancedThisTurn = true;
 
@@ -2772,13 +2821,28 @@ ${personality.donts || "- None specified."}
             const directive = buildDirective(step, nextEntitiesWithKb || {});
 
             // Capture step text for workflow-driven media auto-send (runs later)
-            workflowMediaInstructionText = safeText(step?.action?.instruction_text ?? "");
+            workflowMediaInstructionText = safeText(
+              step?.action?.instruction_text ??
+                (step as unknown as { instruction_text?: unknown })?.instruction_text ??
+                ""
+            );
             workflowMediaSeedText =
               directive.action === "say"
                 ? safeText((directive as { message_seed?: unknown }).message_seed ?? "")
                 : "";
 
             workflowDirectiveAction = directive.action;
+
+            if (directive.action === "guide") {
+              // Phase 1: hidden guidance, never customer-facing.
+              // Inject into system prompt workflow section; do NOT force send verbatim.
+              const gt = safeText((directive as { guide_text?: unknown }).guide_text ?? "");
+              workflowInstructionText = gt;
+              workflowGuideActive = Boolean(gt && gt.trim());
+              // Ensure we do not accidentally treat guide text as a SAY seed.
+              workflowSayMessage = "";
+              workflowSaySchema = null;
+            }
 
             if (directive.action === "ask" || directive.action === "escalate") {
               if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
@@ -2791,24 +2855,31 @@ ${personality.donts || "- None specified."}
 
               const completed = directive.action === "escalate";
 
+              // Phase 3: defer workflow progression commit until outbound is accepted.
               const prevExpectedStep = resolvedWorkflow.current_step_number ?? 1;
-              const updated = await saveWorkflowProgress(
-                resolvedWorkflow.id,
+              pendingWorkflowAdvance = {
+                logId: resolvedWorkflow.id,
                 organizationId,
                 nextStepNum,
-                resolvedWorkflow.variables ?? {},
+                vars: (resolvedWorkflow.variables ?? {}) as Record<string, unknown>,
                 completed,
-                logger,
-                prevExpectedStep
-              );
+                expectedCurrentStep: prevExpectedStep,
+                reason: directive.action,
+              };
 
-              if (updated) resolvedWorkflow = updated;
-              if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
+              logger.info("[workflow] progression deferred", {
+                workflow_id: resolvedWorkflow.workflow_id,
+                log_id: resolvedWorkflow.id,
+                from_step: prevExpectedStep,
+                to_step: nextStepNum,
+                completed,
+                reason: directive.action,
+              });
 
-              if (
-                directive.action === "escalate" ||
-                nextStepNum > prevExpectedStep
-              ) {
+              // Keep in-memory step consistent for the remainder of this request.
+              resolvedWorkflow.current_step_number = nextStepNum;
+
+              if (directive.action === "escalate" || nextStepNum > prevExpectedStep) {
                 workflowStepAdvancedThisTurn = true;
               }
 
@@ -2855,18 +2926,28 @@ ${personality.donts || "- None specified."}
                   ? currentOrder + 1
                   : (resolvedWorkflow.current_step_number ?? 1) + 1;
 
-              const updated = await saveWorkflowProgress(
-                resolvedWorkflow.id,
+              // Phase 3: defer SAY progression commit until outbound is accepted.
+              pendingWorkflowAdvance = {
+                logId: resolvedWorkflow.id,
                 organizationId,
-                nextStepToSet,
-                resolvedWorkflow.variables ?? {},
-                isLast,
-                logger,
-                expectedStep
-              );
+                nextStepNum: nextStepToSet,
+                vars: (resolvedWorkflow.variables ?? {}) as Record<string, unknown>,
+                completed: isLast,
+                expectedCurrentStep: expectedStep,
+                reason: "say",
+              };
 
-              if (updated) resolvedWorkflow = updated;
-              if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
+              logger.info("[workflow] progression deferred", {
+                workflow_id: resolvedWorkflow.workflow_id,
+                log_id: resolvedWorkflow.id,
+                from_step: expectedStep,
+                to_step: nextStepToSet,
+                completed: isLast,
+                reason: "say",
+              });
+
+              // Keep in-memory step consistent for the remainder of this request.
+              resolvedWorkflow.current_step_number = nextStepToSet;
 
               workflowAlreadyAdvanced = true;
               workflowStepAdvancedThisTurn = true;
@@ -2880,14 +2961,30 @@ ${personality.donts || "- None specified."}
       }
     }
 
+    // Phase 2 precedence: if workflow guide is active, do NOT allow deterministic offer/pricing
+    // fallbacks (built before workflow resolution) to override the workflow stage.
+    // KB/Campaign still remain in the prompt to support the workflow objective.
+    if (workflowIsActive && workflowGuideActive && forcedReplyText) {
+      logger.info("[workflow] suppressed deterministic forced reply due to active GUIDE step", {
+        workflow_id: resolvedWorkflow?.workflow_id,
+        step_number: resolvedWorkflow?.current_step_number ?? 1,
+        forced_reply_preview: String(forcedReplyText).slice(0, 80),
+      });
+      forcedReplyText = null;
+    }
+
     // If workflow is active and we did not produce a deterministic workflow reply,
     // do NOT fall back to general AI chat. Ask the user to continue the workflow.
     if (workflowIsActive && !forcedReplyText) {
-      forcedReplyText = "Okay — please share the requested detail to continue.";
-      logger.warn("[workflow] active but no directive reply produced; using safe hold", {
-        workflow_id: resolvedWorkflow?.workflow_id,
-        step_number: resolvedWorkflow?.current_step_number ?? 1,
-      });
+      // Phase 2: allow GUIDE workflows to proceed via normal LLM generation.
+      // Only apply a deterministic hold when the workflow is active but we have no GUIDE objective.
+      if (!workflowGuideActive) {
+        forcedReplyText = "Okay — please share the requested detail to continue.";
+        logger.warn("[workflow] active but no directive reply produced; using safe hold", {
+          workflow_id: resolvedWorkflow?.workflow_id,
+          step_number: resolvedWorkflow?.current_step_number ?? 1,
+        });
+      }
     }
 
     // -------------------------------
@@ -3185,6 +3282,16 @@ IMPORTANT:
 +- If the user explicitly asks for brochure/photos on WhatsApp, you CAN send media (the system has tooling for it).
 +- Proceed when the model is known; otherwise ask only for the missing model/variant.
 +
++- WORKFLOW-FIRST MODE (PHASE 2 — CRITICAL):
++  - workflow_active: ${workflowIsActive}
++  - workflow_guide_active: ${workflowGuideActive}
++  - If workflow_guide_active is true, the WORKFLOW STEP is the PRIMARY conversational objective for this turn.
++  - Knowledge Context and Campaign Context are factual sources only (pricing/offers/specs/availability).
++  - Use KB/Campaign to stay truthful and avoid hallucinations, but DO NOT bypass the workflow objective for vague replies.
++  - For vague replies (e.g., "yes", "ok", "yes please"), follow the workflow and ask exactly ONE narrowing question.
++  - If exact facts are missing in KB/Campaign, stay workflow-aligned and truthful (ask the narrowing question or say Techwheels team will confirm exact details).
++  - Never invent prices/discounts/variants/offers/specs.
++
 - UNVERIFIED FACTS FIREWALL (PHASE 4 — HARD):
   - This rule applies ONLY to FACTS the USER claims first (e.g., "I was told ₹X", "discount is ₹Y", "delivery in 2 weeks").
   - Treat user-provided prices/discounts/offers/availability/timelines as UNVERIFIED unless the same info appears in Knowledge Context or Campaign Context.
@@ -3252,10 +3359,13 @@ WORKFLOW STEP (INTERNAL GUIDANCE — NOT A SCRIPT)
 ------------------------
 ${workflowInstructionText || "No active workflow guidance."}
 
-WORKFLOW PRECEDENCE (PHASE 3 — CRITICAL):
-- Knowledge Context and Campaign Context ALWAYS override workflow guidance.
-- If the answer is already present in Knowledge/Campaign context, DO NOT ask workflow questions.
-- Never ask for details that are already known (Known Facts / Locked Entities / KB).
+WORKFLOW RULES (PHASE 2 — CONSISTENT):
+- If workflow_guide_active is true, follow the workflow objective for this turn (stage control).
+- Use Knowledge/Campaign context ONLY as authoritative facts to keep the response truthful.
+- Facts can constrain what you say (no hallucinations), but must not change the workflow stage for vague replies.
+- If KB/Campaign does not contain exact pricing/offer/spec details needed, stay workflow-aligned:
+  - Ask exactly ONE clarifying question (variant / what detail they want), OR
+  - Say Techwheels team will confirm the latest exact details.
 
 IMPORTANT:
 - The workflow step is a GOAL, not a sentence to repeat.
@@ -3263,12 +3373,6 @@ IMPORTANT:
 EACH TIME.
 - Do NOT mention workflows, steps, or instructions.
 - Ask at most ONE relevant question if needed.
-
-WORKFLOW ↔ KB PRECEDENCE (PHASE 3 — CRITICAL)
-- Knowledge Context and Campaign Context ALWAYS override workflow guidance.
-- If the answer is present in the Knowledge/Campaign context, DO NOT ask workflow questions.
-- If workflow guidance conflicts with Knowledge/Campaign facts, ignore the workflow guidance for this turn.
-- If workflow requires KB and KB is missing, ask ONE clarifying question or offer to connect to a human (do not guess).
 
 These rules OVERRIDE default AI behavior.
 
@@ -3322,48 +3426,7 @@ CAMPAIGN CONTEXT (AUTHORITATIVE)
 
 ${campaignContextForPrompt || "No prior campaign history available."}
 
-ENTITY SAFETY RULE (CRITICAL)
-------------------------
-- If a vehicle model is locked, keep using it.
-- For pricing/offers, do NOT assume numbers. Require verified pricing/offer signals in KB or Campaign Context.
-- If variant changes the quote and is not known, ask ONE short clarifying question.
-- If intent is unclear, ask ONE clarifying question.
-- Do NOT invent prices or discounts.
-
-------------------------
-RESPONSE DECISION RULES (CRITICAL)
-------------------------
-You are allowed to intentionally NOT reply ONLY if the user message adds no conversational value.
-Short follow-up messages that indicate buying intent ALWAYS have conversational value.
-
-
-If replying would add no value, you MUST respond with exactly:
-${AI_NO_REPLY_TOKEN}
-
-DO NOT explain why.
-DO NOT add any text.
-ONLY return ${AI_NO_REPLY_TOKEN}.
-
-You MUST reply normally if:
-- The user greets (hi/hello/namaste)
-- The user asks a question
-- The user shows interest
-- The user requests clarification
-- The user re-engages after a gap
-
-If you need to ask a clarifying question:
-- Ask exactly ONE short question
-- Prefer asking about variant or fuel type
-
-
-------------------------
-FORMATTING & STYLE
-------------------------
-- Always answer the latest customer message.
-- Keep WhatsApp replies short & simple (1–3 sentences max).
-- You MAY use the fallback/sales-advisor handoff when verified pricing/offers are missing, even if KB context is non-empty but irrelevant.
-
-Respond now to the customer's latest message only.
+// ...existing code...
 `.trim();
 
     // 12) AI settings (skip if a strict-mode forced reply is already chosen)
@@ -3384,7 +3447,7 @@ Respond now to the customer's latest message only.
           kbConfidence: kbConfidence,
           aiMode,
           userMessage: user_message,
-          hasWorkflow: Boolean(workflowInstructionText?.trim()),
+          hasWorkflow: Boolean(workflowIsActive),
         });
 
     // P3: Dynamic context packing (token-budgeted)
@@ -3452,7 +3515,8 @@ Respond now to the customer's latest message only.
       kb_attempted: kbAttempted,
       kb_found: kbFound,
       kb_match: kbMatchMeta ?? null,
-      has_workflow: Boolean(workflowInstructionText?.trim()),
+      has_workflow: Boolean(workflowIsActive),
+      workflow_directive_action: workflowDirectiveAction,
       has_campaign: Boolean(campaignContextText?.trim()),
       model_routed: routedModel || aiSettings?.model,
     });
@@ -3847,63 +3911,9 @@ Respond now to the customer's latest message only.
     // - escalate: already completed earlier
     // --------------------------------------------------
     if (resolvedWorkflow) {
-      if (workflowAlreadyAdvanced === true) {
-        logger.debug("[workflow] progression skipped (already advanced)", {
-          workflow_id: resolvedWorkflow.workflow_id,
-          currentStep: resolvedWorkflow.current_step_number ?? 1,
-        });
-      } else {
-        if (workflowStepAdvancedThisTurn) {
-          logger.debug(
-            "[workflow] progression skipped (step already advanced this turn)",
-            {
-              workflow_id: resolvedWorkflow.workflow_id,
-              currentStep: resolvedWorkflow.current_step_number ?? 1,
-            }
-          );
-        } else {
-          const steps = await getWorkflowSteps(
-            resolvedWorkflow.workflow_id!,
-            organizationId,
-            logger
-          );
-
-          const maxStepOrder = (steps ?? []).reduce((m, s) => {
-            const o = Number(s?.step_order);
-            return Number.isFinite(o) && o > m ? o : m;
-          }, 0);
-
-          const currentStep = resolvedWorkflow.current_step_number ?? 1;
-
-          if (workflowDirectiveAction === "ask") {
-            // Hold; already persisted in the directive branch.
-            logger.debug("[workflow] hold step (awaiting required info)", {
-              workflow_id: resolvedWorkflow.workflow_id,
-              currentStep,
-            });
-          } else if (workflowDirectiveAction === "escalate") {
-            // Already marked completed in the directive branch.
-            logger.debug("[workflow] completed via escalation", {
-              workflow_id: resolvedWorkflow.workflow_id,
-              currentStep,
-            });
-          } else {
-            const nextStepNumber = currentStep + 1;
-            const completed = maxStepOrder > 0 ? nextStepNumber > maxStepOrder : true;
-
-            await saveWorkflowProgress(
-              resolvedWorkflow.id,
-              organizationId,
-              nextStepNumber,
-              resolvedWorkflow.variables ?? {},
-              completed,
-              logger,
-              currentStep
-            );
-            workflowStepAdvancedThisTurn = true;
-          }
-        }
-      }
+      // Phase 3: do not persist generic step-advance here.
+      // Progression is committed only after outbound is accepted for delivery.
+      // (pendingWorkflowAdvance is set earlier when appropriate.)
     }
 
     // 15.5) Enforce dealership response schema
@@ -3969,6 +3979,16 @@ Respond now to the customer's latest message only.
         kind: workflowIsActive ? "workflow_reply" : "ai_reply",
       });
 
+      if (pendingWorkflowAdvance) {
+        logger.info("[workflow] progression skipped because reply was blocked", {
+          workflow_id: resolvedWorkflow?.workflow_id,
+          log_id: pendingWorkflowAdvance.logId,
+          from_step: pendingWorkflowAdvance.expectedCurrentStep,
+          to_step: pendingWorkflowAdvance.nextStepNum,
+          reason: pendingWorkflowAdvance.reason,
+        });
+      }
+
       // We intentionally skip:
       // - message insert
       // - WhatsApp send
@@ -3990,7 +4010,8 @@ Respond now to the customer's latest message only.
       );
     }
 
-    await supabase.from("messages").insert({
+    // Insert outbound message first; only then commit workflow progression.
+    const { error: outboundInsertError } = await supabase.from("messages").insert({
       conversation_id,
       organization_id: organizationId,
       sender: "bot",
@@ -4001,6 +4022,54 @@ Respond now to the customer's latest message only.
       outbound_dedupe_key: request_id,
       metadata: { request_id, trace_id, kb: kbMatchMeta ?? null },
     });
+
+    if (outboundInsertError) {
+      logger.error("[messages] outbound insert failed", { error: outboundInsertError });
+
+      if (pendingWorkflowAdvance) {
+        logger.warn("[workflow] progression skipped because outbound insert failed", {
+          workflow_id: resolvedWorkflow?.workflow_id,
+          log_id: pendingWorkflowAdvance.logId,
+          from_step: pendingWorkflowAdvance.expectedCurrentStep,
+          to_step: pendingWorkflowAdvance.nextStepNum,
+          reason: pendingWorkflowAdvance.reason,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          error: "Outbound message insert failed",
+          error_code: "OUTBOUND_INSERT_FAILED",
+          request_id,
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Phase 3: commit deferred workflow progression only after outbound accepted.
+    if (pendingWorkflowAdvance) {
+      const committed = await saveWorkflowProgress(
+        pendingWorkflowAdvance.logId,
+        pendingWorkflowAdvance.organizationId,
+        pendingWorkflowAdvance.nextStepNum,
+        pendingWorkflowAdvance.vars,
+        pendingWorkflowAdvance.completed,
+        logger,
+        pendingWorkflowAdvance.expectedCurrentStep
+      );
+
+      logger.info("[workflow] progression committed after outbound accepted", {
+        workflow_id: committed?.workflow_id ?? resolvedWorkflow?.workflow_id,
+        log_id: pendingWorkflowAdvance.logId,
+        next_step: pendingWorkflowAdvance.nextStepNum,
+        completed: pendingWorkflowAdvance.completed,
+        reason: pendingWorkflowAdvance.reason,
+      });
+    } else if (workflowIsActive) {
+      logger.debug("[workflow] progression skipped because no progression planned", {
+        workflow_id: resolvedWorkflow?.workflow_id,
+      });
+    }
 
     await supabase
       .from("conversations")

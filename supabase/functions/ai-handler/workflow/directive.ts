@@ -15,6 +15,12 @@ export type WorkflowDirective =
       step_order: number;
     }
   | {
+      // Phase 1: hidden workflow guidance (never sent verbatim to customer)
+      action: "guide";
+      guide_text: string;
+      step_order: number;
+    }
+  | {
       action: "say";
       message_seed: string;
       schema: SaySchema;
@@ -28,6 +34,30 @@ export type WorkflowDirective =
 
 function asRecord(v: unknown): Record<string, unknown> {
   return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
+}
+
+function readInstructionText(step: unknown): string {
+  const s = asRecord(step);
+  const action = asRecord(s.action);
+
+  // Phase 1 canonical priority:
+  // 1) action.instruction_text
+  // 2) top-level instruction_text
+  // 3) ""
+  return String(action.instruction_text ?? s.instruction_text ?? "").trim();
+}
+
+function readAiAction(step: unknown): string {
+  const s = asRecord(step);
+  const action = asRecord(s.action);
+
+  // Phase 1 canonical priority:
+  // 1) action.ai_action
+  // 2) top-level ai_action
+  // 3) default "instruction"
+  const raw = action.ai_action ?? s.ai_action ?? s.aiAction ?? null;
+  const t = String(raw ?? "").trim();
+  return t || "instruction";
 }
 
 function parseRequiredEntities(step: unknown): string[] {
@@ -69,21 +99,21 @@ export function buildDirective(
   const s = asRecord(step);
   const stepOrder = Number(s.step_order ?? s.stepOrder ?? 0) || 0;
 
-  const instruction =
-    (
-      s.instruction_text ??
-      asRecord(s.action).instruction_text ??
-      asRecord(s.action).text ??
-      ""
-    )
-      .toString()
-      .trim();
+  const instruction = readInstructionText(step);
+  const aiAction = readAiAction(step);
 
-  const aiAction = (s.ai_action ?? s.aiAction ?? "give_information")
-    .toString()
-    .trim();
+  // Phase 1: treat instruction-like / missing action as hidden guidance.
+  // IMPORTANT: Never convert these into a customer-facing "say" seed.
+  const aiActionNorm = aiAction.toLowerCase();
+  if (aiActionNorm === "instruction" || aiActionNorm === "guide" || !aiActionNorm) {
+    return {
+      action: "guide",
+      guide_text: instruction,
+      step_order: stepOrder,
+    };
+  }
 
-  if (aiAction === "ask_question") {
+  if (aiActionNorm === "ask_question") {
     const required = parseRequiredEntities(step);
     const missing = required.filter((k) => !entities?.[k]);
 
@@ -104,7 +134,8 @@ export function buildDirective(
     };
   }
 
-  if (aiAction === "end") {
+  if (aiActionNorm === "end") {
+    // Preserve legacy behavior: end steps were implemented as a final SAY.
     return {
       action: "say",
       message_seed: instruction,
@@ -113,7 +144,7 @@ export function buildDirective(
     };
   }
 
-  if (aiAction === "escalate") {
+  if (aiActionNorm === "escalate") {
     return {
       action: "escalate",
       reason: instruction || "manual review",
@@ -121,7 +152,8 @@ export function buildDirective(
     };
   }
 
-  if (aiAction === "branch") {
+  if (aiActionNorm === "branch") {
+    // Preserve existing behavior for now (Phase 1: do not redesign branching).
     return {
       action: "say",
       message_seed: instruction,
@@ -130,10 +162,10 @@ export function buildDirective(
     };
   }
 
+  // Phase 1 safety: fallback/default becomes GUIDE, not SAY.
   return {
-    action: "say",
-    message_seed: instruction,
-    schema: parseSaySchema(step),
+    action: "guide",
+    guide_text: instruction,
     step_order: stepOrder,
   };
 }
