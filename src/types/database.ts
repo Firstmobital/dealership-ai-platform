@@ -272,9 +272,19 @@ export type WorkflowStepAction = {
 
 export type WorkflowStep = {
   id: UUID;
+  organization_id?: UUID;
   workflow_id: UUID;
   step_order: number;
+
+  // Canonical payload
   action: WorkflowStepAction;
+
+  // Legacy top-level mirrors (compat only)
+  ai_action?: string | null;
+  instruction_text?: string | null;
+  expected_user_input?: string | null;
+  metadata?: Record<string, unknown> | null;
+
   created_at?: string;
 };
 

@@ -62,15 +62,23 @@ function readAiAction(step: unknown): string {
 
 function parseRequiredEntities(step: unknown): string[] {
   const s = asRecord(step);
-  const meta = asRecord(s.metadata);
-  const fromMeta = Array.isArray(meta.required_entities)
-    ? meta.required_entities
-    : null;
+  const action = asRecord(s.action);
+
+  // Canonical contract (Phase 4): prefer action.expected_user_input/metadata.
+  const actionMeta = asRecord(action.metadata);
+  const legacyMeta = asRecord(s.metadata);
+
+  const fromMeta = Array.isArray(actionMeta.required_entities)
+    ? actionMeta.required_entities
+    : Array.isArray(legacyMeta.required_entities)
+      ? legacyMeta.required_entities
+      : null;
   if (fromMeta && fromMeta.length) return fromMeta.map((x: unknown) => String(x));
 
-  const exp = (s.expected_user_input ?? "").toString().trim();
-  if (!exp) return [];
-  return exp
+  const rawExp =
+    (action.expected_user_input ?? s.expected_user_input ?? "").toString().trim();
+  if (!rawExp) return [];
+  return rawExp
     .split(",")
     .map((s: string) => s.trim())
     .filter(Boolean);
@@ -78,7 +86,14 @@ function parseRequiredEntities(step: unknown): string[] {
 
 function parseSaySchema(step: unknown): SaySchema {
   const s = asRecord(step);
-  const meta = asRecord(s.metadata);
+  const action = asRecord(s.action);
+
+  // Canonical contract (Phase 4): prefer action.metadata, fallback to legacy metadata.
+  const meta = {
+    ...asRecord(s.metadata),
+    ...asRecord(action.metadata),
+  };
+
   const allow_numbers =
     typeof meta.allow_numbers === "boolean" ? meta.allow_numbers : false;
   const max_questions =

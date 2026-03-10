@@ -657,6 +657,11 @@ export type Database = {
       workflow_steps: {
         Row: {
           action: Json
+          ai_action: string | null
+          instruction_text: string | null
+          expected_user_input: string | null
+          metadata: Json | null
+          organization_id: string | null
           created_at: string | null
           id: string
           step_order: number
@@ -664,6 +669,11 @@ export type Database = {
         }
         Insert: {
           action: Json
+          ai_action?: string | null
+          instruction_text?: string | null
+          expected_user_input?: string | null
+          metadata?: Json | null
+          organization_id?: string | null
           created_at?: string | null
           id?: string
           step_order: number
@@ -671,6 +681,11 @@ export type Database = {
         }
         Update: {
           action?: Json
+          ai_action?: string | null
+          instruction_text?: string | null
+          expected_user_input?: string | null
+          metadata?: Json | null
+          organization_id?: string | null
           created_at?: string | null
           id?: string
           step_order?: number

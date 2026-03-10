@@ -6,23 +6,82 @@ import type { Workflow, WorkflowStep, WorkflowLog } from "../types/database";
 
 const buildStepActionForPersist = (action: any) => {
   const a = (action ?? {}) as any;
-  // Persist only core fields. Do not normalize/write legacy optional fields.
+  const expected_user_input =
+    typeof a.expected_user_input === "string" ? a.expected_user_input : undefined;
+  const metadata =
+    typeof a.metadata === "object" && a.metadata !== null
+      ? a.metadata
+      : undefined;
+
+  // Canonical contract: action.* must be complete and authoritative.
+  // Keep extra keys (expects_answer, skip_if_answered, match_any_keywords, etc.) if present.
   return {
-    ai_action: a.ai_action ?? "instruction",
-    instruction_text: typeof a.instruction_text === "string" ? a.instruction_text : "",
-  };
+    ...("expects_answer" in a ? { expects_answer: a.expects_answer } : {}),
+    ...("skip_if_answered" in a ? { skip_if_answered: a.skip_if_answered } : {}),
+    ...("match_any_keywords" in a ? { match_any_keywords: a.match_any_keywords } : {}),
+
+    ai_action: typeof a.ai_action === "string" && a.ai_action.trim() ? a.ai_action : "instruction",
+    instruction_text:
+      typeof a.instruction_text === "string" ? a.instruction_text : "",
+    ...(expected_user_input !== undefined ? { expected_user_input } : {}),
+    ...(metadata !== undefined ? { metadata } : {}),
+  } as any;
 };
 
 const mergeStepActionForPersist = (existingAction: any, incomingAction: any) => {
   // Backward compatibility: preserve any legacy keys that may already exist in DB.
-  // Only overwrite the core fields that the UI can edit.
+  // Ensure the canonical keys are always present and updated.
   const existing = (existingAction ?? {}) as any;
-  const incomingCore = buildStepActionForPersist(incomingAction);
-  return {
+  const incoming = (incomingAction ?? {}) as any;
+  const incomingCanonical = buildStepActionForPersist(incoming);
+
+  // For optional canonical keys, allow explicit clearing by passing "" / {}.
+  // If incoming omitted a key entirely, keep existing.
+  const merged: any = {
     ...existing,
-    ...incomingCore,
+    ...incoming,
+    ...incomingCanonical,
   };
+
+  if (!("expected_user_input" in incoming)) {
+    if ("expected_user_input" in existing) merged.expected_user_input = existing.expected_user_input;
+  }
+  if (!("metadata" in incoming)) {
+    if ("metadata" in existing) merged.metadata = existing.metadata;
+  }
+
+  return merged;
 };
+
+function normalizeWorkflowStep(row: any): WorkflowStep {
+  const action = (row?.action ?? {}) as any;
+  const normalizedAction: any = {
+    ...action,
+    ai_action:
+      (typeof action.ai_action === "string" && action.ai_action) ||
+      (typeof row?.ai_action === "string" && row.ai_action) ||
+      "instruction",
+    instruction_text:
+      (typeof action.instruction_text === "string" && action.instruction_text) ||
+      (typeof row?.instruction_text === "string" && row.instruction_text) ||
+      "",
+    expected_user_input:
+      (typeof action.expected_user_input === "string" && action.expected_user_input) ||
+      (typeof row?.expected_user_input === "string" && row.expected_user_input) ||
+      "",
+    metadata:
+      (typeof action.metadata === "object" && action.metadata !== null
+        ? action.metadata
+        : undefined) ??
+      (typeof row?.metadata === "object" && row.metadata !== null ? row.metadata : undefined) ??
+      {},
+  };
+
+  return {
+    ...(row as WorkflowStep),
+    action: normalizedAction,
+  };
+}
 
 type WorkflowState = {
   workflows: Workflow[];
@@ -124,8 +183,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       return;
     }
 
+    const normalized = (data ?? []).map((s: any) => normalizeWorkflowStep(s));
+
     set((state) => ({
-      steps: { ...state.steps, [workflowId]: data ?? [] },
+      steps: { ...state.steps, [workflowId]: normalized },
     }));
   },
 
@@ -255,13 +316,19 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
 
     const stepOrder = (get().steps[workflowId]?.length ?? 0) + 1;
+    const canonicalAction = buildStepActionForPersist(action);
 
     const { error } = await supabase.from("workflow_steps").insert({
       organization_id: activeOrganization.id,
       workflow_id: workflowId,
       step_order: stepOrder,
-      action: buildStepActionForPersist(action),
-    });
+      action: canonicalAction,
+      // Legacy mirrors (compat only)
+      ai_action: canonicalAction.ai_action,
+      instruction_text: canonicalAction.instruction_text,
+      expected_user_input: canonicalAction.expected_user_input ?? null,
+      metadata: (canonicalAction.metadata ?? null) as any,
+    } as any);
 
     if (error) {
       set({ error: error.message });
@@ -277,7 +344,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   updateStep: async (stepId, action) => {
     const { data: existing, error: fetchError } = await supabase
       .from("workflow_steps")
-      .select("action")
+      .select("action, ai_action, instruction_text, expected_user_input, metadata")
       .eq("id", stepId)
       .single();
 
@@ -290,7 +357,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     const { error } = await supabase
       .from("workflow_steps")
-      .update({ action: nextAction })
+      .update({
+        action: nextAction,
+        // Legacy mirrors (compat only)
+        ai_action: (nextAction as any).ai_action,
+        instruction_text: (nextAction as any).instruction_text,
+        expected_user_input: (nextAction as any).expected_user_input ?? null,
+        metadata: ((nextAction as any).metadata ?? null) as any,
+      } as any)
       .eq("id", stepId);
 
     if (error) set({ error: error.message });
@@ -371,21 +445,22 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     if (wfSteps?.length) {
       await supabase.from("workflow_steps").insert(
-        wfSteps.map((s: any) => ({
-          organization_id: wf.organization_id,
-          workflow_id: newWF.id,
-          step_order: s.step_order,
-          action: {
-            ai_action: s.ai_action,
-            instruction_text: s.instruction_text ?? "",
-            expected_user_input: s.expected_user_input ?? "",
-            metadata: s.metadata ?? {},
-            expects_answer: s.expects_answer,
-            skip_if_answered: s.skip_if_answered,
-            match_any_keywords: s.match_any_keywords,
-          },
-          // NOTE: workflow-generator may still produce legacy keys; we keep that behavior for now.
-        }))
+        wfSteps.map((s: any) => {
+          const normalized = normalizeWorkflowStep(s);
+          const canonicalAction = buildStepActionForPersist(normalized.action);
+
+          return {
+            organization_id: wf.organization_id,
+            workflow_id: newWF.id,
+            step_order: s.step_order,
+            action: canonicalAction,
+            // Legacy mirrors (compat only)
+            ai_action: canonicalAction.ai_action,
+            instruction_text: canonicalAction.instruction_text,
+            expected_user_input: canonicalAction.expected_user_input ?? null,
+            metadata: (canonicalAction.metadata ?? null) as any,
+          } as any;
+        })
       );
     }
 
@@ -449,25 +524,27 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
     if (Array.isArray(wf.steps)) {
       await supabase.from("workflow_steps").insert(
-        wf.steps.map((s: any, i: number) => ({
-          organization_id: activeOrganization.id,
-          workflow_id: workflowId,
-          step_order: i + 1,
-          // IMPORTANT: engine reads these from table columns
-          ai_action: s.ai_action,
-          instruction_text: s.instruction_text ?? "",
-          // Keep the JSON payload for UI / future usage
-          action: {
+        wf.steps.map((s: any, i: number) => {
+          const canonicalAction = buildStepActionForPersist({
+            ...s,
             ai_action: s.ai_action,
             instruction_text: s.instruction_text ?? "",
             expected_user_input: s.expected_user_input ?? "",
             metadata: s.metadata ?? {},
-            expects_answer: s.expects_answer,
-            skip_if_answered: s.skip_if_answered,
-            match_any_keywords: s.match_any_keywords,
-          },
-          // NOTE: workflow-generator may still produce legacy keys; we keep that behavior for now.
-        }))
+          });
+
+          return {
+            organization_id: activeOrganization.id,
+            workflow_id: workflowId,
+            step_order: i + 1,
+            action: canonicalAction,
+            // Legacy mirrors (compat only)
+            ai_action: canonicalAction.ai_action,
+            instruction_text: canonicalAction.instruction_text,
+            expected_user_input: canonicalAction.expected_user_input ?? null,
+            metadata: (canonicalAction.metadata ?? null) as any,
+          } as any;
+        })
       );
     }
 
