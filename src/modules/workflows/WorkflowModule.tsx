@@ -45,21 +45,11 @@ type WorkflowFormState = {
 };
 
 type StepDraft = {
-  ai_action: "instruction";
   instruction_text: string;
-
-  // Deterministic skipping (stored in workflow_steps.action JSON)
-  expects_answer: boolean;
-  skip_if_answered: boolean;
-  match_any_keywords: string;
 };
 
 const DEFAULT_STEP_DRAFT: StepDraft = {
-  ai_action: "instruction",
   instruction_text: "",
-  expects_answer: false,
-  skip_if_answered: false,
-  match_any_keywords: "",
 };
 
 /* ------------------------------------------------------------------ */
@@ -73,7 +63,7 @@ function safeString(v: unknown): string {
 function renderStepSummary(step: WorkflowStep) {
   return (
     <>
-      <div className="font-medium">Assistant Guidance</div>
+      <div className="font-medium">Instruction</div>
       <div className="text-sm text-slate-600 line-clamp-4">
         {safeString((step as any)?.action?.instruction_text) || "—"}
       </div>
@@ -810,15 +800,7 @@ export function WorkflowModule() {
                           setEditingStepId(step.id);
                           const a: any = (step as any)?.action ?? {};
                           setStepDraft({
-                            ai_action: "instruction",
                             instruction_text: safeString(a.instruction_text),
-                            expects_answer:
-                              typeof a.expects_answer === "boolean" ? a.expects_answer : false,
-                            skip_if_answered:
-                              typeof a.skip_if_answered === "boolean" ? a.skip_if_answered : false,
-                            match_any_keywords: Array.isArray(a.match_any_keywords)
-                              ? a.match_any_keywords.join(", ")
-                              : "",
                           });
                         }}
                         className="hover:text-blue-600"
@@ -852,6 +834,7 @@ export function WorkflowModule() {
                             p ? { ...p, instruction_text: e.target.value } : p
                           )
                         }
+                        placeholder="Write a simple instruction for this step…"
                       />
 
                       <div className="flex items-center gap-2">
@@ -859,18 +842,9 @@ export function WorkflowModule() {
                           onClick={async () => {
                             if (!stepDraft) return;
 
-                            const payload = {
-                              ai_action: stepDraft.ai_action,
+                            await updateStep(step.id, {
                               instruction_text: stepDraft.instruction_text,
-                              expects_answer: stepDraft.expects_answer ?? false,
-                              skip_if_answered: stepDraft.skip_if_answered ?? false,
-                              match_any_keywords: (stepDraft.match_any_keywords ?? "")
-                                .split(",")
-                                .map((x) => x.trim())
-                                .filter(Boolean),
-                            };
-
-                            await updateStep(step.id, payload);
+                            });
                             setEditingStepId(null);
                             setStepDraft(null);
                             if (workflowId) await fetchWorkflowSteps(workflowId);
@@ -902,7 +876,7 @@ export function WorkflowModule() {
             <div className="border-t p-4 space-y-3 bg-white sticky bottom-0 shadow-[0_-4px_10px_rgba(0,0,0,0.06)]">
               <textarea
                 className={`${inputClass} h-24`}
-                placeholder="What should the assistant do at this stage?"
+                placeholder="Write a simple instruction for this step…"
                 value={newStep.instruction_text}
                 onChange={(e) =>
                   setNewStep((prev) =>
@@ -922,18 +896,9 @@ export function WorkflowModule() {
                     if (!workflowId) return;
                     if (!newStep) return;
 
-                    const payload = {
-                      ai_action: newStep.ai_action,
+                    await addStep(workflowId, {
                       instruction_text: newStep.instruction_text,
-                      expects_answer: newStep.expects_answer ?? false,
-                      skip_if_answered: newStep.skip_if_answered ?? false,
-                      match_any_keywords: (newStep.match_any_keywords ?? "")
-                        .split(",")
-                        .map((x) => x.trim())
-                        .filter(Boolean),
-                    };
-
-                    await addStep(workflowId, payload);
+                    });
                     setNewStep(null);
                     await fetchWorkflowSteps(workflowId);
                   }}

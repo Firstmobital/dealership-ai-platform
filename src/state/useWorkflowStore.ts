@@ -6,25 +6,30 @@ import type { Workflow, WorkflowStep, WorkflowLog } from "../types/database";
 
 const buildStepActionForPersist = (action: any) => {
   const a = (action ?? {}) as any;
+
+  // Canonical contract (instruction-only builder): always persist as instruction.
+  // Backend/engine expects action.ai_action + action.instruction_text; metadata must exist.
+  const instruction_text =
+    typeof a.instruction_text === "string" ? a.instruction_text : "";
+
+  const metadata =
+    typeof a.metadata === "object" && a.metadata !== null ? a.metadata : {};
+
+  // Keep legacy optional keys if they exist (for existing workflows created with old UI)
   const expected_user_input =
     typeof a.expected_user_input === "string" ? a.expected_user_input : undefined;
-  const metadata =
-    typeof a.metadata === "object" && a.metadata !== null
-      ? a.metadata
-      : undefined;
 
-  // Canonical contract: action.* must be complete and authoritative.
-  // Keep extra keys (expects_answer, skip_if_answered, match_any_keywords, etc.) if present.
   return {
+    // legacy/engine optional keys (preserved if present)
     ...("expects_answer" in a ? { expects_answer: a.expects_answer } : {}),
     ...("skip_if_answered" in a ? { skip_if_answered: a.skip_if_answered } : {}),
     ...("match_any_keywords" in a ? { match_any_keywords: a.match_any_keywords } : {}),
 
-    ai_action: typeof a.ai_action === "string" && a.ai_action.trim() ? a.ai_action : "instruction",
-    instruction_text:
-      typeof a.instruction_text === "string" ? a.instruction_text : "",
+    // canonical
+    ai_action: "instruction",
+    instruction_text,
     ...(expected_user_input !== undefined ? { expected_user_input } : {}),
-    ...(metadata !== undefined ? { metadata } : {}),
+    metadata,
   } as any;
 };
 

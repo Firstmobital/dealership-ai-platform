@@ -135,35 +135,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function normalizeWorkflowKey(input: string): string {
-  return String(input || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\b(workflow|flows|flow|tab|sheet)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function workflowMatches(replyTab: string, workflowName: string): boolean {
-  const tab = normalizeWorkflowKey(replyTab);
-  const name = normalizeWorkflowKey(workflowName);
-  if (!tab || !name) return false;
-
-  // exact match after normalization
-  if (tab === name) return true;
-
-  // common: "sales" vs "sales workflow"
-  if (name.startsWith(tab) || tab.startsWith(name)) return true;
-
-  // last resort: contains match
-  if (name.includes(tab) || tab.includes(name)) return true;
-
-  return false;
-}
-
-
-
 /* ============================================================
    TYPES
 ============================================================ */
@@ -953,12 +924,10 @@ async function linkMessageToConversationAndPsf(params: {
   }
 
   // Phase 5: attach workflow to conversation with strict org validation.
-  // Priority 1: explicit campaign.workflow_id
-  // Priority 2: LEGACY COMPATIBILITY PATH (reply_sheet_tab ↔ workflow.name matching) only if workflow_id is null.
+  // Deterministic routing: ONLY campaign.workflow_id is permitted.
   let attachedWorkflowId: string | null = null;
 
   if (params.campaign.workflow_id) {
-    // Priority 1: explicit workflow_id path
     try {
       const { data: wf, error: wfErr } = await supabaseAdmin
         .from("workflows")
@@ -984,7 +953,7 @@ async function linkMessageToConversationAndPsf(params: {
           },
         );
       } else if (wf.organization_id !== params.campaign.organization_id) {
-        // Fail safely: never attach a workflow across organizations.
+        // Safety: never attach a workflow across organizations.
         console.error(
           "[campaign-dispatch] unsafe campaign.workflow_id org mismatch (skipping workflow attach)",
           {
@@ -995,7 +964,6 @@ async function linkMessageToConversationAndPsf(params: {
           },
         );
       } else if (wf.is_active !== true) {
-        // Phase 5 final rule: explicit campaign.workflow_id must be active.
         console.error(
           "[campaign-dispatch] campaign.workflow_id points to inactive workflow (skipping workflow attach)",
           {
@@ -1013,29 +981,6 @@ async function linkMessageToConversationAndPsf(params: {
         "[campaign-dispatch] workflow attach via campaign.workflow_id failed (continuing dispatch)",
         e,
       );
-    }
-  } else {
-    // Priority 2: LEGACY COMPATIBILITY PATH
-    // Best-effort: auto-attach a workflow by matching workflow.name to reply_sheet_tab
-    // (e.g. Service / Sales / PSF). Kept for backwards compatibility with existing campaigns.
-    try {
-      const tab = (params.campaign.reply_sheet_tab ?? "").trim().toLowerCase();
-      if (tab) {
-        const { data: wfs } = await supabaseAdmin
-          .from("workflows")
-          .select("id, name, is_active")
-          .eq("organization_id", params.msg.organization_id)
-          .eq("is_active", true);
-
-        const match = (wfs ?? []).find((w: { id: string; name: string | null; is_active: boolean }) => {
-          const wfName = String(w.name ?? "");
-          return workflowMatches(tab, wfName);
-        });
-
-        if (match?.id) attachedWorkflowId = match.id;
-      }
-    } catch {
-      // best-effort only
     }
   }
 
@@ -1089,28 +1034,42 @@ async function linkMessageToConversationAndPsf(params: {
   await supabaseAdmin
     .from("conversations")
     .update(conversationUpdate)
-    .eq("id", params.conversationId);
+    .eq("id", params.conversationId)
+    // Safety: enforce org equality when updating workflow routing.
+    .eq("organization_id", params.campaign.organization_id);
 
-  // Ensure one active workflow log exists (repo uses unique index on (org, conversation, workflow) where completed=false)
+  // Ensure one active workflow log exists.
+  // Requirement: if conversation.workflow_id exists but workflow_logs row does not, insert:
+  // { conversation_id, workflow_id, organization_id, current_step_number: 1, variables: {}, status: "active" }
   if (attachedWorkflowId) {
     try {
-      const { data: existing } = await supabaseAdmin
+      const { data: existing, error: existingErr } = await supabaseAdmin
         .from("workflow_logs")
         .select("id")
         .eq("conversation_id", params.conversationId)
         .eq("workflow_id", attachedWorkflowId)
         .eq("organization_id", params.campaign.organization_id)
-        .eq("completed", false)
+        .eq("status", "active")
         .maybeSingle();
 
-      if (!existing?.id) {
+      if (existingErr) {
+        console.error(
+          "[campaign-dispatch] workflow_log lookup failed (continuing dispatch)",
+          {
+            campaign_id: params.campaign.id,
+            conversation_id: params.conversationId,
+            workflow_id: attachedWorkflowId,
+            error: existingErr,
+          },
+        );
+      } else if (!existing?.id) {
         await supabaseAdmin.from("workflow_logs").insert({
           organization_id: params.campaign.organization_id,
           workflow_id: attachedWorkflowId,
           conversation_id: params.conversationId,
           current_step_number: 1,
-          variables: campaignContext.variables ?? {},
-          completed: false,
+          variables: {},
+          status: "active",
         });
       }
     } catch (e) {

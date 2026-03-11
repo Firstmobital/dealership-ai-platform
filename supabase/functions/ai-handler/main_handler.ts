@@ -98,6 +98,13 @@ import { shouldBlockDuplicateText } from "./safe_helpers.ts";
 
 type JsonObject = Record<string, unknown>;
 
+// Optional AI step-completion evaluator output
+// Phase 7 safety: only allow step_complete + optional next_step (reply is unused).
+type WorkflowStepCompletionEval = {
+  step_complete: boolean;
+  next_step?: number;
+};
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -108,6 +115,25 @@ function asRecord(v: unknown): Record<string, unknown> {
 
 function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.map((x) => String(x)) : [];
+}
+
+function asBoolean(v: unknown): boolean {
+  return v === true;
+}
+
+function asOptionalPositiveInt(v: unknown): number | undefined {
+  const n = typeof v === "number" ? v : (typeof v === "string" ? Number(v) : NaN);
+  if (!Number.isFinite(n)) return undefined;
+  const i = Math.trunc(n);
+  if (i <= 0) return undefined;
+  return i;
+}
+
+function coerceWorkflowStepCompletionEval(v: unknown): WorkflowStepCompletionEval | null {
+  if (!isRecord(v)) return null;
+  const step_complete = asBoolean((v as Record<string, unknown>).step_complete);
+  const next_step = asOptionalPositiveInt((v as Record<string, unknown>).next_step);
+  return { step_complete, ...(next_step ? { next_step } : {}) };
 }
 
 type TransmissionValue = AiExtractedIntent["transmission"];
@@ -280,7 +306,8 @@ function buildSemanticQueryText(params: {
     ". Focus on " +
     focus +
     ". " +
-    campaignHint
+    campaignHint +
+    "."
   ).trim();
 }
 
@@ -1089,7 +1116,6 @@ export async function mainHandler(params: {
           last_workflow_run_at,
           last_kb_hit_count,
           last_kb_article_ids,
-          last_kb_match_confidence,
           ai_locked,
           ai_locked_by,
           ai_locked_at,
@@ -2772,23 +2798,25 @@ ${personality.donts || "- None specified."}
                  reason: "auto_skip",
                });
              } else {
+               const pwa = pendingWorkflowAdvance;
+               if (!pwa) break;
+
                // Keep the earliest expected step (optimistic locking) and extend to the farthest next step.
-               pendingWorkflowAdvance.nextStepNum = Math.max(
-                 Number(pendingWorkflowAdvance.nextStepNum || 0),
+               pwa.nextStepNum = Math.max(
+                 Number(pwa.nextStepNum || 0),
                  Number(nextStep || 0)
                );
-               pendingWorkflowAdvance.completed = pendingWorkflowAdvance.completed || false;
+               pwa.completed = pwa.completed || false;
 
                // Prefer workflow variables from the latest in-memory state.
-               pendingWorkflowAdvance.vars =
-                 (resolvedWorkflow.variables ?? pendingWorkflowAdvance.vars ?? {}) as Record<string, unknown>;
+               pwa.vars = (resolvedWorkflow.variables ?? {}) as Record<string, unknown>;
 
                logger.debug("[workflow] progression deferred (merged)", {
                  workflow_id: resolvedWorkflow.workflow_id,
-                 log_id: resolvedWorkflow.id,
-                 expected_step: pendingWorkflowAdvance.expectedCurrentStep,
-                 next_step: pendingWorkflowAdvance.nextStepNum,
-                 reason: pendingWorkflowAdvance.reason,
+                 log_id: pwa.logId,
+                 expected_step: pwa.expectedCurrentStep,
+                 next_step: pwa.nextStepNum,
+                 reason: pwa.reason,
                });
              }
 
@@ -3535,6 +3563,152 @@ ${campaignContextForPrompt || "No prior campaign history available."}
     // Final reply text selection (used for both workflow-forced and AI-generated replies)
     let aiResponseText = forcedReplyText ?? aiResult?.text ?? fallbackMessage;
     if (!aiResponseText) aiResponseText = fallbackMessage;
+
+    // ------------------------------------------------------------------
+    // OPTIONAL AI STEP-COMPLETION EVALUATION (WORKFLOW)
+    // ------------------------------------------------------------------
+    // After AI response generation, optionally allow the LLM to declare whether the
+    // current workflow step objective has been satisfied.
+    //
+    // Guardrails:
+    // - Must NOT override deterministic engine progression (pendingWorkflowAdvance).
+    // - Must respect pendingWorkflowAdvance system (commit only after outbound insert success).
+    // - Must not break duplicate-block or deterministic skip logic.
+    try {
+      const allowAiEval =
+        workflowIsActive &&
+        Boolean(resolvedWorkflow?.id) &&
+        Boolean(aiResult) &&
+        !forcedReplyText &&
+        !pendingWorkflowAdvance &&
+        workflowDirectiveAction !== "say" &&
+        workflowDirectiveAction !== "ask" &&
+        workflowDirectiveAction !== "escalate";
+
+      if (allowAiEval && resolvedWorkflow && aiSettings) {
+        // Clamp range must be based on real workflow step range.
+        // This AI-eval uses a separate completion call, so we must compute maxStepOrder here.
+        const stepsForClamp = await getWorkflowSteps(
+          String(resolvedWorkflow.workflow_id ?? ""),
+          organizationId,
+          logger
+        );
+        const maxStepOrderForClamp = Array.isArray(stepsForClamp)
+          ? stepsForClamp.reduce((m, s) => {
+              const o = Number((s as WorkflowStepRow).step_order);
+              return Number.isFinite(o) && o > m ? o : m;
+            }, 0)
+          : 0;
+
+        const evaluatorSystem =
+          "You are an evaluator for a workflow engine.\n" +
+          "Return ONLY a valid JSON object with keys: step_complete, next_step (optional).\n" +
+          "Rules:\n" +
+          "- step_complete=true ONLY if the current workflow step objective is satisfied by the latest exchange.\n" +
+          "- If step_complete=true, you MAY suggest next_step as a positive integer step number; otherwise omit it.\n" +
+          "- Do not include extra keys.\n";
+
+        const evaluatorUser =
+          "Workflow context:\n" +
+          `- workflow_id: ${String(resolvedWorkflow.workflow_id ?? "")}\n` +
+          `- current_step_number: ${String(resolvedWorkflow.current_step_number ?? 1)}\n` +
+          `- workflow_instruction: ${String(workflowInstructionText || workflowMediaInstructionText || "").trim()}\n\n` +
+          `Customer message:\n${String(user_message || "").trim()}\n\n` +
+          `Assistant reply:\n${String(aiResponseText || "").trim()}\n`;
+
+        const evalResult = await runAICompletion({
+          provider: aiSettings.provider,
+          model: routedModel,
+          systemPrompt: evaluatorSystem,
+          historyMessages: [{ role: "user", content: evaluatorUser }],
+          logger,
+        });
+
+        let parsed: WorkflowStepCompletionEval | null = null;
+        try {
+          const raw = String(evalResult?.text ?? "").trim();
+          const obj = raw ? JSON.parse(raw) : null;
+          parsed = coerceWorkflowStepCompletionEval(obj);
+        } catch {
+          parsed = null;
+        }
+
+        if (parsed && parsed.step_complete === true) {
+          const current = Number(resolvedWorkflow.current_step_number ?? 1);
+          const fallbackNext =
+            Number.isFinite(current) && current > 0 ? current + 1 : 2;
+
+          // Phase 7 safety clamp:
+          // - ignore invalid/NaN/out of range
+          // - disallow backwards jumps
+          // - disallow jumping beyond maxStepOrder
+          // - if invalid => fallback to current+1
+          let nextStepNum = fallbackNext;
+          const proposed = parsed.next_step;
+
+          if (typeof proposed === "number" && Number.isFinite(proposed)) {
+            const p = Math.trunc(proposed);
+            const upper =
+              Number.isFinite(maxStepOrderForClamp) && maxStepOrderForClamp > 0
+                ? maxStepOrderForClamp
+                : null;
+
+            const inRange =
+              p >= 1 &&
+              (upper === null ? true : p <= upper) &&
+              // no backward jumps
+              (Number.isFinite(current) && current > 0 ? p >= current : true);
+
+            if (inRange) {
+              nextStepNum = p;
+            }
+          }
+
+          // Never allow jumps beyond max step, even via fallback.
+          if (
+            Number.isFinite(maxStepOrderForClamp) &&
+            maxStepOrderForClamp > 0 &&
+            nextStepNum > maxStepOrderForClamp
+          ) {
+            nextStepNum = maxStepOrderForClamp;
+          }
+
+          const expectedStep = resolvedWorkflow.current_step_number ?? 1;
+
+          pendingWorkflowAdvance = {
+            logId: resolvedWorkflow.id,
+            organizationId,
+            nextStepNum,
+            vars: (resolvedWorkflow.variables ?? {}) as Record<string, unknown>,
+            completed: false,
+            expectedCurrentStep: expectedStep,
+            reason: "generic",
+          };
+
+          resolvedWorkflow.current_step_number = nextStepNum;
+          workflowStepAdvancedThisTurn = true;
+
+          logger.info("[workflow] ai_eval_step_complete=true (deferred)", {
+            workflow_id: resolvedWorkflow.workflow_id,
+            log_id: resolvedWorkflow.id,
+            from_step: expectedStep,
+            to_step: nextStepNum,
+            next_step_from_ai: parsed.next_step ?? null,
+            max_step_order: maxStepOrderForClamp || null,
+          });
+        } else if (parsed) {
+          logger.debug("[workflow] ai_eval_step_complete=false", {
+            workflow_id: resolvedWorkflow.workflow_id,
+            log_id: resolvedWorkflow.id,
+            step_number: resolvedWorkflow.current_step_number ?? 1,
+          });
+        }
+      }
+    } catch (e) {
+      logger.warn("[workflow] ai_eval failed; continuing without AI step completion", {
+        error: String(e),
+      });
+    }
 
     // ------------------------------------------------------------
     // WORKFLOW-DRIVEN MEDIA AUTO-SEND (WhatsApp only)
