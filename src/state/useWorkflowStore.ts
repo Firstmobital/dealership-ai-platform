@@ -15,6 +15,24 @@ const buildStepActionForPersist = (action: any) => {
   const metadata =
     typeof a.metadata === "object" && a.metadata !== null ? a.metadata : {};
 
+  // Phase 8: optional media attachment per step
+  // Canonical storage: action.metadata.send_media
+  const send_media_raw =
+    typeof a.send_media === "string"
+      ? a.send_media
+      : typeof (metadata as any).send_media === "string"
+      ? (metadata as any).send_media
+      : null;
+  const send_media =
+    send_media_raw && String(send_media_raw).trim()
+      ? String(send_media_raw).trim()
+      : null;
+
+  const nextMetadata = {
+    ...(metadata as any),
+    ...(send_media ? { send_media } : {}),
+  };
+
   // Keep legacy optional keys if they exist (for existing workflows created with old UI)
   const expected_user_input =
     typeof a.expected_user_input === "string" ? a.expected_user_input : undefined;
@@ -29,7 +47,7 @@ const buildStepActionForPersist = (action: any) => {
     ai_action: "instruction",
     instruction_text,
     ...(expected_user_input !== undefined ? { expected_user_input } : {}),
-    metadata,
+    metadata: nextMetadata,
   } as any;
 };
 
@@ -81,6 +99,14 @@ function normalizeWorkflowStep(row: any): WorkflowStep {
       (typeof row?.metadata === "object" && row.metadata !== null ? row.metadata : undefined) ??
       {},
   };
+
+  // Ensure send_media is always either a trimmed string or absent
+  const sm = (normalizedAction.metadata as any)?.send_media;
+  if (typeof sm === "string") {
+    const t = sm.trim();
+    if (t) (normalizedAction.metadata as any).send_media = t;
+    else delete (normalizedAction.metadata as any).send_media;
+  }
 
   return {
     ...(row as WorkflowStep),

@@ -27,6 +27,12 @@ export type WorkflowDirective =
       step_order: number;
     }
   | {
+      action: "send_media";
+      media_key: string;
+      caption_seed?: string;
+      step_order: number;
+    }
+  | {
       action: "escalate";
       reason: string;
       step_order: number;
@@ -58,6 +64,34 @@ function readAiAction(step: unknown): string {
   const raw = action.ai_action ?? s.ai_action ?? s.aiAction ?? null;
   const t = String(raw ?? "").trim();
   return t || "instruction";
+}
+
+function parseSendMediaMeta(step: unknown): {
+  media_key: string | null;
+  caption_seed?: string;
+} {
+  const s = asRecord(step);
+  const action = asRecord(s.action);
+
+  // Canonical storage: action.metadata.send_media
+  const meta = {
+    ...asRecord(s.metadata),
+    ...asRecord(action.metadata),
+  };
+
+  const mediaRaw = meta.send_media;
+  const media_key =
+    typeof mediaRaw === "string" && mediaRaw.trim().length > 0
+      ? mediaRaw.trim()
+      : null;
+
+  const captionRaw = meta.caption_seed;
+  const caption_seed =
+    typeof captionRaw === "string" && captionRaw.trim().length > 0
+      ? captionRaw.trim()
+      : undefined;
+
+  return { media_key, ...(caption_seed ? { caption_seed } : {}) };
 }
 
 function parseRequiredEntities(step: unknown): string[] {
@@ -116,6 +150,19 @@ export function buildDirective(
 
   const instruction = readInstructionText(step);
   const aiAction = readAiAction(step);
+
+  // Phase 8: workflow-driven media action (explicit metadata)
+  // - only when action.metadata.send_media is present
+  // - does not change any existing ai_action semantics
+  const mediaMeta = parseSendMediaMeta(step);
+  if (mediaMeta.media_key) {
+    return {
+      action: "send_media",
+      media_key: mediaMeta.media_key,
+      ...(mediaMeta.caption_seed ? { caption_seed: mediaMeta.caption_seed } : {}),
+      step_order: stepOrder,
+    };
+  }
 
   // Phase 1: treat instruction-like / missing action as hidden guidance.
   // IMPORTANT: Never convert these into a customer-facing "say" seed.

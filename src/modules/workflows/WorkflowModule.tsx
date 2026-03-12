@@ -46,10 +46,12 @@ type WorkflowFormState = {
 
 type StepDraft = {
   instruction_text: string;
+  send_media?: string;
 };
 
 const DEFAULT_STEP_DRAFT: StepDraft = {
   instruction_text: "",
+  send_media: "",
 };
 
 /* ------------------------------------------------------------------ */
@@ -61,12 +63,18 @@ function safeString(v: unknown): string {
 }
 
 function renderStepSummary(step: WorkflowStep) {
+  const sendMedia = safeString((step as any)?.action?.metadata?.send_media);
   return (
     <>
       <div className="font-medium">Instruction</div>
       <div className="text-sm text-slate-600 line-clamp-4">
         {safeString((step as any)?.action?.instruction_text) || "—"}
       </div>
+      {sendMedia ? (
+        <div className="mt-2 text-xs text-slate-500">
+          Media: <span className="font-medium text-slate-700">{sendMedia}</span>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -801,6 +809,7 @@ export function WorkflowModule() {
                           const a: any = (step as any)?.action ?? {};
                           setStepDraft({
                             instruction_text: safeString(a.instruction_text),
+                            send_media: safeString(a?.metadata?.send_media),
                           });
                         }}
                         className="hover:text-blue-600"
@@ -837,13 +846,35 @@ export function WorkflowModule() {
                         placeholder="Write a simple instruction for this step…"
                       />
 
+                      <div>
+                        <label className={labelClass}>Media key (optional)</label>
+                        <input
+                          className={inputClass}
+                          value={stepDraft?.send_media ?? ""}
+                          onChange={(e) =>
+                            setStepDraft((p) =>
+                              p ? { ...p, send_media: e.target.value } : p
+                            )
+                          }
+                          placeholder='e.g. "harrier_ev_brochure"'
+                        />
+                        <div className="text-xs text-slate-500 mt-1">
+                          If set, the workflow can automatically share this media asset on WhatsApp.
+                        </div>
+                      </div>
+
                       <div className="flex items-center gap-2">
                         <button
                           onClick={async () => {
                             if (!stepDraft) return;
 
+                            const send_media = (stepDraft.send_media ?? "").trim();
+
                             await updateStep(step.id, {
                               instruction_text: stepDraft.instruction_text,
+                              metadata: {
+                                ...(send_media ? { send_media } : {}),
+                              },
                             });
                             setEditingStepId(null);
                             setStepDraft(null);
@@ -890,14 +921,36 @@ export function WorkflowModule() {
                 }
               />
 
+              <div>
+                <label className={labelClass}>Media key (optional)</label>
+                <input
+                  className={inputClass}
+                  value={newStep.send_media ?? ""}
+                  onChange={(e) =>
+                    setNewStep((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            send_media: e.target.value,
+                          }
+                        : prev
+                    )
+                  }
+                  placeholder='e.g. "harrier_ev_brochure"'
+                />
+              </div>
+
               <div className="flex items-center gap-2">
                 <button
                   onClick={async () => {
                     if (!workflowId) return;
                     if (!newStep) return;
 
+                    const send_media = (newStep.send_media ?? "").trim();
+
                     await addStep(workflowId, {
                       instruction_text: newStep.instruction_text,
+                      ...(send_media ? { send_media } : {}),
                     });
                     setNewStep(null);
                     await fetchWorkflowSteps(workflowId);

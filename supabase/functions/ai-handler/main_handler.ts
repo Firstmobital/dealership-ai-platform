@@ -79,6 +79,7 @@ import {
   fetchMediaAssets,
   pickAssetsForSend,
   signMediaUrl,
+  type MediaAsset,
 } from "./media_assets.ts";
 import { mapRequiredEntityToSlotKey, isNonEmptySlotValue } from "./workflow/required_entities_mapping.ts";
 import {
@@ -1050,6 +1051,39 @@ type AuditSupabaseLike = {
     insert(values: unknown): unknown;
   };
 };
+
+function pickWorkflowMediaAssetByKey(params: {
+  mediaKey: string;
+  assets: { images: MediaAsset[]; brochures: MediaAsset[] };
+}): MediaAsset | null {
+  const keyNorm = String(params.mediaKey || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!keyNorm) return null;
+
+  const all: MediaAsset[] = [
+    ...(Array.isArray(params.assets.brochures) ? params.assets.brochures : []),
+    ...(Array.isArray(params.assets.images) ? params.assets.images : []),
+  ];
+
+  // Match priority:
+  // 1) exact title match
+  // 2) storage_path contains key token
+  // 3) filename contains key token
+  for (const a of all) {
+    const title = String(a.title || "").toLowerCase().trim().replace(/\s+/g, " ");
+    if (title && title === keyNorm) return a;
+  }
+  for (const a of all) {
+    const p = String(a.storage_path || "").toLowerCase();
+    if (p && p.includes(keyNorm)) return a;
+    const f = String(a.filename || "").toLowerCase();
+    if (f && f.includes(keyNorm)) return a;
+  }
+
+  return null;
+}
 
 export async function mainHandler(params: {
   req: Request;
@@ -2475,12 +2509,19 @@ ${personality.donts || "- None specified."}
     } | null = null;
 
     let resolvedWorkflow: WorkflowLogRow | null = null;
-    let workflowDirectiveAction: "ask" | "say" | "escalate" | "guide" | null = null;
+    let workflowDirectiveAction:
+      | "ask"
+      | "say"
+      | "escalate"
+      | "guide"
+      | "send_media"
+      | null = null;
     // Captured during directive resolution; used later for workflow-driven media auto-send.
     let workflowMediaInstructionText = "";
     let workflowMediaSeedText = "";
-    let workflowAlreadyAdvanced = false;
-    let workflowStepAdvancedThisTurn = false;
+    // Keep for future behavior, but unused today.
+    let _workflowAlreadyAdvanced = false;
+    let _workflowStepAdvancedThisTurn = false;
 
     // Phase 2: workflow-first mode (GUIDE steps are authoritative for stage)
     let workflowGuideActive = false;
@@ -2659,7 +2700,7 @@ ${personality.donts || "- None specified."}
           }
 
           if (nextStepNumber > (rw.current_step_number ?? 1)) {
-            workflowStepAdvancedThisTurn = true;
+            _workflowStepAdvancedThisTurn = true;
           }
         }
 
@@ -2820,9 +2861,9 @@ ${personality.donts || "- None specified."}
                });
              }
 
-             // Keep in-memory state consistent for downstream logic in this request.
+             // Keep in-memory state consistent for the remainder of this request.
              resolvedWorkflow.current_step_number = nextStep;
-             workflowStepAdvancedThisTurn = true;
+             _workflowStepAdvancedThisTurn = true;
 
              const res = findFirstIncompleteStep({
                steps,
@@ -2861,15 +2902,165 @@ ${personality.donts || "- None specified."}
 
             workflowDirectiveAction = directive.action;
 
-            if (directive.action === "guide") {
-              // Phase 1: hidden guidance, never customer-facing.
-              // Inject into system prompt workflow section; do NOT force send verbatim.
-              const gt = safeText((directive as { guide_text?: unknown }).guide_text ?? "");
-              workflowInstructionText = gt;
-              workflowGuideActive = Boolean(gt && gt.trim());
-              // Ensure we do not accidentally treat guide text as a SAY seed.
-              workflowSayMessage = "";
-              workflowSaySchema = null;
+            // Phase 8: explicit workflow-driven send_media
+            if (directive.action === "send_media") {
+              if (!resolvedWorkflow) throw new Error("resolvedWorkflow became null");
+
+              const d = directive as { media_key: string; caption_seed?: string };
+              const media_key = String(d.media_key ?? "").trim();
+              const caption_seed = String(d.caption_seed ?? "").trim();
+
+              // Only support WhatsApp sends (existing media pipeline is WhatsApp-first)
+              if (channel === "whatsapp" && contactPhone && media_key) {
+                try {
+                  // Lookup assets in org scope. Keep lookup tenant-safe.
+                  // Do NOT depend on mediaModel here (it is computed later in the handler).
+                  const assets = await fetchMediaAssets({
+                    supabase,
+                    organizationId,
+                    model: null,
+                    variant: null,
+                    wantImages: true,
+                    wantBrochure: true,
+                    logger,
+                  });
+
+                  const picked = pickWorkflowMediaAssetByKey({
+                    mediaKey: media_key,
+                    assets,
+                  });
+
+                  if (!picked) {
+                    logger.info("[workflow_media] asset not found for key", {
+                      media_key,
+                    });
+                    // Do NOT advance step if we couldn't send.
+                  } else {
+                    const block = await shouldBlockDuplicateMediaAsset({
+                      supabase,
+                      organizationId,
+                      conversationId: conversation_id,
+                      assetId: String(picked.id),
+                      storagePath: picked.storage_path ?? null,
+                      seconds: 120,
+                      logger,
+                    });
+
+                    if (!block) {
+                      const signed = await signMediaUrl({
+                        supabase,
+                        bucket: picked.storage_bucket,
+                        path: picked.storage_path,
+                        ttlSeconds: 600,
+                        logger,
+                      });
+
+                      if (!signed) {
+                        logger.warn("[workflow_media] sign failed", {
+                          media_key,
+                          asset_id: picked.id,
+                        });
+                      } else {
+                        const isDoc =
+                          picked.asset_type === "brochure" ||
+                          String(picked.mime_type || "")
+                            .toLowerCase()
+                            .includes("pdf");
+                        const msgType = isDoc ? "document" : "image";
+
+                        const filename = isDoc
+                          ? (picked.filename ?? `${picked.title}.pdf`)
+                              .replace(/[^a-zA-Z0-9._ -]/g, "")
+                              .trim() || "brochure.pdf"
+                          : null;
+
+                        // 1) Insert media message row (outbound) with unique dedupe key
+                        await supabase.from("messages").insert({
+                          conversation_id,
+                          organization_id: organizationId,
+                          sender: "bot",
+                          message_type: msgType,
+                          text: null,
+                          channel: "whatsapp",
+                          order_at: new Date().toISOString(),
+                          outbound_dedupe_key: `${request_id}:wf_send_media:${picked.id}`,
+                          media_url: signed,
+                          mime_type:
+                            picked.mime_type ??
+                            (isDoc ? "application/pdf" : "image/jpeg"),
+                          metadata: {
+                            request_id,
+                            trace_id,
+                            kind: "media_asset",
+                            asset_id: picked.id,
+                            storage_path: picked.storage_path,
+                            filename: filename ?? undefined,
+                            workflow_id: resolvedWorkflow?.workflow_id ?? null,
+                            workflow_step_order: Number(
+                              (step as { step_order?: unknown })?.step_order ?? null
+                            ),
+                            workflow_media_key: media_key,
+                          },
+                        });
+
+                        // 2) Send via provider
+                        const sendOk = await safeWhatsAppSend(logger, {
+                          organization_id: organizationId,
+                          to: contactPhone,
+                          type: msgType,
+                          media_url: signed,
+                          ...(filename ? { filename } : {}),
+                          metadata: { asset_id: picked.id },
+                        });
+
+                        if (sendOk) {
+                          // 3) Acknowledgment text (kept short + deterministic)
+                          const ack = caption_seed || `Sure, sharing the ${picked.title} with you.`;
+                          forcedReplyText = ack;
+
+                          // 4) Defer workflow progression (only if media send succeeded)
+                          const currentOrder = Number((step as { step_order?: unknown })?.step_order);
+                          const expectedStep = resolvedWorkflow.current_step_number ?? 1;
+
+                          const nextStepToSet =
+                            Number.isFinite(currentOrder) && currentOrder > 0
+                              ? currentOrder + 1
+                              : expectedStep + 1;
+
+                          pendingWorkflowAdvance = {
+                            logId: resolvedWorkflow.id,
+                            organizationId,
+                            nextStepNum: nextStepToSet,
+                            vars: (resolvedWorkflow.variables ?? {}) as Record<string, unknown>,
+                            completed: false,
+                            expectedCurrentStep: expectedStep,
+                            reason: "say",
+                          };
+
+                          resolvedWorkflow.current_step_number = nextStepToSet;
+                          _workflowStepAdvancedThisTurn = true;
+
+                          // Keep workflow guidance from leaking into prompt for this turn
+                          workflowInstructionText = "";
+                          workflowGuideActive = false;
+                        } else {
+                          logger.warn("[workflow_media] provider send failed", {
+                            media_key,
+                            asset_id: picked.id,
+                          });
+                          // Do NOT advance step
+                        }
+                      }
+                    }
+                  }
+                } catch (err) {
+                  logger.warn("[workflow_media] send_media failed", {
+                    error: err,
+                    media_key,
+                  });
+                  // Do NOT advance step
+                }
+              }
             }
 
             if (directive.action === "ask" || directive.action === "escalate") {
@@ -2908,7 +3099,7 @@ ${personality.donts || "- None specified."}
               resolvedWorkflow.current_step_number = nextStepNum;
 
               if (directive.action === "escalate" || nextStepNum > prevExpectedStep) {
-                workflowStepAdvancedThisTurn = true;
+                _workflowStepAdvancedThisTurn = true;
               }
 
               // Do not inject workflow guidance into prompts when we already produced the enforced reply.
@@ -2977,8 +3168,8 @@ ${personality.donts || "- None specified."}
               // Keep in-memory step consistent for the remainder of this request.
               resolvedWorkflow.current_step_number = nextStepToSet;
 
-              workflowAlreadyAdvanced = true;
-              workflowStepAdvancedThisTurn = true;
+              _workflowAlreadyAdvanced = true;
+              _workflowStepAdvancedThisTurn = true;
             }
           } catch (err) {
             logger.error("[workflow] directive build/enforce error", {
@@ -3686,7 +3877,7 @@ ${campaignContextForPrompt || "No prior campaign history available."}
           };
 
           resolvedWorkflow.current_step_number = nextStepNum;
-          workflowStepAdvancedThisTurn = true;
+          _workflowStepAdvancedThisTurn = true;
 
           logger.info("[workflow] ai_eval_step_complete=true (deferred)", {
             workflow_id: resolvedWorkflow.workflow_id,
@@ -3788,7 +3979,6 @@ ${campaignContextForPrompt || "No prior campaign history available."}
                 kind: "media_asset",
                 asset_id: img.id,
                 storage_path: img.storage_path,
-                workflow_id: resolvedWorkflow?.workflow_id ?? null,
               },
             });
 
@@ -3845,7 +4035,6 @@ ${campaignContextForPrompt || "No prior campaign history available."}
                     asset_id: b.id,
                     storage_path: b.storage_path,
                     filename: safeName,
-                    workflow_id: resolvedWorkflow?.workflow_id ?? null,
                   },
                 });
 

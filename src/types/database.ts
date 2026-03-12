@@ -262,7 +262,12 @@ export type WorkflowStepAction = {
   ai_action?: string;
   instruction_text?: string;
   expected_user_input?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> & {
+    // Phase 8: optional workflow-driven media send.
+    // Canonical storage: action.metadata.send_media
+    send_media?: string;
+    caption_seed?: string;
+  };
 
   // Deterministic skipping (stored inside JSON action)
   expects_answer?: boolean;
