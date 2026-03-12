@@ -42,27 +42,39 @@ function asRecord(v: unknown): Record<string, unknown> {
   return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
 }
 
+function readActionFirstString(params: {
+  actionValue: unknown;
+  legacyTopLevelValue: unknown;
+  fallback?: string;
+}): string {
+  // Runtime source of truth: action.*
+  // Deprecated compat fallback: top-level step mirrors.
+  if (typeof params.actionValue === "string") return params.actionValue;
+  if (typeof params.legacyTopLevelValue === "string") return params.legacyTopLevelValue;
+  return params.fallback ?? "";
+}
+
 function readInstructionText(step: unknown): string {
   const s = asRecord(step);
   const action = asRecord(s.action);
 
-  // Phase 1 canonical priority:
-  // 1) action.instruction_text
-  // 2) top-level instruction_text
-  // 3) ""
-  return String(action.instruction_text ?? s.instruction_text ?? "").trim();
+  return readActionFirstString({
+    actionValue: action.instruction_text,
+    legacyTopLevelValue: s.instruction_text,
+    fallback: "",
+  }).trim();
 }
 
 function readAiAction(step: unknown): string {
   const s = asRecord(step);
   const action = asRecord(s.action);
 
-  // Phase 1 canonical priority:
-  // 1) action.ai_action
-  // 2) top-level ai_action
-  // 3) default "instruction"
-  const raw = action.ai_action ?? s.ai_action ?? s.aiAction ?? null;
-  const t = String(raw ?? "").trim();
+  const raw = readActionFirstString({
+    actionValue: action.ai_action,
+    legacyTopLevelValue: s.ai_action ?? s.aiAction,
+    fallback: "instruction",
+  });
+  const t = String(raw).trim();
   return t || "instruction";
 }
 
@@ -109,8 +121,11 @@ function parseRequiredEntities(step: unknown): string[] {
       : null;
   if (fromMeta && fromMeta.length) return fromMeta.map((x: unknown) => String(x));
 
-  const rawExp =
-    (action.expected_user_input ?? s.expected_user_input ?? "").toString().trim();
+  const rawExp = readActionFirstString({
+    actionValue: action.expected_user_input,
+    legacyTopLevelValue: s.expected_user_input,
+    fallback: "",
+  }).trim();
   if (!rawExp) return [];
   return rawExp
     .split(",")

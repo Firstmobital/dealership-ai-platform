@@ -285,9 +285,13 @@ export type WorkflowStep = {
   action: WorkflowStepAction;
 
   // Legacy top-level mirrors (compat only)
+  /** @deprecated Use action.ai_action as runtime source of truth. */
   ai_action?: string | null;
+  /** @deprecated Use action.instruction_text as runtime source of truth. */
   instruction_text?: string | null;
+  /** @deprecated Use action.expected_user_input as runtime source of truth. */
   expected_user_input?: string | null;
+  /** @deprecated Use action.metadata as runtime source of truth. */
   metadata?: Record<string, unknown> | null;
 
   created_at?: string;

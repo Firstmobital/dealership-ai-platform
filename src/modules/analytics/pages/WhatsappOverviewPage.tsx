@@ -12,7 +12,9 @@ import { WhatsappEffectivenessChart } from "../components/WhatsappEffectivenessC
 export function WhatsappOverviewPage() {
   const {
     overview,
+    workflowUsage,
     fetchOverview,
+    fetchWorkflowUsage,
     loading,
   } = useAnalyticsStore();
 
@@ -31,6 +33,10 @@ export function WhatsappOverviewPage() {
   useEffect(() => {
     fetchOverview(from, to);
   }, [from, to]);
+
+  useEffect(() => {
+    fetchWorkflowUsage();
+  }, []);
 
   /* --------------------------------------------------------------------------
      KPI CALCULATIONS
@@ -107,6 +113,45 @@ export function WhatsappOverviewPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <WhatsappVolumeChart data={overview} />
         <WhatsappEffectivenessChart data={overview} />
+      </div>
+
+      {/* WORKFLOW ANALYTICS */}
+      <div className="rounded-lg border bg-white p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-slate-900">Workflow Usage</h2>
+          <p className="text-xs text-slate-500">Started, active, completed, escalated, avg step</p>
+        </div>
+
+        {workflowUsage.length === 0 && !loading ? (
+          <p className="text-sm text-slate-500">No workflow usage found for this organization.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Workflow</th>
+                  <th className="px-3 py-2">Started</th>
+                  <th className="px-3 py-2">Completed</th>
+                  <th className="px-3 py-2">Escalated</th>
+                  <th className="px-3 py-2">Active</th>
+                  <th className="px-3 py-2">Avg Step</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workflowUsage.map((row) => (
+                  <tr key={row.workflow_id} className="border-b last:border-b-0">
+                    <td className="px-3 py-2 font-medium text-slate-900">{row.workflow_name}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.started_count}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.completed_count}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.escalated_count}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.active_count}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.avg_current_step}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* EMPTY STATE */}

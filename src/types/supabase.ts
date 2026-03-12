@@ -667,9 +667,13 @@ export type Database = {
       workflow_steps: {
         Row: {
           action: Json
+          // Deprecated compat mirror; prefer action.ai_action.
           ai_action: string | null
+          // Deprecated compat mirror; prefer action.instruction_text.
           instruction_text: string | null
+          // Deprecated compat mirror; prefer action.expected_user_input.
           expected_user_input: string | null
+          // Deprecated compat mirror; prefer action.metadata.
           metadata: Json | null
           organization_id: string | null
           created_at: string | null
@@ -679,9 +683,13 @@ export type Database = {
         }
         Insert: {
           action: Json
+          // Deprecated compat mirror; prefer action.ai_action.
           ai_action?: string | null
+          // Deprecated compat mirror; prefer action.instruction_text.
           instruction_text?: string | null
+          // Deprecated compat mirror; prefer action.expected_user_input.
           expected_user_input?: string | null
+          // Deprecated compat mirror; prefer action.metadata.
           metadata?: Json | null
           organization_id?: string | null
           created_at?: string | null
@@ -691,9 +699,13 @@ export type Database = {
         }
         Update: {
           action?: Json
+          // Deprecated compat mirror; prefer action.ai_action.
           ai_action?: string | null
+          // Deprecated compat mirror; prefer action.instruction_text.
           instruction_text?: string | null
+          // Deprecated compat mirror; prefer action.expected_user_input.
           expected_user_input?: string | null
+          // Deprecated compat mirror; prefer action.metadata.
           metadata?: Json | null
           organization_id?: string | null
           created_at?: string | null

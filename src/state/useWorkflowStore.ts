@@ -76,22 +76,32 @@ const mergeStepActionForPersist = (existingAction: any, incomingAction: any) => 
   return merged;
 };
 
+const readCanonicalString = (
+  canonicalValue: unknown,
+  legacyValue: unknown,
+  fallback: string
+): string => {
+  // action.* is authoritative; top-level mirrors are legacy fallback only.
+  if (typeof canonicalValue === "string") return canonicalValue;
+  if (typeof legacyValue === "string") return legacyValue;
+  return fallback;
+};
+
 function normalizeWorkflowStep(row: any): WorkflowStep {
   const action = (row?.action ?? {}) as any;
   const normalizedAction: any = {
     ...action,
-    ai_action:
-      (typeof action.ai_action === "string" && action.ai_action) ||
-      (typeof row?.ai_action === "string" && row.ai_action) ||
-      "instruction",
-    instruction_text:
-      (typeof action.instruction_text === "string" && action.instruction_text) ||
-      (typeof row?.instruction_text === "string" && row.instruction_text) ||
-      "",
-    expected_user_input:
-      (typeof action.expected_user_input === "string" && action.expected_user_input) ||
-      (typeof row?.expected_user_input === "string" && row.expected_user_input) ||
-      "",
+    ai_action: readCanonicalString(action.ai_action, row?.ai_action, "instruction"),
+    instruction_text: readCanonicalString(
+      action.instruction_text,
+      row?.instruction_text,
+      ""
+    ),
+    expected_user_input: readCanonicalString(
+      action.expected_user_input,
+      row?.expected_user_input,
+      ""
+    ),
     metadata:
       (typeof action.metadata === "object" && action.metadata !== null
         ? action.metadata
@@ -375,7 +385,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   updateStep: async (stepId, action) => {
     const { data: existing, error: fetchError } = await supabase
       .from("workflow_steps")
-      .select("action, ai_action, instruction_text, expected_user_input, metadata")
+      .select("action")
       .eq("id", stepId)
       .single();
 

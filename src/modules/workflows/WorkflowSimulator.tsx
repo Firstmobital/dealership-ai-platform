@@ -8,6 +8,29 @@ type Props = {
   onClose: () => void;
 };
 
+type SimulationResponse = {
+  output?: string;
+  generated_reply?: string;
+  nextStep?: number;
+  next_step?: number;
+  current_step?: number;
+  variables?: Record<string, unknown>;
+  completed?: boolean;
+  step_would_advance?: boolean;
+  would_advance?: boolean;
+  directive_action?: string;
+  skipped_steps?: number[];
+};
+
+type SimulationTrace = {
+  currentStep: number;
+  generatedReply: string;
+  wouldAdvance: boolean;
+  nextStep: number;
+  directiveAction: string;
+  skippedSteps: number[];
+};
+
 export function WorkflowSimulator({ workflow, steps, onClose }: Props) {
   const [messages, setMessages] = useState<
     { sender: "user" | "bot"; text: string }[]
@@ -21,6 +44,7 @@ export function WorkflowSimulator({ workflow, steps, onClose }: Props) {
     variables: {},
     completed: false,
   });
+  const [lastTrace, setLastTrace] = useState<SimulationTrace | null>(null);
 
   async function send() {
     if (!input.trim() || loading) return;
@@ -31,7 +55,7 @@ export function WorkflowSimulator({ workflow, steps, onClose }: Props) {
 
     setLoading(true);
 
-    const { data, error } = await supabase.functions.invoke(
+    const { data, error } = await supabase.functions.invoke<SimulationResponse>(
       "workflow-simulate",
       {
         body: {
@@ -53,15 +77,32 @@ export function WorkflowSimulator({ workflow, steps, onClose }: Props) {
         ...m,
         { sender: "bot", text: "Simulation failed." },
       ]);
+      setLastTrace(null);
       return;
     }
 
-    setMessages((m) => [...m, { sender: "bot", text: data.output }]);
+    const generatedReply = data.generated_reply ?? data.output ?? "";
+    const nextStep = data.next_step ?? data.nextStep ?? state.currentStep;
+    const currentStep = data.current_step ?? state.currentStep;
+    const wouldAdvance = data.step_would_advance ?? data.would_advance ?? false;
+    const directiveAction = data.directive_action ?? "unknown";
+    const skippedSteps = Array.isArray(data.skipped_steps) ? data.skipped_steps : [];
+
+    setMessages((m) => [...m, { sender: "bot", text: generatedReply || "(No output)" }]);
 
     setState({
-      currentStep: data.nextStep,
-      variables: data.variables,
-      completed: data.completed,
+      currentStep: nextStep,
+      variables: (data.variables as Record<string, unknown>) ?? {},
+      completed: Boolean(data.completed),
+    });
+
+    setLastTrace({
+      currentStep,
+      generatedReply: generatedReply || "(No output)",
+      wouldAdvance,
+      nextStep,
+      directiveAction,
+      skippedSteps,
     });
   }
 
@@ -77,6 +118,15 @@ export function WorkflowSimulator({ workflow, steps, onClose }: Props) {
 
       {/* Messages */}
       <div className="h-[360px] overflow-y-auto px-3 py-2 space-y-2 text-sm">
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+          <div>
+            <span className="font-semibold">Current Step:</span> {state.currentStep}
+          </div>
+          <div>
+            <span className="font-semibold">Completed:</span> {state.completed ? "Yes" : "No"}
+          </div>
+        </div>
+
         {messages.map((m, i) => (
           <div
             key={i}
@@ -89,6 +139,31 @@ export function WorkflowSimulator({ workflow, steps, onClose }: Props) {
             {m.text}
           </div>
         ))}
+
+        {lastTrace && !loading && (
+          <div className="rounded-md border border-blue-200 bg-blue-50 p-2 text-xs text-slate-700">
+            <div>
+              <span className="font-semibold">Current Step:</span> {lastTrace.currentStep}
+            </div>
+            <div>
+              <span className="font-semibold">Generated Reply:</span> {lastTrace.generatedReply}
+            </div>
+            <div>
+              <span className="font-semibold">Would Advance:</span> {lastTrace.wouldAdvance ? "Yes" : "No"}
+            </div>
+            <div>
+              <span className="font-semibold">Next Step:</span> {lastTrace.nextStep}
+            </div>
+            <div>
+              <span className="font-semibold">Directive:</span> {lastTrace.directiveAction}
+            </div>
+            {lastTrace.skippedSteps.length > 0 && (
+              <div>
+                <span className="font-semibold">Auto-skipped:</span> {lastTrace.skippedSteps.join(", ")}
+              </div>
+            )}
+          </div>
+        )}
 
         {loading && (
           <div className="text-xs text-slate-400">Thinking…</div>
