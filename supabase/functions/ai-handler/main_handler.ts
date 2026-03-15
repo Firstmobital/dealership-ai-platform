@@ -1390,6 +1390,23 @@ export async function mainHandler(params: {
       channel,
     });
 
+    const maybeCreateAILeadFailOpen = async (
+      leadExtract: AiExtractedIntent | null
+    ): Promise<void> => {
+      try {
+        await maybeCreateAILead({
+          conversation_id,
+          organization_id: organizationId,
+          contactPhone,
+          aiExtract: leadExtract,
+          supabase,
+          operationalSupabase,
+        });
+      } catch (error) {
+        logger.error("[ai-lead] create failed (fail-open)", { error });
+      }
+    };
+
     // 2) Wallet (required for any AI call; greetings are free)
     const wallet = await loadWalletForOrg(organizationId);
 
@@ -1572,6 +1589,8 @@ ${personality.donts || "- None specified."}
         metadata: { request_id, trace_id, kind: "greeting" },
       });
 
+      await maybeCreateAILeadFailOpen(null);
+
       // Update conversation timestamp (keep this block independent — conversationUpdate is defined later)
       await supabase
         .from("conversations")
@@ -1709,6 +1728,8 @@ ${personality.donts || "- None specified."}
           sentiment: result.sentiment,
         },
       });
+
+      await maybeCreateAILeadFailOpen(null);
 
       await supabase
         .from("conversations")
@@ -3004,6 +3025,8 @@ ${personality.donts || "- None specified."}
                           },
                         });
 
+                        await maybeCreateAILeadFailOpen(aiExtract);
+
                         // 2) Send via provider
                         const sendOk = await safeWhatsAppSend(logger, {
                           organization_id: organizationId,
@@ -3400,6 +3423,8 @@ ${personality.donts || "- None specified."}
             },
           });
 
+          await maybeCreateAILeadFailOpen(aiExtract);
+
           const sendOk = await safeWhatsAppSend(logger, {
             organization_id: organizationId,
             to: contactPhone,
@@ -3449,6 +3474,8 @@ ${personality.donts || "- None specified."}
                 filename: safeName,
               },
             });
+
+            await maybeCreateAILeadFailOpen(aiExtract);
 
             const sendOk = await safeWhatsAppSend(logger, {
               organization_id: organizationId,
@@ -3983,6 +4010,8 @@ ${campaignContextForPrompt || "No prior campaign history available."}
               },
             });
 
+            await maybeCreateAILeadFailOpen(aiExtract);
+
             await safeWhatsAppSend(logger, {
               organization_id: organizationId,
               to: contactPhone,
@@ -4038,6 +4067,8 @@ ${campaignContextForPrompt || "No prior campaign history available."}
                     filename: safeName,
                   },
                 });
+
+                await maybeCreateAILeadFailOpen(aiExtract);
 
                 await safeWhatsAppSend(logger, {
                   organization_id: organizationId,
@@ -4410,18 +4441,7 @@ ${campaignContextForPrompt || "No prior campaign history available."}
       );
     }
 
-    try {
-      await maybeCreateAILead({
-        conversation_id,
-        organization_id: organizationId,
-        contactPhone,
-        aiExtract,
-        supabase,
-        operationalSupabase,
-      });
-    } catch (error) {
-      logger.error("[ai-lead] create failed (fail-open)", { error });
-    }
+    await maybeCreateAILeadFailOpen(aiExtract);
 
     // Phase 3: commit deferred workflow progression only after outbound accepted.
     if (pendingWorkflowAdvance) {

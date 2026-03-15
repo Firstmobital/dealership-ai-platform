@@ -147,10 +147,10 @@ export async function maybeCreateAILead(params: LeadWriterParams): Promise<void>
 
     const { data: existingLead, error: existingLeadError } = await params.operationalSupabase
       .from("ai_leads")
-      .select("id")
-      .eq("conversation_id", params.conversation_id)
+      .select("source_conversation_id")
+      .eq("source_conversation_id", params.conversation_id)
       .limit(1)
-      .maybeSingle<{ id: string }>();
+      .maybeSingle<{ source_conversation_id: string }>();
 
     if (existingLeadError) {
       logger.warn("[ai-lead] failed to check existing lead", { error: existingLeadError });
@@ -213,14 +213,15 @@ export async function maybeCreateAILead(params: LeadWriterParams): Promise<void>
       .from("ai_leads")
       .insert({
         customer_name: customerName,
-        phone_number: phoneNumber,
+        mobile_number: phoneNumber,
+        model_name: interestedModel,
+        source_conversation_id: params.conversation_id,
         conversation_summary: conversationSummary,
-        interested_model: interestedModel,
+        conversation_transcript: fullConversation,
         lead_source: "AI Chatbot",
-        conversation_id: params.conversation_id,
+        opty_status: "pending",
         created_at: new Date().toISOString(),
-        status: "new",
-        full_conversation: fullConversation,
+        updated_at: new Date().toISOString(),
       });
 
     if (insertError) {
