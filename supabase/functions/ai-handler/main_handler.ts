@@ -11,9 +11,10 @@ import {
   extractNumberTokens,
 } from "./workflow/validator.ts";
 import { extractSlotsFromUserText, isFuelFollowupMessage } from "./workflow/slots.ts";
-import { supabase } from "./clients.ts";
+import { operationalSupabase, supabase } from "./clients.ts";
 import { AI_NO_REPLY_TOKEN, KB_DISABLE_LEXICAL } from "./env.ts";
 import { createLogger } from "./logging.ts";
+import { maybeCreateAILead } from "./lead_writer.ts";
 import {
   estimateTokensFromMessages,
   estimateTokensFromText,
@@ -4407,6 +4408,19 @@ ${campaignContextForPrompt || "No prior campaign history available."}
         }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
+    }
+
+    try {
+      await maybeCreateAILead({
+        conversation_id,
+        organization_id: organizationId,
+        contactPhone,
+        aiExtract,
+        supabase,
+        operationalSupabase,
+      });
+    } catch (error) {
+      logger.error("[ai-lead] create failed (fail-open)", { error });
     }
 
     // Phase 3: commit deferred workflow progression only after outbound accepted.
