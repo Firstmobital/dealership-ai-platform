@@ -31,6 +31,7 @@ type MessageRow = {
   sender: string | null;
   text: string | null;
   created_at: string | null;
+  order_at: string | null;
 };
 
 const TRANSCRIPT_MESSAGE_LIMIT = 20;
@@ -39,6 +40,15 @@ function asNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function isDuplicateLeadInsertError(error: unknown): boolean {
+  const code = String((error as { code?: unknown })?.code ?? "").trim();
+  const message = String((error as { message?: unknown })?.message ?? "").toLowerCase();
+  const details = String((error as { details?: unknown })?.details ?? "").toLowerCase();
+
+  return code === "23505" &&
+    (message.includes("source_conversation_id") || details.includes("source_conversation_id"));
 }
 
 function normalizeText(value: unknown): string {
@@ -57,6 +67,16 @@ function getTranscriptMessages(messages: MessageRow[]): MessageRow[] {
   return [...messages]
     .filter((message) => normalizeText(message.text))
     .sort((left, right) => {
+      const leftOrderTs = Date.parse(String(left.order_at ?? ""));
+      const rightOrderTs = Date.parse(String(right.order_at ?? ""));
+
+      if (Number.isFinite(leftOrderTs) && Number.isFinite(rightOrderTs)) {
+        return leftOrderTs - rightOrderTs;
+      }
+
+      if (Number.isFinite(leftOrderTs)) return -1;
+      if (Number.isFinite(rightOrderTs)) return 1;
+
       const leftTs = Date.parse(String(left.created_at ?? ""));
       const rightTs = Date.parse(String(right.created_at ?? ""));
 
@@ -164,9 +184,10 @@ export async function maybeCreateAILead(params: LeadWriterParams): Promise<void>
 
     const { data: messages, error: messagesError } = await params.supabase
       .from("messages")
-      .select("sender, text, created_at")
+      .select("sender, text, created_at, order_at")
       .eq("organization_id", params.organization_id)
       .eq("conversation_id", params.conversation_id)
+      .order("order_at", { ascending: true })
       .order("created_at", { ascending: true });
 
     if (messagesError) {
@@ -225,6 +246,11 @@ export async function maybeCreateAILead(params: LeadWriterParams): Promise<void>
       });
 
     if (insertError) {
+      if (isDuplicateLeadInsertError(insertError)) {
+        logger.info("[ai-lead] skipped because lead already exists");
+        return;
+      }
+
       logger.error("[ai-lead] creation failed", { error: insertError });
       return;
     }
